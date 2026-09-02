@@ -1,0 +1,27 @@
+{
+  "name": "fixowl-monorepo",
+  "private": true,
+  "version": "0.1.0",
+  "description": "fixowl - the owl that fixes your GitHub issues while you sleep",
+  "license": "MIT",
+  "type": "module",
+  "packageManager": "pnpm@11.25.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "lint": "oxlint packages scripts && oxfmt --check packages scripts && tsc --noEmit",
+    "format": "oxfmt --write packages scripts",
+    "test": "vitest run",
+    "build": "node scripts/build.mjs",
+    "e2e:docker": "node scripts/run-local-docker-e2e.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0",
+    "esbuild": "0.28.2",
+    "oxfmt": "0.66.0",
+    "oxlint": "1.81.0",
+    "typescript": "7.0.2",
+    "vitest": "4.1.11"
+  }
+}

@@ -1,0 +1,20 @@
+# fixowl per-repo config. Versioned with your code; evolve it via normal PRs.
+version: 1
+
+# Image the coding agent and verification run in. Must contain: the agent CLI,
+# git, your toolchain, and (for web verification) Playwright + chromium.
+dockerfile: Dockerfile
+
+verify:
+  # Commands run in a fresh container after the agent finishes. Any failure
+  # turns the PR into a draft.
+  checks:
+    - { name: tests, run: "npm test" }
+  # Optional: start the app, wait for the URL, capture a screenshot as PR
+  # evidence. Requires playwright in the image; degrades to "unavailable".
+  # web:
+  #   - { name: app, start: "npm run dev", url: "http://localhost:5173/" }
+
+# Extra instructions appended to every fix prompt for this repo.
+# prompt_extra: |
+#   Conventions the agent must follow in this repo.

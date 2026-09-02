@@ -1,0 +1,28 @@
+{
+  "name": "fixowl",
+  "version": "0.1.0",
+  "description": "The owl that fixes your GitHub issues while you sleep",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NachoPal/fixowl.git"
+  },
+  "bin": {
+    "fixowl": "./dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "dependencies": {
+    "@fixowl/core": "workspace:*",
+    "@octokit/rest": "22.0.1",
+    "commander": "15.0.0",
+    "libsodium-wrappers": "0.8.4",
+    "yaml": "2.9.0",
+    "zod": "4.5.4"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

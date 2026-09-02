@@ -1,0 +1,41 @@
+name: fixowl
+description: >-
+  The owl that fixes your issues while you sleep. Picks up labeled open issues,
+  runs a coding agent in a Docker container per issue, verifies the change when
+  possible, and opens exactly one PR per issue. Never merges.
+author: NachoPal
+branding:
+  icon: moon
+  color: purple
+
+inputs:
+  labels-any:
+    description: Comma-separated labels; an issue matches if it has ANY of them.
+    required: false
+    default: overnight
+  labels-all:
+    description: Comma-separated labels; an issue matches only if it has ALL of them.
+    required: false
+    default: ""
+  agent:
+    description: Agent adapter to run (claude, aider, script).
+    required: false
+    default: claude
+  agent-env:
+    description: >-
+      Comma-separated env var names allowed into the agent container,
+      overriding the adapter's built-in allowlist. Empty keeps the default.
+    required: false
+    default: ""
+  max-issues-per-run:
+    description: Maximum number of issues to process in one run.
+    required: false
+    default: "4"
+  issue-timeout-minutes:
+    description: Hard timeout for the agent container per issue.
+    required: false
+    default: "45"
+
+runs:
+  using: node24
+  main: dist/action/index.js

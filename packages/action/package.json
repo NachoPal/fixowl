@@ -1,0 +1,13 @@
+{
+  "name": "@fixowl/action",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@actions/core": "3.0.1",
+    "@fixowl/core": "workspace:*",
+    "@octokit/rest": "22.0.1",
+    "yaml": "2.9.0",
+    "zod": "4.5.4"
+  }
+}
