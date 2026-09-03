@@ -1,7 +1,7 @@
 {
   "name": "fixowl-monorepo",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "fixowl - the owl that fixes your GitHub issues while you sleep",
   "license": "MIT",
   "type": "module",
