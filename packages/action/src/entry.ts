@@ -1,6 +1,11 @@
 import * as core from "@actions/core";
 import { Octokit } from "@octokit/rest";
-import { RUNTIME_TOKEN_SECRET, type LabelRule } from "@fixowl/core";
+import {
+  labelModelsSchema,
+  RUNTIME_TOKEN_SECRET,
+  type LabelModelMap,
+  type LabelRule,
+} from "@fixowl/core";
 import { DockerEngine } from "./container-exec.ts";
 import type { GitHubApi, IssueLite, Logger } from "./deps.ts";
 import { renderSummary, runNight } from "./main.ts";
@@ -68,6 +73,18 @@ function requireEnv(name: string): string {
   return value;
 }
 
+/** Parses the label-models JSON input, validating its shape against the shared schema. */
+function parseLabelModelsInput(raw: string): LabelModelMap {
+  if (raw.trim() === "") return {};
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error(`input label-models is not valid JSON: ${raw}`);
+  }
+  return labelModelsSchema.parse(parsed);
+}
+
 /** A hand-edited workflow with a bad number must fail loudly, not as NaN weirdness. */
 function positiveIntInput(name: string, fallback: number): number {
   const raw = core.getInput(name);
@@ -131,6 +148,9 @@ async function run(): Promise<void> {
       agentEnvNames: parseLabelInput(core.getInput("agent-env")),
       maxIssues: positiveIntInput("max-issues-per-run", 4),
       issueTimeoutMinutes: positiveIntInput("issue-timeout-minutes", 45),
+      defaultModel: core.getInput("default-model") || undefined,
+      defaultEffort: core.getInput("default-effort") || undefined,
+      labelModels: parseLabelModelsInput(core.getInput("label-models")),
       workspaceDir,
       tempDir,
       runUrl,

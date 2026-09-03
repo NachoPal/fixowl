@@ -1,6 +1,11 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { PROMPT_MOUNT_PATH, type AgentAdapter, type RepoFileConfig } from "@fixowl/core";
+import {
+  PROMPT_MOUNT_PATH,
+  type AgentAdapter,
+  type ModelSelection,
+  type RepoFileConfig,
+} from "@fixowl/core";
 import { containerName } from "./container-exec.ts";
 import type { ContainerEngine, ContainerMount, GitHubApi, IssueLite, Logger } from "./deps.ts";
 import type { GitWorkspace } from "./git-ops.ts";
@@ -29,6 +34,8 @@ export interface IssueRunContext {
   adapter: AgentAdapter;
   /** Resolved allowlisted env values for the agent container. */
   agentEnv: Record<string, string>;
+  /** Model/effort resolved for this issue; empty fields fall through to the CLI default. */
+  selection: ModelSelection;
   workspaceDir: string;
   promptDir: string;
   evidenceDir: string;
@@ -78,7 +85,7 @@ export async function processIssue(
     image: ctx.image,
     name: containerName(ctx.repoFullName, issue.number, "agent"),
     workspaceDir: ctx.workspaceDir,
-    argv: ctx.adapter.argv("fix"),
+    argv: ctx.adapter.argv("fix", ctx.selection),
     env: ctx.agentEnv,
     extraMounts,
     stdin,

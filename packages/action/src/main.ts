@@ -6,7 +6,10 @@ import {
   PROMPT_MOUNT_PATH,
   REPO_CONFIG_PATH,
   repoFileConfigSchema,
+  resolveModelSelection,
+  type LabelModelMap,
   type LabelRule,
+  type ModelSelection,
   type RepoFileConfig,
 } from "@fixowl/core";
 import { parse as parseYaml } from "yaml";
@@ -37,6 +40,12 @@ export interface NightInputs {
   agentEnvNames?: string[];
   maxIssues: number;
   issueTimeoutMinutes: number;
+  /** Default model when an issue carries no selector label; undefined uses the CLI default. */
+  defaultModel?: string;
+  /** Default reasoning effort when an issue carries no selector label. */
+  defaultEffort?: string;
+  /** Selector-label -> {model, effort}; per-issue resolution reads this. */
+  labelModels?: LabelModelMap;
   workspaceDir: string;
   tempDir: string;
   runUrl?: string;
@@ -123,6 +132,12 @@ async function runNightWithGit(
 
   const image = await buildTargetImage(engine, git, inputs.workspaceDir, repoConfig);
 
+  const labelModels: LabelModelMap = inputs.labelModels ?? {};
+  const defaultSelection: ModelSelection = {
+    model: inputs.defaultModel,
+    effort: inputs.defaultEffort,
+  };
+
   const chainNumbers = await classifyIssues({
     engine,
     log,
@@ -132,6 +147,9 @@ async function runNightWithGit(
     agentEnv,
     image,
     inputs,
+    // Classification spans all issues at once, so it uses the repo default, not
+    // any single issue's selector label.
+    selection: defaultSelection,
   });
   const chains = planChains(selected, chainNumbers);
 
@@ -142,6 +160,25 @@ async function runNightWithGit(
     let stackedOn: { prNumber: number; branch: string } | undefined;
     for (const issue of chain) {
       const branch = issueBranchName(issue.number, issue.title);
+
+      // Resolve this issue's model/effort from its labels. A multi-selector-
+      // label conflict fails just this issue, loudly, without touching the rest.
+      const resolution = resolveModelSelection({
+        issueLabels: issue.labels,
+        labelModels,
+        default: defaultSelection,
+      });
+      if (!resolution.ok) {
+        log.error(`issue #${issue.number}: ${resolution.error}`);
+        results.push({ issue, branch, status: "error", verification: [], error: resolution.error });
+        continue;
+      }
+      if (resolution.source === "label") {
+        log.info(
+          `issue #${issue.number}: selector label "${resolution.label}" -> model ${resolution.selection.model}, effort ${resolution.selection.effort}`,
+        );
+      }
+
       let result: IssueResult;
       try {
         result = await processIssue(
@@ -157,6 +194,7 @@ async function runNightWithGit(
             repoConfig,
             adapter,
             agentEnv,
+            selection: resolution.selection,
             workspaceDir: inputs.workspaceDir,
             promptDir: join(inputs.tempDir, "fixowl-prompts"),
             evidenceDir: join(inputs.tempDir, "fixowl-evidence", `issue-${issue.number}`),
@@ -261,8 +299,9 @@ async function classifyIssues(params: {
   agentEnv: Record<string, string>;
   image: string;
   inputs: NightInputs;
+  selection: ModelSelection;
 }): Promise<number[][]> {
-  const { engine, log, warnings, selected, adapter, agentEnv, image, inputs } = params;
+  const { engine, log, warnings, selected, adapter, agentEnv, image, inputs, selection } = params;
   const numbers = selected.map((issue) => issue.number);
   if (selected.length < 2) return allIndependent(numbers);
 
@@ -284,7 +323,7 @@ async function classifyIssues(params: {
     name: containerName(inputs.repoFullName, "classify", adapter.name),
     workspaceDir: inputs.workspaceDir,
     workspaceReadOnly: true,
-    argv: adapter.argv("classify"),
+    argv: adapter.argv("classify", selection),
     env: agentEnv,
     extraMounts,
     stdin,

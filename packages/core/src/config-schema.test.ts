@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   globalConfigSchema,
+  globalConfigSchemaChecked,
   repoFileConfigSchema,
   resolveRepoSettings,
   runnerBaseDir,
@@ -48,6 +49,9 @@ describe("resolveRepoSettings", () => {
       maxIssuesPerRun: 4,
       issueTimeoutMinutes: 45,
       agentEnv: undefined,
+      defaultModel: undefined,
+      defaultEffort: undefined,
+      labelModels: {},
     });
   });
 
@@ -65,6 +69,24 @@ describe("resolveRepoSettings", () => {
     expect(settings.agentEnv).toEqual(["ANTHROPIC_API_KEY"]);
   });
 
+  it("resolves default model/effort and per-repo label_models", () => {
+    const config = globalConfigSchema.parse({
+      ...minimalConfig,
+      defaults: { model: "sonnet", effort: "medium" },
+      repos: [
+        {
+          name: "NachoPal/storyengine",
+          model: "opus",
+          label_models: { heavy: { model: "opus", effort: "max" } },
+        },
+      ],
+    });
+    const settings = resolveRepoSettings(config, "NachoPal/storyengine");
+    expect(settings.defaultModel).toBe("opus"); // repo override wins over defaults
+    expect(settings.defaultEffort).toBe("medium"); // inherited from defaults
+    expect(settings.labelModels).toEqual({ heavy: { model: "opus", effort: "max" } });
+  });
+
   it("throws for unknown repos", () => {
     const config = globalConfigSchema.parse(minimalConfig);
     expect(() => resolveRepoSettings(config, "NachoPal/other")).toThrow(/not listed/);
@@ -72,6 +94,58 @@ describe("resolveRepoSettings", () => {
 
   it("resolves the runner dir default", () => {
     expect(runnerBaseDir(globalConfigSchema.parse(minimalConfig))).toBe("~/.fixowl/runners");
+  });
+});
+
+describe("globalConfigSchemaChecked (agent-aware model/effort)", () => {
+  it("accepts valid claude model/effort choices", () => {
+    expect(() =>
+      globalConfigSchemaChecked.parse({
+        ...minimalConfig,
+        defaults: { model: "sonnet", effort: "medium" },
+        repos: [
+          {
+            name: "NachoPal/storyengine",
+            label_models: { heavy: { model: "opus", effort: "max" } },
+          },
+        ],
+      }),
+    ).not.toThrow();
+  });
+
+  it("rejects a model that is not in the repo agent's catalog", () => {
+    expect(() =>
+      globalConfigSchemaChecked.parse({
+        ...minimalConfig,
+        repos: [{ name: "NachoPal/storyengine", model: "gpt-5" }],
+      }),
+    ).toThrow(/gpt-5.* is not available for agent/);
+  });
+
+  it("rejects an effort that is not in the repo agent's catalog", () => {
+    expect(() =>
+      globalConfigSchemaChecked.parse({
+        ...minimalConfig,
+        repos: [
+          {
+            name: "NachoPal/storyengine",
+            label_models: { heavy: { model: "opus", effort: "extreme" } },
+          },
+        ],
+      }),
+    ).toThrow(/effort .*extreme.* is not available/);
+  });
+
+  it("validates against the agent the repo actually uses", () => {
+    // "max" is a claude effort but not an aider one; the repo uses aider.
+    expect(() =>
+      globalConfigSchemaChecked.parse({
+        ...minimalConfig,
+        defaults: { agent: "aider" },
+        agents: { aider: { env: ["ANTHROPIC_API_KEY"] } },
+        repos: [{ name: "NachoPal/storyengine", model: "opus", effort: "max" }],
+      }),
+    ).toThrow(/effort .*max.* is not available for agent .*aider/);
   });
 });
 

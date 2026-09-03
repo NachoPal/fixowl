@@ -82,6 +82,8 @@ export function loadConfig(configPath = CONFIG_PATH, secretsPath = SECRETS_PATH)
   }
   const secrets = loadSecrets(secretsPath);
   const raw: unknown = parseYaml(readFileSync(configPath, "utf8"));
+  // Shape validation only; agent-aware model/effort checks are surfaced with
+  // clear per-repo messages by `fixowl validate` (globalConfigSchemaChecked).
   const config = globalConfigSchema.parse(substituteSecretRefs(raw, secrets));
   return { config, secrets, warnings };
 }

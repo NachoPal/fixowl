@@ -31,6 +31,52 @@ describe("agent adapters", () => {
     expect(claude.env).toEqual(["CLAUDE_CODE_OAUTH_TOKEN"]);
   });
 
+  it("claude: appends --model and --effort when a selection is given", () => {
+    const claude = getAgentAdapter("claude");
+    expect(claude.argv("fix", { model: "opus", effort: "max" })).toEqual([
+      "claude",
+      "-p",
+      "--dangerously-skip-permissions",
+      "--max-turns",
+      "80",
+      "--model",
+      "opus",
+      "--effort",
+      "max",
+    ]);
+    // A partial selection omits the absent flag; today's behavior (no selection).
+    expect(claude.argv("fix", { effort: "low" })).toEqual([
+      "claude",
+      "-p",
+      "--dangerously-skip-permissions",
+      "--max-turns",
+      "80",
+      "--effort",
+      "low",
+    ]);
+    expect(claude.argv("fix", {})).toEqual([
+      "claude",
+      "-p",
+      "--dangerously-skip-permissions",
+      "--max-turns",
+      "80",
+    ]);
+  });
+
+  it("aider: appends --model and --reasoning-effort when a selection is given", () => {
+    const aider = getAgentAdapter("aider");
+    expect(aider.argv("fix", { model: "sonnet", effort: "high" })).toEqual([
+      "aider",
+      "--message-file",
+      PROMPT_MOUNT_PATH,
+      "--yes-always",
+      "--model",
+      "sonnet",
+      "--reasoning-effort",
+      "high",
+    ]);
+  });
+
   it("aider: message file argv and an empty default env allowlist (opt-in spend)", () => {
     const aider = getAgentAdapter("aider");
     expect(aider.argv("fix")).toEqual([

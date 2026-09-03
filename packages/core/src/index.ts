@@ -20,11 +20,31 @@ export {
   type AgentMode,
 } from "./agent-adapters.ts";
 export {
+  AGENT_MODEL_CATALOG,
+  agentCatalogEntry,
+  agentEfforts,
+  agentModelIds,
+  validateModelEffort,
+  type AgentCatalogEntry,
+  type CatalogModel,
+  type ModelEffortChoice,
+} from "./agent-catalog.ts";
+export {
+  resolveModelSelection,
+  type LabelModelMap,
+  type ModelSelection,
+  type ModelSelectionResult,
+  type ResolveModelSelectionParams,
+} from "./model-selection.ts";
+export {
   FIXOWL_DEFAULTS,
   globalConfigSchema,
+  globalConfigSchemaChecked,
+  labelModelsSchema,
   REPO_CONFIG_PATH,
   repoFileConfigSchema,
   repoFullNameSchema,
+  resolvedModelSelectionErrors,
   resolveRepoSettings,
   runnerBaseDir,
   type GlobalConfig,

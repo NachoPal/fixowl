@@ -1,4 +1,9 @@
-import { getAgentAdapter, resolveRepoSettings, runnerBaseDir } from "@fixowl/core";
+import {
+  getAgentAdapter,
+  resolvedModelSelectionErrors,
+  resolveRepoSettings,
+  runnerBaseDir,
+} from "@fixowl/core";
 import type { CliContext } from "../context.ts";
 import { checkDockerEngine } from "../docker/engine-check.ts";
 import { githubClient } from "../github/client.ts";
@@ -52,6 +57,25 @@ export async function validateCommand(ctx: CliContext): Promise<boolean> {
       } else {
         log.ok(
           `repo ${repoEntry.name}: agent "${adapter.name}" (env: ${adapter.env.join(", ") || "none"})`,
+        );
+      }
+
+      // Model/effort choices must be valid for the agent this repo uses.
+      const modelErrors = resolvedModelSelectionErrors(settings);
+      if (modelErrors.length > 0) {
+        for (const message of modelErrors) failed(`repo ${repoEntry.name}: ${message}`);
+      } else if (
+        settings.defaultModel !== undefined ||
+        settings.defaultEffort !== undefined ||
+        Object.keys(settings.labelModels).length > 0
+      ) {
+        const selectors = Object.keys(settings.labelModels);
+        log.ok(
+          `repo ${repoEntry.name}: model selection ok` +
+            (settings.defaultModel !== undefined || settings.defaultEffort !== undefined
+              ? ` (default ${settings.defaultModel ?? "-"}/${settings.defaultEffort ?? "-"})`
+              : "") +
+            (selectors.length > 0 ? ` (selector labels: ${selectors.join(", ")})` : ""),
         );
       }
     } catch (error) {

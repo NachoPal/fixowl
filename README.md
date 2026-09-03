@@ -93,12 +93,39 @@ defaults:
   agent: claude
   max_issues_per_run: 4
   issue_timeout_minutes: 45
+  model: sonnet                           # default model when no selector label
+  effort: medium                          # default reasoning effort
 agents:
   claude: { env: [CLAUDE_CODE_OAUTH_TOKEN] }   # the ONLY env vars agents ever see
 repos:
   - name: you/your-app
     schedule: "30 1 * * *"                # per-repo override
+    model: opus                           # per-repo default override
+    label_models:                         # dedicated selector labels (see below)
+      heavy: { model: opus, effort: max }
+      quick: { model: haiku, effort: low }
 ```
+
+### Model and reasoning effort
+
+You control which model and reasoning effort the coding agent runs with, two
+ways that compose:
+
+- **Per-label (`label_models`).** Dedicated selector labels - separate from the
+  `overnight`-style pickup labels - each mapping to a `{ model, effort }`. An
+  issue carrying **exactly one** selector label runs with that model/effort. An
+  issue carrying **two or more** is refused loudly (that one issue fails with a
+  clear error; the rest of the night is untouched). `fixowl provision` creates
+  the selector labels on the repo alongside the pickup labels.
+- **Default (`model` / `effort`).** In `defaults`, overridable per repo, used
+  when an issue carries no selector label. Set neither and fixowl passes no
+  `--model`/effort flag, falling through to the agent CLI's own default.
+
+Every model and effort is validated against the agent that repo uses (the
+catalog lives in `packages/core/src/agent-catalog.ts`). `fixowl init` presents
+the available options, and `fixowl validate` rejects any unknown value. For
+`claude`, models are aliases like `opus`/`sonnet`/`haiku`/`fable` and efforts
+are `low`/`medium`/`high`/`xhigh`/`max` (both passed as `--model`/`--effort`).
 
 Each target repo carries a `.fixowl.yml` (proposed by `provision` when
 missing) declaring its Dockerfile, verify commands, optional web screenshot

@@ -38,6 +38,24 @@ inputs:
     description: Hard timeout for the agent container per issue.
     required: false
     default: "45"
+  default-model:
+    description: >-
+      Model id the agent runs with when an issue carries none of the selector
+      labels. Empty passes no --model, using the agent CLI's own default.
+    required: false
+    default: ""
+  default-effort:
+    description: >-
+      Reasoning effort level for the default model. Empty passes no effort flag.
+    required: false
+    default: ""
+  label-models:
+    description: >-
+      JSON object mapping a selector label name to {"model","effort"}. An issue
+      with exactly one of these labels runs with that model/effort; two or more
+      fails that issue loudly. Empty means no per-label selection.
+    required: false
+    default: ""
 
 runs:
   using: node24
