@@ -135,7 +135,11 @@ export async function openPullRequest(
   return data.html_url;
 }
 
-/** Resolves the fixowl action repo's default-branch head SHA for pinning. */
+/**
+ * Resolves the fixowl action repo's default-branch head SHA for pinning.
+ * Fails rather than falling back to a mutable ref: an unpinned `@main`
+ * silently trades the SHA-pinning guarantee away.
+ */
 export async function resolveActionRef(
   octokit: Octokit,
   actionRepo: string,
@@ -147,8 +151,11 @@ export async function resolveActionRef(
       ref: `${actionRepo}@${data.sha}`,
       comment: `main @ ${new Date().toISOString().slice(0, 10)}`,
     };
-  } catch {
-    return { ref: `${actionRepo}@main`, comment: "unpinned: could not resolve HEAD sha" };
+  } catch (error) {
+    throw new Error(
+      `could not resolve ${actionRepo} HEAD for SHA-pinning the action ref: ${String(error)}`,
+      { cause: error },
+    );
   }
 }
 

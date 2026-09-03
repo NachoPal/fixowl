@@ -40,6 +40,12 @@ export async function provisionCommand(
     const ref = splitRepoFullName(repoFullName);
     const settings = resolveRepoSettings(ctx.config, repoFullName);
     const adapter = getAgentAdapter(settings.agent, settings.agentEnv);
+    if (adapter.name === "script") {
+      throw new Error(
+        `repo ${repoFullName} is configured with the test-only "script" agent, which executes ` +
+          `issue bodies as shell; refusing to provision it`,
+      );
+    }
     const { data: repoData } = await ctx.admin.rest.repos.get({ ...ref });
     const defaultBranch = repoData.default_branch;
 

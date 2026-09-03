@@ -49,12 +49,24 @@ export function dockerBuildArgv(params: {
   return ["docker", "build", "-t", params.image, "-f", params.dockerfile, params.contextDir];
 }
 
-export function containerName(issueNumber: number | "classify", purpose: string): string {
-  const suffix = purpose
+/**
+ * Container names include the repo so two runners for different repos on one
+ * host can never collide on `docker run --name` - or worse, have one repo's
+ * timeout `docker rm -f` kill the other repo's live container.
+ */
+export function containerName(
+  repoFullName: string,
+  issueNumber: number | "classify",
+  purpose: string,
+): string {
+  return `fixowl-${nameSlug(repoFullName)}-${issueNumber}-${nameSlug(purpose)}`.slice(0, 63);
+}
+
+function nameSlug(text: string): string {
+  return text
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
-  return `fixowl-${issueNumber}-${suffix}`.slice(0, 63);
 }
 
 export class DockerEngine implements ContainerEngine {

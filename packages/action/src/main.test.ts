@@ -77,7 +77,7 @@ async function setup(fixowlYml?: string): Promise<Setup> {
 }
 
 function issueNumberOfAgentRun(spec: ContainerRunSpec): number | undefined {
-  const match = /^fixowl-(\d+)-agent$/.exec(spec.name);
+  const match = /-(\d+)-agent$/.exec(spec.name);
   return match ? Number(match[1]) : undefined;
 }
 
@@ -90,7 +90,7 @@ function makeEngine(options: {
   classifyOutput?: string;
 }): FakeEngine {
   return new FakeEngine((spec): ExecResult | undefined => {
-    if (spec.name.startsWith("fixowl-classify-")) {
+    if (spec.name.includes("-classify-")) {
       return ok(options.classifyOutput ?? "");
     }
     const issueNumber = issueNumberOfAgentRun(spec);
@@ -264,7 +264,7 @@ describe("runNight", () => {
     const engine = makeEngine({ workspaceDir, classifyOutput: '{"chains": [[1], [2]]}' });
 
     await runNight({ github, engine, exec: realExec, log: silentLog }, inputs);
-    const classifyRun = engine.runs.find((spec) => spec.name.startsWith("fixowl-classify-"));
+    const classifyRun = engine.runs.find((spec) => spec.name.includes("-classify-"));
     expect(classifyRun?.workspaceReadOnly).toBe(true);
   });
 
@@ -301,7 +301,7 @@ describe("runNight", () => {
     const github = new FakeGitHub([issue(1, "Fix header", "x"), issue(2, "Fix footer", "y")]);
     const hookMarker = join(workspaceDir, "hook-ran-on-host.txt");
     const engine = new FakeEngine((spec): ExecResult | undefined => {
-      if (spec.name.startsWith("fixowl-classify-")) {
+      if (spec.name.includes("-classify-")) {
         expect(existsSync(join(workspaceDir, ".git"))).toBe(false);
         return ok('{"chains": [[1], [2]]}');
       }

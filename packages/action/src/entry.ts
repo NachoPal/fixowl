@@ -97,6 +97,17 @@ async function run(): Promise<void> {
     throw new Error("no labels configured; set labels-any or labels-all");
   }
 
+  const agentName = core.getInput("agent") || "claude";
+  // The script adapter executes issue bodies as shell; it exists for fixowl's
+  // own tests, where the fake GitHub is the only issue source. On a real repo
+  // that would be remote code execution for anyone who can file an issue.
+  if (agentName === "script" && process.env.FIXOWL_UNSAFE_SCRIPT_AGENT !== "1") {
+    throw new Error(
+      'agent "script" executes issue bodies as shell and is for fixowl\'s own tests; ' +
+        "set FIXOWL_UNSAFE_SCRIPT_AGENT=1 in the workflow env if you really mean it",
+    );
+  }
+
   const octokit = new Octokit({ auth: token });
   const { data: repoData } = await octokit.repos.get({ owner, repo });
 
@@ -116,7 +127,7 @@ async function run(): Promise<void> {
       repoFullName,
       defaultBranch: repoData.default_branch,
       labels,
-      agentName: core.getInput("agent") || "claude",
+      agentName,
       agentEnvNames: parseLabelInput(core.getInput("agent-env")),
       maxIssues: positiveIntInput("max-issues-per-run", 4),
       issueTimeoutMinutes: positiveIntInput("issue-timeout-minutes", 45),

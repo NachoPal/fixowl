@@ -25,10 +25,12 @@ export async function runVerification(params: {
   image: string;
   workspaceDir: string;
   evidenceDir: string;
+  repoFullName: string;
   issueNumber: number;
   verify: RepoFileConfig["verify"];
 }): Promise<CheckOutcome[]> {
-  const { engine, log, image, workspaceDir, evidenceDir, issueNumber, verify } = params;
+  const { engine, log, image, workspaceDir, evidenceDir, repoFullName, issueNumber, verify } =
+    params;
   const outcomes: CheckOutcome[] = [];
   const checks = verify?.checks ?? [];
   const webChecks = verify?.web ?? [];
@@ -40,7 +42,7 @@ export async function runVerification(params: {
     log.info(`verify: running check "${check.name}"`);
     const result = await engine.run({
       image,
-      name: containerName(issueNumber, `check-${check.name}`),
+      name: containerName(repoFullName, issueNumber, `check-${check.name}`),
       workspaceDir,
       argv: ["bash", "-lc", check.run],
       timeoutMs: CHECK_TIMEOUT_MS,
@@ -66,7 +68,7 @@ export async function runVerification(params: {
       const command = `( ${web.start} ) >${EVIDENCE_MOUNT_PATH}/app.log 2>&1 & node ${VERIFY_WEB_SCRIPT_MOUNT_PATH} --url ${shellQuote(web.url)} --out ${EVIDENCE_MOUNT_PATH} --deadline ${web.startup_timeout_seconds ?? 120}`;
       const result = await engine.run({
         image,
-        name: containerName(issueNumber, `web-${web.name}`),
+        name: containerName(repoFullName, issueNumber, `web-${web.name}`),
         workspaceDir,
         argv: ["bash", "-lc", command],
         extraMounts: [

@@ -81,9 +81,17 @@ describe("dockerBuildArgv", () => {
 });
 
 describe("containerName", () => {
-  it("sanitizes purposes", () => {
-    expect(containerName(7, "check-Client Tests!")).toBe("fixowl-7-check-client-tests");
-    expect(containerName("classify", "claude")).toBe("fixowl-classify-claude");
+  it("sanitizes the repo and purpose", () => {
+    expect(containerName("Acme/Web.App", 7, "check-Client Tests!")).toBe(
+      "fixowl-acme-web-app-7-check-client-tests",
+    );
+    expect(containerName("test/repo", "classify", "claude")).toBe(
+      "fixowl-test-repo-classify-claude",
+    );
+  });
+
+  it("keeps names for different repos distinct (docker rm -f must never cross repos)", () => {
+    expect(containerName("a/one", 7, "agent")).not.toBe(containerName("a/two", 7, "agent"));
   });
 });
 

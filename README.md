@@ -37,8 +37,10 @@ runner host (any Mac/Linux box with Docker)                               ▼
   degrades to "unavailable", failing checks turn the PR into a draft, and
   screenshots/logs land in the run's `fixowl-evidence` artifact.
 - **Agent-agnostic**: adapters for `claude` (default), `aider`, and a
-  deterministic `script` adapter used for e2e tests. Adding one is a few lines
-  in `packages/core/src/agent-adapters.ts`.
+  deterministic `script` adapter used for e2e tests (test-only: it executes
+  issue bodies as shell, so the action refuses it without an explicit
+  `FIXOWL_UNSAFE_SCRIPT_AGENT=1` opt-in). Adding one is a few lines in
+  `packages/core/src/agent-adapters.ts`.
 - **Cloud-portable by construction**: the generated workflow has no
   `container:` key and no host assumptions; swapping `runs-on` to
   `ubuntu-latest` is the entire migration.

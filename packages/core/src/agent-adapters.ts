@@ -62,6 +62,18 @@ const script: AgentAdapter = {
 
 const ADAPTERS: Record<string, AgentAdapter> = { claude, aider, script };
 
+/**
+ * Env var names that would hand the agent a GitHub credential. "The coding
+ * agent never holds a GitHub token" is a hard invariant, so the allowlist
+ * refuses these structurally instead of trusting configuration discipline:
+ * a workflow or config naming one fails the night loudly at startup.
+ */
+export const FORBIDDEN_AGENT_ENV: readonly string[] = [
+  "FIXOWL_GITHUB_TOKEN",
+  "GITHUB_TOKEN",
+  "GH_TOKEN",
+];
+
 export function agentAdapterNames(): string[] {
   return Object.keys(ADAPTERS);
 }
@@ -71,6 +83,13 @@ export function getAgentAdapter(name: string, envOverride?: readonly string[]): 
   if (!adapter) {
     throw new Error(`unknown agent adapter "${name}" (known: ${agentAdapterNames().join(", ")})`);
   }
-  if (envOverride === undefined) return adapter;
-  return { ...adapter, env: [...envOverride] };
+  const env = envOverride === undefined ? adapter.env : [...envOverride];
+  const forbidden = env.filter((n) => FORBIDDEN_AGENT_ENV.includes(n.toUpperCase()));
+  if (forbidden.length > 0) {
+    throw new Error(
+      `agent env allowlist may not include GitHub credentials (${forbidden.join(", ")}); ` +
+        `the coding agent never holds a GitHub token`,
+    );
+  }
+  return envOverride === undefined ? adapter : { ...adapter, env };
 }

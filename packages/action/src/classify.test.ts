@@ -42,9 +42,10 @@ describe("parseClassification", () => {
 });
 
 describe("buildClassifyPrompt", () => {
-  it("fences every issue body and demands pure JSON", () => {
+  it("fences every issue title and body and demands pure JSON", () => {
     const prompt = buildClassifyPrompt([issue(1, "a", "body-one"), issue(2, "b", "body-two")]);
     expect(prompt.match(/<untrusted-issue-body>/g)).toHaveLength(2);
+    expect(prompt.match(/<untrusted-issue-title>/g)).toHaveLength(2);
     expect(prompt).toContain('{"chains": [[<issue number>, ...], ...]}');
     expect(prompt).toContain("read-only");
   });

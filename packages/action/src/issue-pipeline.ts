@@ -24,6 +24,7 @@ export interface IssueRunContext {
   prBase: string;
   stackedOn?: { prNumber: number; branch: string };
   image: string;
+  repoFullName: string;
   repoConfig: RepoFileConfig;
   adapter: AgentAdapter;
   /** Resolved allowlisted env values for the agent container. */
@@ -75,7 +76,7 @@ export async function processIssue(
   log.info(`issue #${issue.number}: running agent "${ctx.adapter.name}"`);
   const agentResult = await engine.run({
     image: ctx.image,
-    name: containerName(issue.number, "agent"),
+    name: containerName(ctx.repoFullName, issue.number, "agent"),
     workspaceDir: ctx.workspaceDir,
     argv: ctx.adapter.argv("fix"),
     env: ctx.agentEnv,
@@ -110,6 +111,7 @@ export async function processIssue(
     image: ctx.image,
     workspaceDir: ctx.workspaceDir,
     evidenceDir: ctx.evidenceDir,
+    repoFullName: ctx.repoFullName,
     issueNumber: issue.number,
     verify: ctx.repoConfig.verify,
   });

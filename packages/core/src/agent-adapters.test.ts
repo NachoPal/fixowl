@@ -3,7 +3,12 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { agentAdapterNames, getAgentAdapter, PROMPT_MOUNT_PATH } from "./agent-adapters.ts";
+import {
+  agentAdapterNames,
+  FORBIDDEN_AGENT_ENV,
+  getAgentAdapter,
+  PROMPT_MOUNT_PATH,
+} from "./agent-adapters.ts";
 
 describe("agent adapters", () => {
   it("claude: headless argv, prompt on stdin, oauth token allowlisted", () => {
@@ -70,6 +75,16 @@ describe("agent adapters", () => {
     const adapter = getAgentAdapter("aider", ["ANTHROPIC_API_KEY"]);
     expect(adapter.env).toEqual(["ANTHROPIC_API_KEY"]);
     expect(getAgentAdapter("aider").env).toEqual([]);
+  });
+
+  it("the allowlist structurally refuses GitHub credentials", () => {
+    for (const name of FORBIDDEN_AGENT_ENV) {
+      expect(() => getAgentAdapter("claude", [name])).toThrow(/never holds a GitHub token/);
+    }
+    expect(() => getAgentAdapter("claude", ["ANTHROPIC_API_KEY", "gh_token"])).toThrow(
+      /never holds a GitHub token/,
+    );
+    expect(FORBIDDEN_AGENT_ENV).toContain("FIXOWL_GITHUB_TOKEN");
   });
 
   it("unknown adapter throws with the known list", () => {

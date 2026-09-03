@@ -18,6 +18,7 @@ describe("runVerification", () => {
       image: "img",
       workspaceDir: "/ws",
       evidenceDir: tempDir(),
+      repoFullName: "test/repo",
       issueNumber: 1,
       verify: undefined,
     });
@@ -36,6 +37,7 @@ describe("runVerification", () => {
       image: "img",
       workspaceDir: "/ws",
       evidenceDir,
+      repoFullName: "test/repo",
       issueNumber: 7,
       verify: {
         checks: [
@@ -64,6 +66,7 @@ describe("runVerification", () => {
       image: "img",
       workspaceDir: "/ws",
       evidenceDir: tempDir(),
+      repoFullName: "test/repo",
       issueNumber: 7,
       verify: { checks: [{ name: "t", run: "true" }] },
     });
@@ -82,7 +85,14 @@ describe("runVerification", () => {
     const verify = {
       web: [{ name: "app", start: "npm run dev", url: "http://localhost:5173/" }],
     };
-    const shared = { engine, log: silentLog, image: "img", workspaceDir: "/ws", issueNumber: 7 };
+    const shared = {
+      engine,
+      log: silentLog,
+      image: "img",
+      workspaceDir: "/ws",
+      repoFullName: "test/repo",
+      issueNumber: 7,
+    };
 
     expect((await runVerification({ ...shared, evidenceDir, verify }))[0]).toEqual({
       name: "app",
@@ -110,6 +120,7 @@ describe("runVerification", () => {
       image: "img",
       workspaceDir: "/ws",
       evidenceDir,
+      repoFullName: "test/repo",
       issueNumber: 7,
       verify: {
         web: [{ name: "app", start: "npm run dev", url: "http://localhost:5173/?slug=x&y=z" }],

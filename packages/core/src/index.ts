@@ -13,6 +13,7 @@ export {
 } from "./labels.ts";
 export {
   agentAdapterNames,
+  FORBIDDEN_AGENT_ENV,
   getAgentAdapter,
   PROMPT_MOUNT_PATH,
   type AgentAdapter,

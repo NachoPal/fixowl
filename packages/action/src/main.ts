@@ -153,6 +153,7 @@ async function runNightWithGit(
             prBase,
             stackedOn,
             image,
+            repoFullName: inputs.repoFullName,
             repoConfig,
             adapter,
             agentEnv,
@@ -280,7 +281,7 @@ async function classifyIssues(params: {
   }
   const result = await engine.run({
     image,
-    name: containerName("classify", adapter.name),
+    name: containerName(inputs.repoFullName, "classify", adapter.name),
     workspaceDir: inputs.workspaceDir,
     workspaceReadOnly: true,
     argv: adapter.argv("classify"),
@@ -311,6 +312,11 @@ function tail(text: string, max: number): string {
   return text.length <= max ? text : `...${text.slice(-max)}`;
 }
 
+/** Issue titles and error output are untrusted/arbitrary text; keep them from breaking the summary's markdown tables. */
+function markdownCell(text: string): string {
+  return text.replaceAll(/\s+/g, " ").replaceAll("|", "\\|").trim();
+}
+
 export function renderSummary(repoFullName: string, summary: NightSummary): string {
   const lines: string[] = [`# 🦉 fixowl night run: ${repoFullName}`, ""];
   if (summary.results.length === 0 && summary.skipped.length === 0) {
@@ -328,9 +334,11 @@ export function renderSummary(repoFullName: string, summary: NightSummary): stri
           ? result.verification.map((check) => `${check.name}: ${check.status}`).join("<br>")
           : "-";
       const status =
-        result.error !== undefined ? `${result.status} (${result.error})` : result.status;
+        result.error !== undefined
+          ? `${result.status} (${markdownCell(result.error)})`
+          : result.status;
       lines.push(
-        `| #${result.issue.number} ${result.issue.title} | ${status} | ${pr} | ${verification} |`,
+        `| #${result.issue.number} ${markdownCell(result.issue.title)} | ${status} | ${pr} | ${verification} |`,
       );
     }
     lines.push("");
@@ -338,7 +346,7 @@ export function renderSummary(repoFullName: string, summary: NightSummary): stri
   if (summary.skipped.length > 0) {
     lines.push(`## Skipped (branch already exists)`, "");
     for (const skip of summary.skipped) {
-      lines.push(`- #${skip.issue.number} ${skip.issue.title}: \`${skip.branch}\``);
+      lines.push(`- #${skip.issue.number} ${markdownCell(skip.issue.title)}: \`${skip.branch}\``);
     }
     lines.push("");
   }

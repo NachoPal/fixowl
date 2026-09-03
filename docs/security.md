@@ -2,7 +2,9 @@
 
 fixowl runs an LLM coding agent unattended against issues that, on a public
 repo, anyone can write. The design assumes prompt injection will eventually
-land and makes the blast radius a reviewable diff, nothing more.
+land and makes the write-path blast radius a reviewable diff. What an
+injected agent can still read (and therefore leak) is bounded but not zero;
+see "Residual risks" at the bottom.
 
 ## Trust boundaries
 
@@ -13,9 +15,10 @@ issue body (untrusted)
   -> human PR review (the product's actual gate)
 ```
 
-- Issue bodies enter prompts only as data inside `<untrusted-issue-body>`
-  fences, with an instruction to treat them as a problem description only.
-  A literal closing fence inside a body is defused.
+- Issue titles and bodies enter prompts only as data inside
+  `<untrusted-issue-title>` / `<untrusted-issue-body>` fences, with an
+  instruction to treat them as a problem description only. A literal closing
+  fence inside either is defused, and titles are collapsed to one line.
 - The fence is assumed to fail. The structural backstops are what count:
   - The agent container has NO GitHub token. Commits and pushes happen on the
     host, by the harness, after the agent is done.
@@ -36,6 +39,10 @@ issue body (untrusted)
     (`no-merge.test.ts`) keeps it that way.
 - Only collaborators with triage access or better can apply labels, and labels
   gate the queue: strangers can file issues, not schedule them.
+- The test-only `script` adapter (issue bodies run as shell, for the zero-spend
+  e2e) is refused at action startup unless `FIXOWL_UNSAFE_SCRIPT_AGENT=1` is
+  set in the workflow env, and `fixowl provision` refuses to provision a repo
+  configured with it.
 
 ## Tokens
 
@@ -58,6 +65,10 @@ Two fine-grained PATs, both scoped to only the target repos:
   public key) before the API call.
 - The agent credential (e.g. `CLAUDE_CODE_OAUTH_TOKEN`) reaches only the agent
   container, passed as `-e NAME` so values never appear in argv or logs.
+- The agent env allowlist structurally refuses GitHub credential names
+  (`FIXOWL_GITHUB_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN`): `getAgentAdapter`
+  throws, so a workflow or config that names one fails the night loudly at
+  startup instead of shipping a token into a container.
 
 ## Spend control
 
@@ -76,3 +87,19 @@ per-issue timeout, and the agent's own turn limit.
 - Exactly one level of containerization: the runner is native and calls
   `docker run` once per step; no runner-in-docker, no socket mounting, and
   nothing inside a container ever invokes Docker.
+
+## Residual risks
+
+Accepted and bounded rather than eliminated:
+
+- **Exfiltration.** The agent container needs network egress to reach its own
+  LLM API, so a successfully injected agent can send anything it can read to
+  anywhere: the mounted working tree (treat private-repo source accordingly)
+  and its own credential (e.g. `CLAUDE_CODE_OAUTH_TOKEN`), whose abuse is
+  bounded by the agent vendor's spend and turn limits, not by fixowl. An
+  egress allowlist proxy is the upgrade path if this matters for your repos.
+- **Root-owned leftovers on Linux.** See the known limitation in
+  `host-bootstrap.md`: files (including a planted `.git`) written as root in
+  the mounted workspace can resist cleanup by the runner user. The generated
+  workflow's pre-checkout reset step still removes them where the runner user
+  can; run agent containers with `--user` to close it fully.
