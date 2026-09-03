@@ -1,7 +1,8 @@
-import { Octokit } from "@octokit/rest";
 import { getAgentAdapter, resolveRepoSettings, runnerBaseDir } from "@fixowl/core";
 import type { CliContext } from "../context.ts";
 import { checkDockerEngine } from "../docker/engine-check.ts";
+import { githubClient } from "../github/client.ts";
+import { describeGitHubError } from "../github/errors.ts";
 import { splitRepoFullName } from "../github/repo-provisioning.ts";
 import { log } from "../log.ts";
 import { isUnderHome } from "../runner/install.ts";
@@ -18,14 +19,14 @@ export async function validateCommand(ctx: CliContext): Promise<boolean> {
     const { data } = await ctx.admin.rest.users.getAuthenticated();
     log.ok(`admin token: authenticated as ${data.login}`);
   } catch (error) {
-    failed(`admin token: ${describeAuthError(error)}`);
+    failed(`admin token: ${describeGitHubError(error)}`);
   }
-  const runtime = new Octokit({ auth: ctx.config.github.runtime_token });
+  const runtime = githubClient(ctx.config.github.runtime_token);
   try {
     const { data } = await runtime.rest.users.getAuthenticated();
     log.ok(`runtime token: authenticated as ${data.login}`);
   } catch (error) {
-    failed(`runtime token: ${describeAuthError(error)}`);
+    failed(`runtime token: ${describeGitHubError(error)}`);
   }
 
   // Repos and per-repo settings
@@ -35,7 +36,7 @@ export async function validateCommand(ctx: CliContext): Promise<boolean> {
       const { data } = await ctx.admin.rest.repos.get({ ...ref });
       log.ok(`repo ${repoEntry.name}: reachable (default branch ${data.default_branch})`);
     } catch (error) {
-      failed(`repo ${repoEntry.name}: ${describeAuthError(error)}`);
+      failed(`repo ${repoEntry.name}: ${describeGitHubError(error)}`);
       continue;
     }
     try {
@@ -76,14 +77,4 @@ export async function validateCommand(ctx: CliContext): Promise<boolean> {
   if (!ok) log.error("validation failed");
   else log.ok("everything checks out");
   return ok;
-}
-
-function describeAuthError(error: unknown): string {
-  if (typeof error === "object" && error !== null && "status" in error) {
-    const status = (error as { status: unknown }).status;
-    if (status === 401) return "invalid or expired token (HTTP 401)";
-    if (status === 403) return "token lacks permission (HTTP 403)";
-    if (status === 404) return "not found or token cannot see it (HTTP 404)";
-  }
-  return error instanceof Error ? error.message : String(error);
 }

@@ -44,12 +44,28 @@ In the morning you review. **fixowl never merges.**
 
 ```sh
 npm install -g fixowl
-fixowl init          # scaffolds ~/.fixowl/{config.yaml,secrets.env}, prints PAT instructions
+fixowl init          # guided setup, start to finish
+```
+
+`init` walks through the whole thing and writes nothing until you have answered:
+
+1. the two fine-grained PATs (it verifies each one against GitHub as you paste it),
+2. the coding agent and its credential,
+3. one or more repos: schedule (local `HH:MM`, converted to a UTC cron), labels,
+   and how many issues a night may take on,
+
+then runs the rest for you and stops with an explanation if a step fails:
+
+```sh
 fixowl validate      # tokens, repos, docker engine, agent credentials
 fixowl provision     # labels + sealed secrets + workflow into each repo (also proposes
                      # a starter .fixowl.yml and issue template via PR)
 fixowl start         # installs, registers, and starts the runner service(s)
 ```
+
+Those stay available on their own for later changes, and `fixowl init
+--non-interactive` just scaffolds `~/.fixowl/{config.yaml,secrets.env}` for you
+to fill in by hand.
 
 Then file an issue, label it `overnight`, and check back tomorrow. Or trigger a
 night right now:

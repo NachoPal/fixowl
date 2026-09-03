@@ -50,11 +50,14 @@ The runner must be online when the schedule fires.
 
 ```sh
 npm install -g fixowl
-# copy ~/.fixowl/ (config.yaml + secrets.env) from your dev machine, or run:
-fixowl init      # then fill in tokens
+# copy ~/.fixowl/ (config.yaml + secrets.env) from your dev machine, then:
 fixowl validate
 fixowl start     # installs runners under ~/.fixowl/runners, registers them,
                  # starts them as launchd services (reboot-safe via svc.sh)
+
+# or set this host up from scratch: the guided setup asks for the tokens, the
+# agent and the repos, then validates, provisions, and offers to start.
+fixowl init
 ```
 
 `fixowl start` writes each runner's `.env` with `DOCKER_HOST` pointing at the

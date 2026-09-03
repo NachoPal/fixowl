@@ -1,7 +1,8 @@
 import { dirname, join } from "node:path";
-import { Octokit } from "@octokit/rest";
+import type { Octokit } from "@octokit/rest";
 import type { GlobalConfig } from "@fixowl/core";
 import { CONFIG_PATH, loadConfig, SECRETS_PATH, type LoadedConfig } from "./config-load.ts";
+import { githubClient } from "./github/client.ts";
 import { log } from "./log.ts";
 
 export interface CliContext extends LoadedConfig {
@@ -14,7 +15,7 @@ export function makeContext(configPath?: string): CliContext {
     configPath !== undefined ? join(dirname(configPath), "secrets.env") : SECRETS_PATH;
   const loaded = loadConfig(resolvedConfig, secretsPath);
   for (const warning of loaded.warnings) log.warn(warning);
-  return { ...loaded, admin: new Octokit({ auth: loaded.config.github.admin_token }) };
+  return { ...loaded, admin: githubClient(loaded.config.github.admin_token) };
 }
 
 /** All configured repos, or just the one named on the command line. */

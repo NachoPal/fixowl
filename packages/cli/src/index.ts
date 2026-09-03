@@ -24,9 +24,10 @@ function configPath(): string | undefined {
 
 program
   .command("init")
-  .description("scaffold ~/.fixowl (config.yaml, secrets.env) and print next steps")
-  .action(() => {
-    initCommand();
+  .description("guided setup: tokens, agent, repos, then validate, provision, and start")
+  .option("--non-interactive", "just scaffold ~/.fixowl and print the manual steps")
+  .action(async (options: { nonInteractive?: boolean }) => {
+    await initCommand({ configPath: configPath(), nonInteractive: options.nonInteractive });
   });
 
 program
