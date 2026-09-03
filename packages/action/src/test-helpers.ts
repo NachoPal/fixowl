@@ -3,6 +3,7 @@ import type {
   ContainerRunSpec,
   ExecResult,
   GitHubApi,
+  IssueDeps,
   IssueLite,
   Logger,
 } from "./deps.ts";
@@ -33,6 +34,8 @@ export interface CreatedPull {
 export class FakeGitHub implements GitHubApi {
   pulls: CreatedPull[] = [];
   comments: Array<{ issueNumber: number; body: string }> = [];
+  /** Native dependency edges keyed by issue number; empty means no edges (today's behavior). */
+  dependencies: Map<number, IssueDeps> = new Map();
   private nextPrNumber = 100;
 
   constructor(public issues: IssueLite[]) {}
@@ -42,6 +45,14 @@ export class FakeGitHub implements GitHubApi {
     return this.issues.filter((candidate) =>
       required.every((label) => candidate.labels.includes(label)),
     );
+  }
+
+  async getIssueDependencies(numbers: readonly number[]): Promise<Map<number, IssueDeps>> {
+    const result = new Map<number, IssueDeps>();
+    for (const n of numbers) {
+      result.set(n, this.dependencies.get(n) ?? { number: n, blockedBy: [] });
+    }
+    return result;
   }
 
   async createPullRequest(params: {

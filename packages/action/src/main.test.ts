@@ -447,4 +447,85 @@ describe("runNight", () => {
     expect(markdown).toContain("agent-failed");
     expect(markdown).toContain("tests: passed");
   });
+
+  it("a native prerequisite forces stacking even when the LLM calls the issues independent", async () => {
+    const { workspaceDir, inputs } = await setup();
+    const github = new FakeGitHub([issue(1, "Fix header", "x"), issue(2, "Fix footer", "y")]);
+    // #2 is blocked by #1; both selected and open.
+    github.dependencies.set(2, {
+      number: 2,
+      blockedBy: [{ number: 1, repo: "test/repo", state: "OPEN" }],
+    });
+    const engine = makeEngine({ workspaceDir, classifyOutput: '{"chains": [[1], [2]]}' });
+
+    const summary = await runNight({ github, engine, exec: realExec, log: silentLog }, inputs);
+    expect(summary.deferred).toEqual([]);
+    expect(github.pulls.map((pr) => [pr.head, pr.base])).toEqual([
+      ["issue/1-fix-header", "main"],
+      ["issue/2-fix-footer", "issue/1-fix-header"],
+    ]);
+    expect(github.pulls[1]?.body).toContain("Stacked on #101");
+  });
+
+  it("defers a dependent whose blocker is not in tonight's set: no PR, no agent run", async () => {
+    const { workspaceDir, inputs } = await setup();
+    const github = new FakeGitHub([issue(2, "Fix footer", "y")]);
+    // #2 is blocked by #1, which is not selected tonight.
+    github.dependencies.set(2, {
+      number: 2,
+      blockedBy: [{ number: 1, repo: "test/repo", state: "OPEN" }],
+    });
+    const engine = makeEngine({ workspaceDir });
+
+    const summary = await runNight({ github, engine, exec: realExec, log: silentLog }, inputs);
+    expect(summary.results).toEqual([]);
+    expect(github.pulls).toHaveLength(0);
+    expect(engine.runs.some((spec) => spec.name.endsWith("-2-agent"))).toBe(false);
+    expect(summary.deferred.map((d) => d.issue.number)).toEqual([2]);
+    expect(renderSummary("test/repo", summary)).toContain("## Deferred");
+  });
+
+  it("defers the dependent when its prerequisite fails to ship (not rebase-to-default)", async () => {
+    const { workspaceDir, inputs } = await setup();
+    const github = new FakeGitHub([issue(1, "Fix header", "x"), issue(2, "Fix footer", "y")]);
+    github.dependencies.set(2, {
+      number: 2,
+      blockedBy: [{ number: 1, repo: "test/repo", state: "OPEN" }],
+    });
+    // The prerequisite #1's agent fails.
+    const engine = makeEngine({
+      workspaceDir,
+      failAgentFor: [1],
+      classifyOutput: '{"chains": [[1], [2]]}',
+    });
+
+    const summary = await runNight({ github, engine, exec: realExec, log: silentLog }, inputs);
+    // #1 was attempted and failed; #2 is deferred, never attempted, no PR (contrast
+    // the conflict-chain case where the downstream member rebases onto main).
+    expect(summary.results.map((r) => [r.issue.number, r.status])).toEqual([[1, "agent-failed"]]);
+    expect(summary.deferred.map((d) => d.issue.number)).toEqual([2]);
+    expect(github.pulls).toHaveLength(0);
+    expect(engine.runs.some((spec) => spec.name.endsWith("-2-agent"))).toBe(false);
+  });
+
+  it("defers a whole dependency cycle and ships the rest", async () => {
+    const { workspaceDir, inputs } = await setup();
+    const github = new FakeGitHub(structuredClone(threeIssues));
+    // #1 <-> #2 cycle; #3 is independent.
+    github.dependencies.set(1, {
+      number: 1,
+      blockedBy: [{ number: 2, repo: "test/repo", state: "OPEN" }],
+    });
+    github.dependencies.set(2, {
+      number: 2,
+      blockedBy: [{ number: 1, repo: "test/repo", state: "OPEN" }],
+    });
+    const engine = makeEngine({ workspaceDir, classifyOutput: '{"chains": [[3]]}' });
+
+    const summary = await runNight({ github, engine, exec: realExec, log: silentLog }, inputs);
+    expect(summary.results.map((r) => r.issue.number)).toEqual([3]);
+    expect(github.pulls.map((pr) => pr.head)).toEqual(["issue/3-fix-sidebar"]);
+    expect(summary.deferred.map((d) => d.issue.number).toSorted()).toEqual([1, 2]);
+    expect(summary.warnings.some((w) => w.includes("cycle"))).toBe(true);
+  });
 });

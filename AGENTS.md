@@ -58,6 +58,14 @@ See [docs/releasing.md](docs/releasing.md).
   read it. Extend an agent there rather than hardcoding a model list elsewhere.
   Per-issue model/effort resolution is pure logic in
   `packages/core/src/model-selection.ts`.
+- Night planning is two layers of pure logic between selection and the stacking
+  loop in `main.ts`. Layer 1 (`packages/action/src/prereq-planner.ts`) enforces
+  native `blocked-by` edges - fetched read-only via `GitHubApi.getIssueDependencies`
+  (`entry.ts`, one aliased GraphQL query) - deferring a dependent whose
+  prerequisite is not shipping tonight. Layer 2 (`classify.ts`, unchanged same-code
+  heuristic) runs over the non-deferred set; `merge-graph.ts` overlays its groups
+  on the Layer-1 order under "prerequisites always win". Empty edges == the
+  pre-dep-graph behavior (the regression guard in `main.test.ts`).
 
 ## Maintaining this file
 

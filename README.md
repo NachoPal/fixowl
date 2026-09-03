@@ -20,11 +20,15 @@ In the morning you review. **fixowl never merges.**
 - **One PR per issue**, branch `issue/<n>-<slug>`. The branch doubles as the
   idempotency marker: reruns never duplicate work, and deleting the branch is
   how you ask for a retry.
-- **Dependency-aware**: the agent first classifies the night's issues; ones
-  that touch the same code are fixed as a chain of stacked PRs (each targeting
-  its parent branch), while independent ones each branch off the default
-  branch. Issues are fixed one at a time - classification sets branch topology,
-  not concurrency. See [docs/stacked-prs.md](docs/stacked-prs.md).
+- **Dependency-aware**: two layers decide branch topology. First, fixowl reads
+  the night's issues' native GitHub `blocked-by` edges and enforces them: a
+  dependent stacks on and ships after its prerequisite when that prerequisite is
+  also shipping tonight, and is otherwise **deferred** (the prerequisite isn't
+  selected, failed to ship, is cross-repo, or forms a cycle - deferrals are
+  logged and listed in the night summary). Then a heuristic pass classifies the
+  remaining issues by whether they touch the same code and stacks those too;
+  prerequisites always win over that heuristic. Issues are fixed one at a time -
+  topology, not concurrency. See [docs/stacked-prs.md](docs/stacked-prs.md).
 - **Verification is a capability, not a mandate**: repos declare checks and
   optional web screenshot targets in `.fixowl.yml`; missing capability
   degrades to "unavailable", failing checks turn the PR into a draft, and

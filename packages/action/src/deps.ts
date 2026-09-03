@@ -11,9 +11,33 @@ export interface IssueLite {
   labels: string[];
 }
 
+/** One native GitHub issue-dependency edge target (from a `blockedBy` connection). */
+export interface EdgeRef {
+  number: number;
+  /** `owner/repo` of the target issue, to detect cross-repo blockers. */
+  repo: string;
+  state: "OPEN" | "CLOSED";
+}
+
+/** The native prerequisite edges of one selected issue (Layer 1 input). */
+export interface IssueDeps {
+  number: number;
+  /** Issues that must ship before this one; a closed target is already satisfied. */
+  blockedBy: EdgeRef[];
+  /** True when the issue has more blockers than were fetched (>50); forces a conservative defer. */
+  blockedByOverflow?: boolean;
+}
+
 export interface GitHubApi {
   /** One GitHub "list issues" call; `labelsQuery` is the comma-joined AND query. Returns issues only, never PRs. */
   listOpenIssuesWithLabels(labelsQuery: string): Promise<IssueLite[]>;
+  /**
+   * Read-only fetch of the native `blockedBy` dependency edges for the given
+   * issue numbers, in one aliased GraphQL round-trip. Layer-1 planner input;
+   * an empty result means the night behaves exactly as it did before dep-graph
+   * awareness. Never writes edges (see the propose-and-confirm decision, off).
+   */
+  getIssueDependencies(numbers: readonly number[]): Promise<Map<number, IssueDeps>>;
   createPullRequest(params: {
     head: string;
     base: string;
