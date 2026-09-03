@@ -126,6 +126,10 @@ Action), `packages/cli` (the `fixowl` command). All side effects run behind
 interfaces, so the entire night loop is tested in-process with a real git
 sandbox and fake GitHub/Docker.
 
+Releases are cut by a manual workflow from the version committed in the code
+(`packages/cli/package.json`, kept in lockstep with the root). See
+[docs/releasing.md](docs/releasing.md).
+
 ## License
 
 MIT
