@@ -22,8 +22,9 @@ In the morning you review. **fixowl never merges.**
   how you ask for a retry.
 - **Dependency-aware**: the agent first classifies the night's issues; ones
   that touch the same code are fixed as a chain of stacked PRs (each targeting
-  its parent branch), independent ones in parallel off the default branch. See
-  [docs/stacked-prs.md](docs/stacked-prs.md).
+  its parent branch), while independent ones each branch off the default
+  branch. Issues are fixed one at a time - classification sets branch topology,
+  not concurrency. See [docs/stacked-prs.md](docs/stacked-prs.md).
 - **Verification is a capability, not a mandate**: repos declare checks and
   optional web screenshot targets in `.fixowl.yml`; missing capability
   degrades to "unavailable", failing checks turn the PR into a draft, and
