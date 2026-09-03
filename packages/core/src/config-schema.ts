@@ -77,8 +77,11 @@ export type RepoEntry = z.infer<typeof repoEntrySchema>;
 
 /**
  * Semantic check layered on top of the shape: every configured model/effort
- * must be valid for the agent the repo actually uses. Kept as a superRefine so
- * a hand-edited config fails at parse, and reused by `fixowl validate`.
+ * must be valid for the agent the repo actually uses. This is the strict
+ * variant; the normal load path (`loadConfig`) parses with the shape-only
+ * `globalConfigSchema`, and `fixowl validate` surfaces these problems via
+ * `resolvedModelSelectionErrors`. Use this schema for fail-fast parse
+ * validation (and in tests) when an invalid model/effort must reject at parse.
  */
 export const globalConfigSchemaChecked = globalConfigSchema.superRefine((config, ctx) => {
   for (const entry of config.repos) {
