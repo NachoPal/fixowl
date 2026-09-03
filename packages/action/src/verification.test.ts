@@ -128,5 +128,6 @@ describe("runVerification", () => {
     const command = spec?.argv[2] ?? "";
     expect(command).toContain("( npm run dev )");
     expect(command).toContain("'http://localhost:5173/?slug=x&y=z'");
+    expect(command).toContain("--deadline 120");
   });
 });

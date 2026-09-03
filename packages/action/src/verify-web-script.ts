@@ -36,13 +36,14 @@ try {
   }
 }
 
-const deadline = Date.now() + 120_000;
+const deadlineSeconds = Number(arg("deadline") ?? "120");
+const deadline = Date.now() + deadlineSeconds * 1000;
 let reachable = false;
 let lastError = "";
 while (Date.now() < deadline) {
   try {
     const response = await fetch(url);
-    if (response.status < 500) {
+    if (response.status < 400) {
       reachable = true;
       break;
     }

@@ -49579,7 +49579,9 @@ var verifyCheckSchema = external_exports.object({
 var webCheckSchema = external_exports.object({
   name: external_exports.string().min(1),
   start: external_exports.string().min(1),
-  url: external_exports.string().min(1)
+  url: external_exports.string().min(1),
+  /** Seconds to wait for the app to become reachable (default 120; cold dev-server compiles can need more). */
+  startup_timeout_seconds: external_exports.number().int().positive().optional()
 });
 var repoFileConfigSchema = external_exports.object({
   version: external_exports.literal(1),
@@ -49643,6 +49645,21 @@ var DockerEngine = class {
   log;
   async build(params) {
     return await this.exec.run(dockerBuildArgv(params), { cwd: params.contextDir });
+  }
+  async pruneImages(repository, keepImage) {
+    const list = await this.exec.run([
+      "docker",
+      "images",
+      repository,
+      "--format",
+      "{{.Repository}}:{{.Tag}}"
+    ]);
+    if (list.code !== 0) return;
+    for (const image of list.stdout.split("\n").map((line) => line.trim()).filter((line) => line !== "" && !line.endsWith(":<none>"))) {
+      if (image === keepImage) continue;
+      const removed = await this.exec.run(["docker", "rmi", image]);
+      if (removed.code === 0) this.log.info(`pruned stale image ${image}`);
+    }
   }
   async run(spec) {
     let timedOut = false;
@@ -49797,28 +49814,31 @@ function planChains(issues, chains) {
 
 // packages/action/src/git-ops.ts
 var GitWorkspace = class {
-  constructor(exec, dir) {
+  constructor(exec, dir, token) {
     this.exec = exec;
     this.dir = dir;
+    this.token = token;
   }
   exec;
   dir;
+  token;
+  authEnv() {
+    if (this.token === void 0) return void 0;
+    const basic = Buffer.from(`x-access-token:${this.token}`).toString("base64");
+    return {
+      GIT_CONFIG_COUNT: "1",
+      GIT_CONFIG_KEY_0: "http.https://github.com/.extraheader",
+      GIT_CONFIG_VALUE_0: `AUTHORIZATION: basic ${basic}`
+    };
+  }
   async git(...argv) {
-    const result = await this.exec.run(["git", ...argv], { cwd: this.dir });
+    const result = await this.exec.run(["git", ...argv], { cwd: this.dir, env: this.authEnv() });
     if (result.code !== 0) {
       throw new Error(
         `git ${argv[0]} failed (exit ${result.code}): ${result.stderr.trim() || result.stdout.trim()}`
       );
     }
     return result;
-  }
-  async setRemoteWithToken(repoFullName, token) {
-    await this.git(
-      "remote",
-      "set-url",
-      "origin",
-      `https://x-access-token:${token}@github.com/${repoFullName}.git`
-    );
   }
   async configureIdentity() {
     await this.git("config", "user.name", "fixowl");
@@ -49849,6 +49869,12 @@ var GitWorkspace = class {
     const ahead = (await this.git("rev-list", "--count", `${baseRef}..HEAD`)).stdout.trim();
     return Number(ahead) > 0;
   }
+  /**
+   * One commit `fix #<n>: <title>` in the normal case. If the agent committed
+   * on its own despite instructions, its commits are kept as-is (nothing left
+   * to stage), so the subject line is then the agent's; the PR body's
+   * `Closes #<n>` still links the issue.
+   */
   async commitAll(message) {
     await this.git("add", "-A");
     const staged = await this.exec.run(["git", "diff", "--cached", "--quiet"], { cwd: this.dir });
@@ -49971,13 +49997,14 @@ try {
   }
 }
 
-const deadline = Date.now() + 120_000;
+const deadlineSeconds = Number(arg("deadline") ?? "120");
+const deadline = Date.now() + deadlineSeconds * 1000;
 let reachable = false;
 let lastError = "";
 while (Date.now() < deadline) {
   try {
     const response = await fetch(url);
-    if (response.status < 500) {
+    if (response.status < 400) {
       reachable = true;
       break;
     }
@@ -50057,7 +50084,7 @@ ${result.stderr}
       log2.info(`verify: web check "${web.name}" against ${web.url}`);
       const webEvidenceDir = join(evidenceDir, `web-${sanitize(web.name)}`);
       mkdirSync(webEvidenceDir, { recursive: true });
-      const command = `( ${web.start} ) >${EVIDENCE_MOUNT_PATH}/app.log 2>&1 & node ${VERIFY_WEB_SCRIPT_MOUNT_PATH} --url ${shellQuote(web.url)} --out ${EVIDENCE_MOUNT_PATH}`;
+      const command = `( ${web.start} ) >${EVIDENCE_MOUNT_PATH}/app.log 2>&1 & node ${VERIFY_WEB_SCRIPT_MOUNT_PATH} --url ${shellQuote(web.url)} --out ${EVIDENCE_MOUNT_PATH} --deadline ${web.startup_timeout_seconds ?? 120}`;
       const result = await engine.run({
         image,
         name: containerName(issueNumber, `web-${web.name}`),
@@ -50180,17 +50207,14 @@ var CLASSIFY_TIMEOUT_MS = 10 * 60 * 1e3;
 async function runNight(deps, inputs) {
   const { github, engine, exec, log: log2 } = deps;
   const warnings = [];
-  const git = new GitWorkspace(exec, inputs.workspaceDir);
+  const git = new GitWorkspace(exec, inputs.workspaceDir, inputs.pushToken);
   await git.configureIdentity();
-  if (inputs.pushToken !== void 0) {
-    await git.setRemoteWithToken(inputs.repoFullName, inputs.pushToken);
-  }
   const repoConfig = loadRepoConfig(inputs.workspaceDir, warnings);
   const adapter = getAgentAdapter(
     inputs.agentName,
     inputs.agentEnvNames !== void 0 && inputs.agentEnvNames.length > 0 ? inputs.agentEnvNames : void 0
   );
-  const agentEnv = resolveAgentEnv(adapter.env, inputs.env);
+  const agentEnv = resolveAgentEnv(adapter.env, inputs.env, warnings);
   const matching = await selectIssues(github, inputs.labels);
   log2.info(`${matching.length} open issue(s) match the label rule`);
   const { selected: fresh, skipped } = filterAlreadyAttempted(
@@ -50282,7 +50306,7 @@ function loadRepoConfig(workspaceDir, warnings) {
   }
   return repoFileConfigSchema.parse((0, import_yaml.parse)(readFileSync(path, "utf8")));
 }
-function resolveAgentEnv(names, env) {
+function resolveAgentEnv(names, env, warnings) {
   const resolved = {};
   const missing = [];
   for (const name of names) {
@@ -50293,6 +50317,11 @@ function resolveAgentEnv(names, env) {
   if (names.length > 0 && missing.length === names.length) {
     throw new Error(
       `none of the agent's required env vars are set (${names.join(", ")}); check the repo's Actions secrets and the workflow env block`
+    );
+  }
+  for (const name of missing) {
+    warnings.push(
+      `agent env var ${name} is not set; the agent runs without it (check the repo's Actions secrets)`
     );
   }
   return resolved;
@@ -50308,6 +50337,10 @@ async function buildTargetImage(engine, git, workspaceDir, repoConfig) {
   const result = await engine.build({ image, dockerfile, contextDir: workspaceDir });
   if (result.code !== 0) {
     throw new Error(`docker build failed (exit ${result.code}): ${tail(result.stderr, 2e3)}`);
+  }
+  try {
+    await engine.pruneImages?.("fixowl-target", image);
+  } catch {
   }
   return image;
 }
@@ -50414,10 +50447,13 @@ var realExec = {
       child.stderr.on("data", (chunk) => stderr += chunk.toString());
       child.on("error", reject);
       child.on("close", (code) => resolve({ code, stdout, stderr, timedOut: false }));
+      child.stdin.on("error", () => {
+      });
       if (options?.stdin !== void 0) {
-        child.stdin.write(options.stdin);
+        child.stdin.end(options.stdin);
+      } else {
+        child.stdin.end();
       }
-      child.stdin.end();
     });
   }
 };
@@ -50474,6 +50510,15 @@ function requireEnv(name) {
   }
   return value;
 }
+function positiveIntInput(name, fallback) {
+  const raw = getInput(name);
+  if (raw === "") return fallback;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error(`input ${name} must be a positive integer, got "${raw}"`);
+  }
+  return value;
+}
 async function run() {
   const token = requireEnv(RUNTIME_TOKEN_SECRET);
   const repoFullName = requireEnv("GITHUB_REPOSITORY");
@@ -50506,8 +50551,8 @@ async function run() {
       labels,
       agentName: getInput("agent") || "claude",
       agentEnvNames: parseLabelInput(getInput("agent-env")),
-      maxIssues: Number(getInput("max-issues-per-run") || "4"),
-      issueTimeoutMinutes: Number(getInput("issue-timeout-minutes") || "45"),
+      maxIssues: positiveIntInput("max-issues-per-run", 4),
+      issueTimeoutMinutes: positiveIntInput("issue-timeout-minutes", 45),
       workspaceDir,
       tempDir,
       runUrl,

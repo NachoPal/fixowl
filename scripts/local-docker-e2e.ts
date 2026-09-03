@@ -64,14 +64,18 @@ await git(seedDir, "remote", "add", "origin", originDir);
 await git(seedDir, "push", "origin", "main");
 await git(root, "clone", originDir, workspaceDir);
 
+// The body doubles as the reviewer's token-exfiltration exploit: it snapshots
+// what the untrusted container can see of .git/config; we assert below that
+// the runtime PAT is not in it.
 const issues: IssueLite[] = [
   {
     number: 1,
     title: "Create the fix file",
-    body: "echo fixed-by-script > fix-1.txt",
+    body: "cat .git/config > seen-git-config.txt\necho fixed-by-script > fix-1.txt",
     labels: ["overnight"],
   },
 ];
+const FAKE_PUSH_TOKEN = "ghp_FAKE_e2e_runtime_token";
 const pulls: Array<{ head: string; base: string; title: string; draft: boolean; body: string }> =
   [];
 const comments: Array<{ issueNumber: number; body: string }> = [];
@@ -99,6 +103,7 @@ const summary = await runNight(
     issueTimeoutMinutes: 3,
     workspaceDir,
     tempDir,
+    pushToken: FAKE_PUSH_TOKEN,
     env: {},
   },
 );
@@ -118,6 +123,17 @@ const branches = await git(originDir, "for-each-ref", "--format=%(refname:short)
 assert.ok(branches.includes("issue/1-create-the-fix-file"), "branch pushed to origin");
 const fileOnBranch = await git(workspaceDir, "show", "issue/1-create-the-fix-file:fix-1.txt");
 assert.equal(fileOnBranch.trim(), "fixed-by-script");
+// The exploit view: everything the agent container could read of .git/config.
+const seenConfig = await git(
+  workspaceDir,
+  "show",
+  "issue/1-create-the-fix-file:seen-git-config.txt",
+);
+assert.ok(!seenConfig.includes(FAKE_PUSH_TOKEN), "runtime PAT leaked into the agent container");
+assert.ok(
+  !seenConfig.includes(Buffer.from(`x-access-token:${FAKE_PUSH_TOKEN}`).toString("base64")),
+  "runtime PAT (base64) leaked into the agent container",
+);
 assert.ok(existsSync(join(tempDir, "fixowl-evidence", "issue-1", "agent.log")));
 assert.ok(
   readFileSync(

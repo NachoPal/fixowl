@@ -87,6 +87,29 @@ describe("containerName", () => {
   });
 });
 
+describe("DockerEngine.pruneImages", () => {
+  it("removes stale images in the repository, keeping the current one", async () => {
+    const calls: string[][] = [];
+    const exec: Exec = {
+      run(argv: readonly string[]): Promise<ExecResult> {
+        calls.push([...argv]);
+        if (argv[1] === "images") {
+          return Promise.resolve(
+            ok(
+              "fixowl-target:old1\nfixowl-target:current\nfixowl-target:<none>\nfixowl-target:old2\n",
+            ),
+          );
+        }
+        return Promise.resolve(ok());
+      },
+    };
+    const engine = new DockerEngine(exec, silentLog);
+    await engine.pruneImages("fixowl-target", "fixowl-target:current");
+    const removed = calls.filter((argv) => argv[1] === "rmi").map((argv) => argv[2]);
+    expect(removed).toEqual(["fixowl-target:old1", "fixowl-target:old2"]);
+  });
+});
+
 describe("DockerEngine timeout", () => {
   it("removes the container by name when the timeout fires", async () => {
     const calls: string[][] = [];

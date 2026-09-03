@@ -63,7 +63,7 @@ export async function runVerification(params: {
       log.info(`verify: web check "${web.name}" against ${web.url}`);
       const webEvidenceDir = join(evidenceDir, `web-${sanitize(web.name)}`);
       mkdirSync(webEvidenceDir, { recursive: true });
-      const command = `( ${web.start} ) >${EVIDENCE_MOUNT_PATH}/app.log 2>&1 & node ${VERIFY_WEB_SCRIPT_MOUNT_PATH} --url ${shellQuote(web.url)} --out ${EVIDENCE_MOUNT_PATH}`;
+      const command = `( ${web.start} ) >${EVIDENCE_MOUNT_PATH}/app.log 2>&1 & node ${VERIFY_WEB_SCRIPT_MOUNT_PATH} --url ${shellQuote(web.url)} --out ${EVIDENCE_MOUNT_PATH} --deadline ${web.startup_timeout_seconds ?? 120}`;
       const result = await engine.run({
         image,
         name: containerName(issueNumber, `web-${web.name}`),

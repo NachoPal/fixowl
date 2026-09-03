@@ -17,6 +17,11 @@ const FORBIDDEN = [
   /mergePullRequest/i,
   /enableAutoMerge/i,
   /auto[_-]merge/i,
+  // The "Merge a branch" REST API and ref force-updates can merge without
+  // ever saying "pulls.merge"; the runtime PAT (Contents RW) could do both.
+  /repos\.merge\b/,
+  /\/merges\b/,
+  /updateRef/i,
 ];
 
 function sourceFiles(): string[] {

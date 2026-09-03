@@ -39,6 +39,11 @@ Two fine-grained PATs, both scoped to only the target repos:
 
 - The runtime PAT (not `GITHUB_TOKEN`) authors PRs so the target repo's own CI
   triggers on them.
+- On the runner, the runtime PAT is injected into git fetch/push commands as an
+  env-based `http.extraheader` only. It never appears in argv (`ps`), in git
+  error output, or in any file under the workspace: the workspace, including
+  `.git/config`, is bind-mounted into the untrusted containers, so a token
+  written there would be readable by the agent. A test asserts all three.
 - Repo secrets are sealed client-side (libsodium sealed box against the repo
   public key) before the API call.
 - The agent credential (e.g. `CLAUDE_CODE_OAUTH_TOKEN`) reaches only the agent

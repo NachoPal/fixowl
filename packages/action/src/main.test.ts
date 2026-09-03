@@ -1,8 +1,8 @@
-import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import type { ContainerRunSpec, ExecResult, IssueLite } from "./deps.ts";
+import type { ContainerRunSpec, Exec, ExecResult, IssueLite } from "./deps.ts";
 import { renderSummary, runNight, type NightInputs } from "./main.ts";
 import { realExec } from "./real-exec.ts";
 import { FakeEngine, FakeGitHub, issue, ok, silentLog } from "./test-helpers.ts";
@@ -294,6 +294,40 @@ describe("runNight", () => {
     expect(agentRun?.env).toEqual({}); // script adapter allowlists nothing
     // prompt file is the only extra mount for a file-prompt adapter
     expect(agentRun?.extraMounts?.map((m) => m.container)).toEqual(["/fixowl/prompt.md"]);
+  });
+
+  it("the push token never lands in argv or the mounted workspace", async () => {
+    const { workspaceDir, inputs } = await setup();
+    const github = new FakeGitHub([issue(1, "Fix header", "x")]);
+    const engine = makeEngine({ workspaceDir });
+    const calls: Array<{ argv: string[]; env?: Record<string, string> }> = [];
+    const spyExec: Exec = {
+      run(argv, options) {
+        calls.push({ argv: [...argv], env: options?.env });
+        return realExec.run(argv, options);
+      },
+    };
+    const token = "ghp_FAKE_sekret_token";
+
+    const summary = await runNight(
+      { github, engine, exec: spyExec, log: silentLog },
+      { ...inputs, pushToken: token },
+    );
+    expect(summary.results[0]?.status).toBe("pr-opened");
+
+    const basic = Buffer.from(`x-access-token:${token}`).toString("base64");
+    for (const call of calls) {
+      // Neither the raw token nor its base64 form may ever hit argv (`ps`).
+      expect(call.argv.join(" ")).not.toContain("sekret");
+      expect(call.argv.join(" ")).not.toContain(basic);
+    }
+    // The workspace (bind-mounted into untrusted containers) must stay clean.
+    const gitConfig = readFileSync(join(workspaceDir, ".git", "config"), "utf8");
+    expect(gitConfig).not.toContain("sekret");
+    expect(gitConfig).not.toContain(basic);
+    // The credential travels only as an env-injected http.extraheader.
+    const pushCall = calls.find((call) => call.argv[0] === "git" && call.argv.includes("push"));
+    expect(pushCall?.env?.GIT_CONFIG_VALUE_0).toBe(`AUTHORIZATION: basic ${basic}`);
   });
 
   it("fails the whole night only for batch-level problems (missing agent creds)", async () => {

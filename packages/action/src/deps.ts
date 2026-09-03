@@ -73,4 +73,6 @@ export interface ContainerRunSpec {
 export interface ContainerEngine {
   build(params: { image: string; dockerfile: string; contextDir: string }): Promise<ExecResult>;
   run(spec: ContainerRunSpec): Promise<ExecResult>;
+  /** Best-effort removal of stale images in `repository`, keeping `keepImage`; the runner host's disk is finite. */
+  pruneImages?(repository: string, keepImage: string): Promise<void>;
 }

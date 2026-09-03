@@ -68,6 +68,17 @@ function requireEnv(name: string): string {
   return value;
 }
 
+/** A hand-edited workflow with a bad number must fail loudly, not as NaN weirdness. */
+function positiveIntInput(name: string, fallback: number): number {
+  const raw = core.getInput(name);
+  if (raw === "") return fallback;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error(`input ${name} must be a positive integer, got "${raw}"`);
+  }
+  return value;
+}
+
 async function run(): Promise<void> {
   const token = requireEnv(RUNTIME_TOKEN_SECRET);
   const repoFullName = requireEnv("GITHUB_REPOSITORY");
@@ -107,8 +118,8 @@ async function run(): Promise<void> {
       labels,
       agentName: core.getInput("agent") || "claude",
       agentEnvNames: parseLabelInput(core.getInput("agent-env")),
-      maxIssues: Number(core.getInput("max-issues-per-run") || "4"),
-      issueTimeoutMinutes: Number(core.getInput("issue-timeout-minutes") || "45"),
+      maxIssues: positiveIntInput("max-issues-per-run", 4),
+      issueTimeoutMinutes: positiveIntInput("issue-timeout-minutes", 45),
       workspaceDir,
       tempDir,
       runUrl,

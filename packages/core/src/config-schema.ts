@@ -110,6 +110,8 @@ const webCheckSchema = z.object({
   name: z.string().min(1),
   start: z.string().min(1),
   url: z.string().min(1),
+  /** Seconds to wait for the app to become reachable (default 120; cold dev-server compiles can need more). */
+  startup_timeout_seconds: z.number().int().positive().optional(),
 });
 
 export const repoFileConfigSchema = z.object({

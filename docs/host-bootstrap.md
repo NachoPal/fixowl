@@ -81,3 +81,11 @@ to `ubuntu-latest` moves the job to GitHub-hosted runners: Docker is
 preinstalled there, the action is plain Node, and the same `docker run` steps
 just work. Host-bound verification (visible browsers, iOS/macOS targets) is
 the only thing you give up.
+
+Known limitation to close before relying on cloud runs: on a Linux host, an
+agent container running as root leaves root-owned files in the mounted
+workspace, which the runner user's `git clean` may fail to remove, letting one
+issue's leftovers bleed into the next issue's PR within the same night. macOS
+with Colima masks this via ownership mapping. Candidate fixes: run agent
+containers with `--user $(id -u):$(id -g)` where the image tolerates it, or
+reset the workspace from a throwaway root container between issues.

@@ -21,10 +21,15 @@ export const realExec: Exec = {
       child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString()));
       child.on("error", reject);
       child.on("close", (code) => resolve({ code, stdout, stderr, timedOut: false }));
+      // A child that exits before draining stdin raises EPIPE on the stream;
+      // without a handler that is an uncaughtException that kills the whole
+      // night run. The failure is already reflected in the child's exit code.
+      child.stdin.on("error", () => {});
       if (options?.stdin !== undefined) {
-        child.stdin.write(options.stdin);
+        child.stdin.end(options.stdin);
+      } else {
+        child.stdin.end();
       }
-      child.stdin.end();
     });
   },
 };

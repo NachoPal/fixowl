@@ -71,6 +71,25 @@ export class DockerEngine implements ContainerEngine {
     return await this.exec.run(dockerBuildArgv(params), { cwd: params.contextDir });
   }
 
+  async pruneImages(repository: string, keepImage: string): Promise<void> {
+    const list = await this.exec.run([
+      "docker",
+      "images",
+      repository,
+      "--format",
+      "{{.Repository}}:{{.Tag}}",
+    ]);
+    if (list.code !== 0) return;
+    for (const image of list.stdout
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line !== "" && !line.endsWith(":<none>"))) {
+      if (image === keepImage) continue;
+      const removed = await this.exec.run(["docker", "rmi", image]);
+      if (removed.code === 0) this.log.info(`pruned stale image ${image}`);
+    }
+  }
+
   async run(spec: ContainerRunSpec): Promise<ExecResult> {
     // Kill the container itself on timeout, not just the docker client:
     // killing the client would leave the container running.

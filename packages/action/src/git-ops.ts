@@ -2,31 +2,40 @@ import type { Exec, ExecResult } from "./deps.ts";
 
 /**
  * All git happens on the host (the runner), outside any container: the coding
- * agent never sees a GitHub token, and pushes use the runtime PAT.
+ * agent never sees a GitHub token.
+ *
+ * Credential handling is deliberately paranoid: the workspace (including
+ * `.git/`) is bind-mounted into untrusted agent and verification containers,
+ * so the runtime PAT must never be written into the repo (no remote URLs with
+ * tokens, no credential helpers). Instead it is injected per git command as an
+ * env-based `http.extraheader`, which keeps it out of argv (`ps`), out of git
+ * error messages, and out of every file under the workspace.
  */
 export class GitWorkspace {
   constructor(
     private readonly exec: Exec,
     private readonly dir: string,
+    private readonly token?: string,
   ) {}
 
+  private authEnv(): Record<string, string> | undefined {
+    if (this.token === undefined) return undefined;
+    const basic = Buffer.from(`x-access-token:${this.token}`).toString("base64");
+    return {
+      GIT_CONFIG_COUNT: "1",
+      GIT_CONFIG_KEY_0: "http.https://github.com/.extraheader",
+      GIT_CONFIG_VALUE_0: `AUTHORIZATION: basic ${basic}`,
+    };
+  }
+
   private async git(...argv: string[]): Promise<ExecResult> {
-    const result = await this.exec.run(["git", ...argv], { cwd: this.dir });
+    const result = await this.exec.run(["git", ...argv], { cwd: this.dir, env: this.authEnv() });
     if (result.code !== 0) {
       throw new Error(
         `git ${argv[0]} failed (exit ${result.code}): ${result.stderr.trim() || result.stdout.trim()}`,
       );
     }
     return result;
-  }
-
-  async setRemoteWithToken(repoFullName: string, token: string): Promise<void> {
-    await this.git(
-      "remote",
-      "set-url",
-      "origin",
-      `https://x-access-token:${token}@github.com/${repoFullName}.git`,
-    );
   }
 
   async configureIdentity(): Promise<void> {
@@ -71,6 +80,12 @@ export class GitWorkspace {
     return Number(ahead) > 0;
   }
 
+  /**
+   * One commit `fix #<n>: <title>` in the normal case. If the agent committed
+   * on its own despite instructions, its commits are kept as-is (nothing left
+   * to stage), so the subject line is then the agent's; the PR body's
+   * `Closes #<n>` still links the issue.
+   */
   async commitAll(message: string): Promise<void> {
     await this.git("add", "-A");
     const staged = await this.exec.run(["git", "diff", "--cached", "--quiet"], { cwd: this.dir });

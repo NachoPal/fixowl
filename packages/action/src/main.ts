@@ -40,7 +40,11 @@ export interface NightInputs {
   workspaceDir: string;
   tempDir: string;
   runUrl?: string;
-  /** Runtime PAT used for pushes; omitted in tests that push to a local remote. */
+  /**
+   * Runtime PAT for authenticated fetch/push, injected per git command as an
+   * env-based http.extraheader (never argv, never the workspace). Omitted in
+   * tests that push to a local remote.
+   */
   pushToken?: string;
   /** Source of agent env values (normally process.env). */
   env: Record<string, string | undefined>;
@@ -62,12 +66,9 @@ export interface NightSummary {
 export async function runNight(deps: NightDeps, inputs: NightInputs): Promise<NightSummary> {
   const { github, engine, exec, log } = deps;
   const warnings: string[] = [];
-  const git = new GitWorkspace(exec, inputs.workspaceDir);
+  const git = new GitWorkspace(exec, inputs.workspaceDir, inputs.pushToken);
 
   await git.configureIdentity();
-  if (inputs.pushToken !== undefined) {
-    await git.setRemoteWithToken(inputs.repoFullName, inputs.pushToken);
-  }
 
   const repoConfig = loadRepoConfig(inputs.workspaceDir, warnings);
   const adapter = getAgentAdapter(
@@ -76,7 +77,7 @@ export async function runNight(deps: NightDeps, inputs: NightInputs): Promise<Ni
       ? inputs.agentEnvNames
       : undefined,
   );
-  const agentEnv = resolveAgentEnv(adapter.env, inputs.env);
+  const agentEnv = resolveAgentEnv(adapter.env, inputs.env, warnings);
 
   const matching = await selectIssues(github, inputs.labels);
   log.info(`${matching.length} open issue(s) match the label rule`);
@@ -180,6 +181,7 @@ function loadRepoConfig(workspaceDir: string, warnings: string[]): RepoFileConfi
 function resolveAgentEnv(
   names: readonly string[],
   env: Record<string, string | undefined>,
+  warnings: string[],
 ): Record<string, string> {
   const resolved: Record<string, string> = {};
   const missing: string[] = [];
@@ -192,6 +194,11 @@ function resolveAgentEnv(
     throw new Error(
       `none of the agent's required env vars are set (${names.join(", ")}); ` +
         `check the repo's Actions secrets and the workflow env block`,
+    );
+  }
+  for (const name of missing) {
+    warnings.push(
+      `agent env var ${name} is not set; the agent runs without it (check the repo's Actions secrets)`,
     );
   }
   return resolved;
@@ -213,6 +220,11 @@ async function buildTargetImage(
   const result = await engine.build({ image, dockerfile, contextDir: workspaceDir });
   if (result.code !== 0) {
     throw new Error(`docker build failed (exit ${result.code}): ${tail(result.stderr, 2000)}`);
+  }
+  try {
+    await engine.pruneImages?.("fixowl-target", image);
+  } catch {
+    // best effort; a failed prune must never fail the night
   }
   return image;
 }
