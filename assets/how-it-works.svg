@@ -1,0 +1,125 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 780" width="1200" height="780" role="img" aria-labelledby="t d">
+  <title id="t">How fixowl works</title>
+  <desc id="d">A sequence diagram with three actors: your laptop running the fixowl CLI, your repo on GitHub, and a self-hosted runner host with Docker. Setup happens once: fixowl provision pushes labels, sealed secrets and the workflow file to GitHub, and fixowl start installs and runs the self-hosted runner service. Every night the cron in the workflow dispatches a job to the runner while your laptop is asleep; the fixowl action selects issues labeled overnight, classifies them into dependency chains, runs the agent in a Docker container per issue with no GitHub token inside, and verifies the result. The runner then pushes the branch and opens exactly one pull request per issue with evidence attached. In the morning you review the pull request. fixowl never merges.</desc>
+
+  <style>
+    .bg    { fill: #0a0f1e; }
+    .band  { fill: #101a33; }
+    .card  { fill: #16203a; stroke: #2b3a5c; stroke-width: 1.5; }
+    .pipe  { fill: #131d36; stroke: #33456e; stroke-width: 1.5; }
+    .note  { fill: #131d36; stroke: #2b3a5c; stroke-width: 1.5; }
+    .life  { stroke: #2c3d5e; stroke-width: 2; stroke-dasharray: 4 7; }
+    .ttl   { font: 700 18px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #f2ede3; }
+    .sub   { font: 400 14px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #9fb0cc; }
+    .bandt { font: 700 13px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #a78bfa; letter-spacing: 1.8px; }
+    .l1    { font: 600 15px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #f2ede3; }
+    .l2    { font: 400 14px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #9fb0cc; }
+    .idle  { font: 400 14px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #6b7f9e; }
+    .mono  { font: 400 15px ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; fill: #c4b5fd; }
+    .mono2 { font: 400 13px ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; fill: #8fa3c4; }
+    .step  { font: 400 15px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #dbe4f0; }
+    .num   { font: 700 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #0a0f1e; }
+    .green { font: 600 13.5px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #4ade80; }
+    .ap    { stroke: #a78bfa; stroke-width: 2.5; fill: none; marker-end: url(#ap); }
+    .ag    { stroke: #4ade80; stroke-width: 2.5; fill: none; marker-end: url(#ag); }
+    .ac    { stroke: #b9c6da; stroke-width: 2.5; fill: none; marker-end: url(#ac); }
+  </style>
+
+  <defs>
+    <marker id="ap" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+      <path d="M0,0 L10,4 L0,8 z" fill="#a78bfa"/>
+    </marker>
+    <marker id="ag" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+      <path d="M0,0 L10,4 L0,8 z" fill="#4ade80"/>
+    </marker>
+    <marker id="ac" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+      <path d="M0,0 L10,4 L0,8 z" fill="#b9c6da"/>
+    </marker>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1200" height="780" rx="18"/>
+
+  <!-- phase bands (drawn first: lifelines and content sit on top) -->
+  <rect class="band" x="20" y="124" width="1160" height="146" rx="12"/>
+  <rect class="band" x="20" y="286" width="1160" height="362" rx="12"/>
+  <rect class="band" x="20" y="664" width="1160" height="96" rx="12"/>
+
+  <!-- lifelines -->
+  <line class="life" x1="170" y1="104" x2="170" y2="744"/>
+  <line class="life" x1="590" y1="104" x2="590" y2="744"/>
+  <line class="life" x1="985" y1="104" x2="985" y2="744"/>
+
+  <!-- actors -->
+  <rect class="card" x="30" y="28" width="280" height="76" rx="12"/>
+  <text class="ttl" x="170" y="61" text-anchor="middle">Your laptop</text>
+  <text class="sub" x="170" y="85" text-anchor="middle">the fixowl CLI</text>
+
+  <rect class="card" x="450" y="28" width="280" height="76" rx="12"/>
+  <text class="ttl" x="590" y="61" text-anchor="middle">Your repo on GitHub</text>
+  <text class="sub" x="590" y="85" text-anchor="middle">issues · workflow · pull requests</text>
+
+  <rect class="card" x="845" y="28" width="280" height="76" rx="12"/>
+  <text class="ttl" x="985" y="61" text-anchor="middle">Runner host</text>
+  <text class="sub" x="985" y="85" text-anchor="middle">any Mac or Linux box with Docker</text>
+
+  <!-- band 1: setup -->
+  <text class="bandt" x="40" y="150">SETUP · ONCE</text>
+
+  <text class="mono" x="380" y="176" text-anchor="middle">fixowl provision</text>
+  <text class="l2"   x="380" y="195" text-anchor="middle">labels · sealed secrets · workflow file</text>
+  <line class="ap" x1="176" y1="208" x2="584" y2="208"/>
+
+  <rect x="390" y="214" width="380" height="38" fill="#101a33"/>
+  <text class="mono" x="580" y="230" text-anchor="middle">fixowl start</text>
+  <text class="l2"   x="580" y="249" text-anchor="middle">installs + runs the self-hosted runner service</text>
+  <line class="ap" x1="176" y1="262" x2="979" y2="262"/>
+
+  <!-- band 2: every night -->
+  <text class="bandt" x="40" y="312">EVERY NIGHT</text>
+
+  <text class="l1"    x="787" y="326" text-anchor="middle">nightly cron dispatches the job</text>
+  <text class="mono2" x="787" y="344" text-anchor="middle">runs-on: [self-hosted, fixowl]</text>
+  <line class="ap" x1="596" y1="356" x2="979" y2="356"/>
+
+  <!-- laptop is out of the loop at night -->
+  <text class="idle" x="170" y="452" text-anchor="middle">your laptop is asleep;</text>
+  <text class="idle" x="170" y="472" text-anchor="middle">nothing runs here</text>
+
+  <!-- where the schedule lives -->
+  <rect class="note" x="452" y="430" width="276" height="62" rx="10"/>
+  <text class="mono2" x="590" y="456" text-anchor="middle">.github/workflows/fixowl.yml</text>
+  <text class="mono2" x="590" y="478" text-anchor="middle">cron: 37 1 * * *</text>
+
+  <!-- the action pipeline, on the runner lane -->
+  <rect class="pipe" x="795" y="376" width="380" height="194" rx="12"/>
+  <text class="ttl" x="815" y="404">the fixowl action</text>
+
+  <circle cx="822" cy="427" r="10" fill="#a78bfa"/>
+  <text class="num"  x="822" y="431" text-anchor="middle">1</text>
+  <text class="step" x="845" y="433">select issues labeled overnight</text>
+
+  <circle cx="822" cy="457" r="10" fill="#a78bfa"/>
+  <text class="num"  x="822" y="461" text-anchor="middle">2</text>
+  <text class="step" x="845" y="463">classify into dependency chains</text>
+
+  <circle cx="822" cy="487" r="10" fill="#a78bfa"/>
+  <text class="num"  x="822" y="491" text-anchor="middle">3</text>
+  <text class="step" x="845" y="493">run the agent in a Docker container</text>
+
+  <circle cx="822" cy="517" r="10" fill="#a78bfa"/>
+  <text class="num"  x="822" y="521" text-anchor="middle">4</text>
+  <text class="step" x="845" y="523">verify: tests · Playwright screenshots</text>
+
+  <text class="green" x="815" y="551">no GitHub token inside the container</text>
+
+  <text class="mono" x="787" y="598" text-anchor="middle">git push issue/&lt;n&gt;-&lt;slug&gt;</text>
+  <text class="l2"   x="787" y="617" text-anchor="middle">opens exactly one pull request per issue + evidence</text>
+  <line class="ag" x1="979" y1="630" x2="596" y2="630"/>
+
+  <!-- band 3: morning -->
+  <text class="bandt" x="40" y="690">IN THE MORNING</text>
+
+  <text class="l1"    x="380" y="714" text-anchor="middle">you review the pull request</text>
+  <text class="green" x="380" y="733" text-anchor="middle">fixowl never merges</text>
+  <line class="ac" x1="584" y1="744" x2="176" y2="744"/>
+</svg>

@@ -1,6 +1,6 @@
 ![fixowl - the owl that fixes your issues while you sleep. You file and label issues during the day; a nightly cron picks them up on a self-hosted runner, runs a coding agent in a Docker container per issue, verifies the change, and opens exactly one pull request per issue with the evidence attached. fixowl never merges.](assets/readme-banner.png)
 
-# 🦉 fixowl
+# fixowl
 
 **The owl that fixes your issues while you sleep.**
 
@@ -15,17 +15,7 @@ In the morning you review. **fixowl never merges.**
 
 ## How it works
 
-```
-fixowl CLI (your laptop)                     your repos
-────────────────────────                     ──────────
-fixowl provision  ──── labels, sealed secrets, workflow file ────►  .github/workflows/fixowl.yml
-fixowl start      ──── registers + runs launchd runner services     (cron, e.g. 01:37 UTC)
-                                                                          │ dispatches to
-runner host (any Mac/Linux box with Docker)                               ▼
-─────────────────────────────────────────── runs-on: [self-hosted, fixowl]
-  the fixowl action: select issues -> classify -> per issue:
-    docker run (agent, sandboxed, no GitHub token) -> verify -> commit+push -> PR
-```
+![Setup, once: fixowl provision pushes labels, sealed secrets and the workflow file to your repo on GitHub, and fixowl start installs and runs the self-hosted runner service on the runner host. Every night: the workflow's cron dispatches a job to that runner while your laptop is asleep, and the fixowl action selects issues labeled overnight, classifies them into dependency chains, runs the agent in a Docker container per issue with no GitHub token inside, and verifies the result before pushing the branch and opening exactly one pull request per issue with evidence attached. In the morning: you review the pull request, and fixowl never merges.](assets/how-it-works.svg)
 
 - **One PR per issue**, branch `issue/<n>-<slug>`. The branch doubles as the
   idempotency marker: reruns never duplicate work, and deleting the branch is
