@@ -88,11 +88,24 @@ guard, version verification, preflight, and channel decision - **except** the
 it would have executed to the job summary. Use it to validate a version bump
 before shipping.
 
-## Required secret
+## npm auth: Trusted Publishing (OIDC)
 
-The workflow authenticates to npm with an **`NPM_TOKEN` repository secret** (an
-npm automation token with publish rights to `fixowl`). Add it under **Settings ->
-Secrets and variables -> Actions -> New repository secret**, name `NPM_TOKEN`. The
-workflow writes the `.npmrc` auth line itself; the token is never committed. The
-GitHub Release and tag pushes use the built-in `GITHUB_TOKEN` (the workflow
-grants it `contents: write`); no extra secret is needed for those.
+The workflow publishes to npm via **Trusted Publishing** - no long-lived token.
+The publish job runs on a GitHub-hosted runner (`ubuntu-latest`) with
+`id-token: write`, and npm mints a short-lived credential over OIDC. Provenance
+is generated automatically as part of the same flow.
+
+Configure it once on npm:
+
+1. On [npmjs.com](https://www.npmjs.com/package/fixowl), open the `fixowl`
+   package -> **Settings** -> **Trusted Publisher** -> **GitHub Actions**.
+2. Set: user/org `NachoPal`, repository `fixowl`, workflow filename
+   `release.yml`. (Leave the environment blank - the job uses none.)
+
+That's all the setup required. The **`NPM_TOKEN` repository secret is no longer
+needed** and can be deleted under **Settings -> Secrets and variables ->
+Actions**. The GitHub Release and tag pushes use the built-in `GITHUB_TOKEN`
+(the workflow grants it `contents: write`); no extra secret is needed for those.
+
+> Trusted publishing needs npm >= 11.5.1; the workflow upgrades npm before
+> publishing so it works regardless of the version bundled with Node.

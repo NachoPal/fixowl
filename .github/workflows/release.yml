@@ -16,7 +16,7 @@ on:
 
 permissions:
   contents: write # push git tags and create the GitHub Release
-  id-token: write # npm publish --provenance via OIDC
+  id-token: write # npm OIDC trusted publishing (auth + provenance), no token
 
 concurrency:
   group: release
@@ -74,23 +74,23 @@ jobs:
             exit 1
           fi
 
-      - name: Configure npm auth
+      - name: Ensure npm supports OIDC trusted publishing
         if: ${{ inputs.dry_run == false }}
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
-          if [ -z "${NPM_TOKEN:-}" ]; then
-            echo "NPM_TOKEN repository secret is not set (see docs/releasing.md)." >&2
-            exit 1
-          fi
-          printf '//registry.npmjs.org/:_authToken=%s\n' "${NPM_TOKEN}" >> "${HOME}/.npmrc"
+          # Trusted publishing (OIDC) requires npm >= 11.5.1. The npm bundled
+          # with Node 24 can be older, so upgrade to a known-good version.
+          npm install -g npm@latest
+          npm --version
 
       - name: Publish fixowl to npm
         if: ${{ inputs.dry_run == false }}
         working-directory: packages/cli
         env:
           NPM_TAG: ${{ steps.plan.outputs.npm_tag }}
+        # No token: authentication and provenance are handled automatically over
+        # OIDC because a trusted publisher is configured on npm and the job has
+        # id-token: write. --provenance stays explicit for clarity.
         run: npm publish --access public --provenance --tag "${NPM_TAG}"
 
       - name: Push git tag
