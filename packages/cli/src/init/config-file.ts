@@ -71,7 +71,9 @@ function liftedField(
   repos: readonly RepoAnswers[],
   get: (repo: RepoAnswers) => string | undefined,
 ): string | undefined {
-  const first = get(repos[0]);
+  const base = repos[0];
+  if (base === undefined) return undefined;
+  const first = get(base);
   if (first === undefined) return undefined;
   return repos.every((repo) => get(repo) === first) ? first : undefined;
 }
