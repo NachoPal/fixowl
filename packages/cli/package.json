@@ -14,6 +14,9 @@
     "dist"
   ],
   "type": "module",
+  "scripts": {
+    "prepublishOnly": "pnpm -w build"
+  },
   "devDependencies": {
     "@fixowl/core": "workspace:*",
     "@octokit/rest": "22.0.1",
