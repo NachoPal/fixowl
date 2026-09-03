@@ -23,6 +23,11 @@ and opens exactly one PR per issue. It never merges.
 - `pnpm build` - esbuild bundles for the action (`dist/action/index.js`, checked in;
   CI fails if stale) and the CLI (`packages/cli/dist`, gitignored).
 
+Releases are cut manually by `.github/workflows/release.yml` from the version
+committed in `packages/cli/package.json` (kept in lockstep with root); the channel
+(stable vs `-rc` prerelease) is decided by `scripts/release-channel.ts`. The
+workflow never bumps a version. See [docs/releasing.md](docs/releasing.md).
+
 ## Hard invariants
 
 - **Never merge.** No code path may call a GitHub merge API. `no-merge.test.ts` greps for

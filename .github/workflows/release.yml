@@ -1,0 +1,143 @@
+name: release
+
+# Manually-triggered release of the version already committed in the code.
+# The workflow NEVER bumps or commits a version: a human edits the version in
+# packages/cli/package.json AND the root package.json (same number), commits,
+# pushes, then dispatches this. The channel (stable vs prerelease) is derived
+# from the version string. See docs/releasing.md.
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Run everything except npm publish, tag push, and Release creation"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write # push git tags and create the GitHub Release
+  id-token: write # npm publish --provenance via OIDC
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          # Credentials are persisted so the release can push tags; unlike CI,
+          # this job legitimately writes to the repo (contents: write above).
+          persist-credentials: true
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build and guard against a stale committed bundle
+        run: |
+          pnpm build
+          git diff --exit-code -- dist
+
+      - name: Compute release plan
+        id: plan
+        run: node scripts/release-plan.ts
+
+      - name: Preflight - version not already on npm, tag not already present
+        env:
+          VERSION: ${{ steps.plan.outputs.version }}
+          GIT_TAG: ${{ steps.plan.outputs.git_tag }}
+        run: |
+          set -euo pipefail
+          published="$(npm view "fixowl@${VERSION}" version 2>/dev/null || true)"
+          if [ -n "${published}" ]; then
+            echo "fixowl@${VERSION} is already published on npm. Bump the version and commit before releasing." >&2
+            exit 1
+          fi
+          if git ls-remote --exit-code --tags origin "refs/tags/${GIT_TAG}" >/dev/null 2>&1; then
+            echo "Git tag ${GIT_TAG} already exists on origin." >&2
+            exit 1
+          fi
+
+      - name: Configure npm auth
+        if: ${{ inputs.dry_run == false }}
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${NPM_TOKEN:-}" ]; then
+            echo "NPM_TOKEN repository secret is not set (see docs/releasing.md)." >&2
+            exit 1
+          fi
+          printf '//registry.npmjs.org/:_authToken=%s\n' "${NPM_TOKEN}" >> "${HOME}/.npmrc"
+
+      - name: Publish fixowl to npm
+        if: ${{ inputs.dry_run == false }}
+        working-directory: packages/cli
+        env:
+          NPM_TAG: ${{ steps.plan.outputs.npm_tag }}
+        run: npm publish --access public --provenance --tag "${NPM_TAG}"
+
+      - name: Push git tag
+        if: ${{ inputs.dry_run == false }}
+        env:
+          GIT_TAG: ${{ steps.plan.outputs.git_tag }}
+        run: |
+          set -euo pipefail
+          git tag "${GIT_TAG}"
+          git push origin "refs/tags/${GIT_TAG}"
+
+      - name: Move floating major tag (stable only)
+        if: ${{ inputs.dry_run == false && steps.plan.outputs.move_major == 'true' }}
+        env:
+          MAJOR_TAG: ${{ steps.plan.outputs.major_tag }}
+        run: |
+          set -euo pipefail
+          git tag -f "${MAJOR_TAG}"
+          git push -f origin "refs/tags/${MAJOR_TAG}"
+
+      - name: Create GitHub Release
+        if: ${{ inputs.dry_run == false }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GIT_TAG: ${{ steps.plan.outputs.git_tag }}
+          IS_PRERELEASE: ${{ steps.plan.outputs.github_prerelease }}
+        run: |
+          set -euo pipefail
+          args=(release create "${GIT_TAG}" --title "${GIT_TAG}" --generate-notes)
+          if [ "${IS_PRERELEASE}" = "true" ]; then
+            args+=(--prerelease)
+          fi
+          gh "${args[@]}"
+
+      - name: Dry-run summary
+        if: ${{ inputs.dry_run == true }}
+        env:
+          VERSION: ${{ steps.plan.outputs.version }}
+          NPM_TAG: ${{ steps.plan.outputs.npm_tag }}
+          GIT_TAG: ${{ steps.plan.outputs.git_tag }}
+          MAJOR_TAG: ${{ steps.plan.outputs.major_tag }}
+          MOVE_MAJOR: ${{ steps.plan.outputs.move_major }}
+          IS_PRERELEASE: ${{ steps.plan.outputs.github_prerelease }}
+        run: |
+          {
+            echo "Dry run - nothing was published or tagged."
+            echo "Would publish fixowl@${VERSION} with dist-tag '${NPM_TAG}'."
+            echo "Would create git tag ${GIT_TAG} (move ${MAJOR_TAG}: ${MOVE_MAJOR})."
+            echo "GitHub Release prerelease: ${IS_PRERELEASE}."
+          } >> "${GITHUB_STEP_SUMMARY}"
