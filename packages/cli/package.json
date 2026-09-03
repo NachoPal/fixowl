@@ -14,7 +14,7 @@
     "dist"
   ],
   "type": "module",
-  "dependencies": {
+  "devDependencies": {
     "@fixowl/core": "workspace:*",
     "@octokit/rest": "22.0.1",
     "commander": "15.0.0",
