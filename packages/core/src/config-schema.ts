@@ -1,5 +1,7 @@
 import { z } from "zod";
+import { validateModelEffort } from "./agent-catalog.ts";
 import { labelRuleSchema, type LabelRule } from "./labels.ts";
+import type { LabelModelMap } from "./model-selection.ts";
 
 /** 5-field cron expression; correctness beyond shape is GitHub's problem. */
 const cronSchema = z.string().regex(/^\S+ \S+ \S+ \S+ \S+$/, "expected a 5-field cron expression");
@@ -12,6 +14,18 @@ const agentSettingsSchema = z.object({
   env: z.array(envVarNameSchema),
 });
 
+/** A model + reasoning effort a selector label maps to; both required. */
+const modelEffortSchema = z.object({
+  model: z.string().min(1),
+  effort: z.string().min(1),
+});
+
+/**
+ * Selector labels: a single GitHub label name -> the model + effort it selects.
+ * Dedicated model-selector labels, separate from the issue-pickup label rule.
+ */
+const labelModelsSchema = z.record(z.string().min(1), modelEffortSchema);
+
 const repoEntrySchema = z.object({
   name: repoFullNameSchema,
   schedule: cronSchema.optional(),
@@ -19,7 +33,15 @@ const repoEntrySchema = z.object({
   agent: z.string().optional(),
   max_issues_per_run: z.number().int().positive().optional(),
   issue_timeout_minutes: z.number().int().positive().optional(),
+  /** Default model for this repo when an issue carries no selector label. */
+  model: z.string().min(1).optional(),
+  /** Default reasoning effort for this repo when an issue carries no selector label. */
+  effort: z.string().min(1).optional(),
+  /** Model-selector labels for this repo (see labelModelsSchema). */
+  label_models: labelModelsSchema.optional(),
 });
+
+export { labelModelsSchema };
 
 /** `~/.fixowl/config.yaml`, after ${VAR} references are resolved. Never contains raw secrets on disk. */
 export const globalConfigSchema = z.object({
@@ -40,6 +62,10 @@ export const globalConfigSchema = z.object({
       agent: z.string().optional(),
       max_issues_per_run: z.number().int().positive().optional(),
       issue_timeout_minutes: z.number().int().positive().optional(),
+      /** Fallback model used by any repo that does not set its own. */
+      model: z.string().min(1).optional(),
+      /** Fallback reasoning effort used by any repo that does not set its own. */
+      effort: z.string().min(1).optional(),
     })
     .optional(),
   agents: z.record(z.string(), agentSettingsSchema).optional(),
@@ -48,6 +74,25 @@ export const globalConfigSchema = z.object({
 
 export type GlobalConfig = z.infer<typeof globalConfigSchema>;
 export type RepoEntry = z.infer<typeof repoEntrySchema>;
+
+/**
+ * Semantic check layered on top of the shape: every configured model/effort
+ * must be valid for the agent the repo actually uses. Kept as a superRefine so
+ * a hand-edited config fails at parse, and reused by `fixowl validate`.
+ */
+export const globalConfigSchemaChecked = globalConfigSchema.superRefine((config, ctx) => {
+  for (const entry of config.repos) {
+    let settings: ResolvedRepoSettings;
+    try {
+      settings = resolveRepoSettings(config, entry.name);
+    } catch {
+      continue; // a malformed entry is already reported by the base schema
+    }
+    for (const message of resolvedModelSelectionErrors(settings)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: `repo ${entry.name}: ${message}` });
+    }
+  }
+});
 
 export const FIXOWL_DEFAULTS = {
   schedule: "37 1 * * *",
@@ -67,6 +112,12 @@ export interface ResolvedRepoSettings {
   issueTimeoutMinutes: number;
   /** Env allowlist for the agent; undefined means use the adapter's built-in default. */
   agentEnv: string[] | undefined;
+  /** Default model when an issue carries no selector label; undefined uses the agent CLI default. */
+  defaultModel: string | undefined;
+  /** Default reasoning effort when an issue carries no selector label; undefined uses the agent CLI default. */
+  defaultEffort: string | undefined;
+  /** Model-selector labels for this repo; empty when none configured. */
+  labelModels: LabelModelMap;
 }
 
 export function resolveRepoSettings(config: GlobalConfig, repoName: string): ResolvedRepoSettings {
@@ -90,7 +141,28 @@ export function resolveRepoSettings(config: GlobalConfig, repoName: string): Res
       defaults.issue_timeout_minutes ??
       FIXOWL_DEFAULTS.issueTimeoutMinutes,
     agentEnv: config.agents?.[agent]?.env,
+    defaultModel: entry.model ?? defaults.model,
+    defaultEffort: entry.effort ?? defaults.effort,
+    // Selector labels are per-repo by design; they are not merged from defaults.
+    labelModels: entry.label_models ?? {},
   };
+}
+
+/**
+ * Every model/effort chosen for a repo - its default and each selector label -
+ * validated against the agent that repo runs. Returns one message per problem.
+ */
+export function resolvedModelSelectionErrors(settings: ResolvedRepoSettings): string[] {
+  const errors = validateModelEffort(settings.agent, {
+    model: settings.defaultModel,
+    effort: settings.defaultEffort,
+  });
+  for (const [label, choice] of Object.entries(settings.labelModels)) {
+    for (const message of validateModelEffort(settings.agent, choice)) {
+      errors.push(`selector label "${label}": ${message}`);
+    }
+  }
+  return errors;
 }
 
 export function runnerBaseDir(config: GlobalConfig): string {

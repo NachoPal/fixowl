@@ -47,6 +47,32 @@ describe("renderFixowlWorkflow", () => {
     expect(rendered).toContain("B_TOKEN: ${{ secrets.B_TOKEN }}");
   });
 
+  it("omits model inputs when unset (today's workflows are unchanged)", () => {
+    const rendered = renderFixowlWorkflow(baseOptions);
+    expect(rendered).not.toContain("default-model:");
+    expect(rendered).not.toContain("default-effort:");
+    expect(rendered).not.toContain("label-models:");
+  });
+
+  it("renders default model/effort and a JSON label-models input when set", () => {
+    const rendered = renderFixowlWorkflow({
+      ...baseOptions,
+      defaultModel: "sonnet",
+      defaultEffort: "medium",
+      labelModels: { heavy: { model: "opus", effort: "max" } },
+    });
+    expect(rendered).toContain('default-model: "sonnet"');
+    expect(rendered).toContain('default-effort: "medium"');
+    expect(rendered).toContain(
+      'label-models: "{\\"heavy\\":{\\"model\\":\\"opus\\",\\"effort\\":\\"max\\"}}"',
+    );
+    // The label-models value round-trips through JSON.parse of the YAML scalar.
+    const match = /label-models: (".*")/.exec(rendered);
+    expect(match).not.toBeNull();
+    const yamlScalar = JSON.parse(match?.[1] ?? '""') as string;
+    expect(JSON.parse(yamlScalar)).toEqual({ heavy: { model: "opus", effort: "max" } });
+  });
+
   it("passes actionlint when available", () => {
     try {
       execFileSync("actionlint", ["--version"], { stdio: "ignore" });

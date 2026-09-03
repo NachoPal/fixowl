@@ -50,3 +50,15 @@ workflow never bumps a version. See [docs/releasing.md](docs/releasing.md).
   `permissions:`. actionlint runs in CI over both our workflows and rendered templates.
 - Spawn processes with argv arrays, never shell string interpolation.
 - Keep modules pure where possible; push I/O to the edges behind `deps.ts` interfaces.
+- The valid model ids and effort levels per agent live in one place,
+  `packages/core/src/agent-catalog.ts`; init, validation, and the adapters all
+  read it. Extend an agent there rather than hardcoding a model list elsewhere.
+  Per-issue model/effort resolution is pure logic in
+  `packages/core/src/model-selection.ts`.
+
+## Maintaining this file
+
+Keep this file for knowledge useful to almost every future agent session in this
+project. Do not repeat what the codebase already shows; point to the
+authoritative file or command instead. Prefer rewriting or pruning existing
+entries over appending new ones, and keep entries concise.

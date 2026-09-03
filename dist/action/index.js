@@ -49502,12 +49502,15 @@ var claude = {
   promptVia: "stdin",
   // --dangerously-skip-permissions is safe here because the container is the
   // sandbox: no GitHub token, no docker socket, cap-drop ALL, resource limits.
-  argv: (mode) => [
+  // The Claude Code CLI accepts --model and --effort in -p (headless) mode.
+  argv: (mode, selection) => [
     "claude",
     "-p",
     "--dangerously-skip-permissions",
     "--max-turns",
-    mode === "classify" ? "30" : "80"
+    mode === "classify" ? "30" : "80",
+    ...selection?.model !== void 0 ? ["--model", selection.model] : [],
+    ...selection?.effort !== void 0 ? ["--effort", selection.effort] : []
   ]
 };
 var aider = {
@@ -49516,7 +49519,15 @@ var aider = {
   // explicitly via `agents: { aider: { env: [ANTHROPIC_API_KEY] } }` in config.
   env: [],
   promptVia: "file",
-  argv: () => ["aider", "--message-file", PROMPT_MOUNT_PATH, "--yes-always"]
+  // aider takes --model and sets reasoning budget via --reasoning-effort.
+  argv: (_mode, selection) => [
+    "aider",
+    "--message-file",
+    PROMPT_MOUNT_PATH,
+    "--yes-always",
+    ...selection?.model !== void 0 ? ["--model", selection.model] : [],
+    ...selection?.effort !== void 0 ? ["--reasoning-effort", selection.effort] : []
+  ]
 };
 var SCRIPT_EXTRACT_AND_RUN = `awk '/^<untrusted-issue-body>$/{f=1;next} /^<\\/untrusted-issue-body>$/{f=0} f' ${PROMPT_MOUNT_PATH} | bash`;
 var script = {
@@ -49549,6 +49560,95 @@ function getAgentAdapter(name, envOverride) {
   return envOverride === void 0 ? adapter : { ...adapter, env };
 }
 
+// packages/core/src/agent-catalog.ts
+var AGENT_MODEL_CATALOG = {
+  // Claude Code CLI: `--model` takes an alias for the latest model of a family
+  // (or a full id), and `--effort` takes one of these levels. Both are accepted
+  // in `-p` (headless) mode.
+  claude: {
+    models: [
+      { id: "opus", description: "Most capable; alias for the latest Opus." },
+      { id: "sonnet", description: "Balanced capability and speed; alias for the latest Sonnet." },
+      { id: "haiku", description: "Fastest and cheapest; alias for the latest Haiku." },
+      { id: "fable", description: "Alias for the latest Fable model." }
+    ],
+    efforts: ["low", "medium", "high", "xhigh", "max"]
+  },
+  // aider: `--model` takes a model name or one of aider's built-in aliases, and
+  // `--reasoning-effort` sets the reasoning budget. The alias set below is a
+  // sensible starting point; extend it with any model your API key can reach.
+  aider: {
+    models: [
+      { id: "sonnet", description: "aider alias for the latest Anthropic Sonnet." },
+      { id: "opus", description: "aider alias for the latest Anthropic Opus." },
+      { id: "haiku", description: "aider alias for the latest Anthropic Haiku." }
+    ],
+    efforts: ["low", "medium", "high"]
+  }
+};
+function agentCatalogEntry(agent) {
+  return AGENT_MODEL_CATALOG[agent];
+}
+function agentModelIds(agent) {
+  return (agentCatalogEntry(agent)?.models ?? []).map((model) => model.id);
+}
+function validateModelEffort(agent, choice) {
+  const errors = [];
+  const entry = agentCatalogEntry(agent);
+  if (entry === void 0) {
+    if (choice.model !== void 0 || choice.effort !== void 0) {
+      errors.push(
+        `agent "${agent}" has no model/effort catalog; remove model/effort for repos using it`
+      );
+    }
+    return errors;
+  }
+  if (choice.model !== void 0 && !entry.models.some((model) => model.id === choice.model)) {
+    errors.push(
+      `model "${choice.model}" is not available for agent "${agent}" (available: ${agentModelIds(agent).join(", ")})`
+    );
+  }
+  if (choice.effort !== void 0) {
+    if (entry.efforts.length === 0) {
+      errors.push(`agent "${agent}" does not support a reasoning effort level; remove effort`);
+    } else if (!entry.efforts.includes(choice.effort)) {
+      errors.push(
+        `effort "${choice.effort}" is not available for agent "${agent}" (available: ${entry.efforts.join(", ")})`
+      );
+    }
+  }
+  return errors;
+}
+
+// packages/core/src/model-selection.ts
+function resolveModelSelection(params) {
+  const issueLabels = new Set(params.issueLabels);
+  const matched = Object.keys(params.labelModels).filter((label) => issueLabels.has(label));
+  if (matched.length >= 2) {
+    return {
+      ok: false,
+      conflictingLabels: matched,
+      error: `issue carries ${matched.length} fixowl model-selector labels (${matched.join(", ")}); refusing to guess which model to use - leave exactly one on the issue`
+    };
+  }
+  const only = matched[0];
+  if (only !== void 0) {
+    const selection = params.labelModels[only];
+    if (selection !== void 0) {
+      return { ok: true, selection: { ...selection }, source: "label", label: only };
+    }
+  }
+  const fallback = params.default;
+  if (fallback !== void 0 && (fallback.model !== void 0 || fallback.effort !== void 0)) {
+    return {
+      ok: true,
+      selection: { model: fallback.model, effort: fallback.effort },
+      source: "default"
+    };
+  }
+  return { ok: true, selection: {}, source: "agent-default" };
+}
+
 // packages/core/src/config-schema.ts
 var cronSchema = external_exports.string().regex(/^\S+ \S+ \S+ \S+ \S+$/, "expected a 5-field cron expression");
 var envVarNameSchema = external_exports.string().regex(/^[A-Z][A-Z0-9_]*$/, "expected an ENV_VAR_NAME");
@@ -49556,13 +49656,24 @@ var repoFullNameSchema = external_exports.string().regex(/^[\w.-]+\/[\w.-]+$/, "
 var agentSettingsSchema = external_exports.object({
   env: external_exports.array(envVarNameSchema)
 });
+var modelEffortSchema = external_exports.object({
+  model: external_exports.string().min(1),
+  effort: external_exports.string().min(1)
+});
+var labelModelsSchema = external_exports.record(external_exports.string().min(1), modelEffortSchema);
 var repoEntrySchema = external_exports.object({
   name: repoFullNameSchema,
   schedule: cronSchema.optional(),
   labels: labelRuleSchema.optional(),
   agent: external_exports.string().optional(),
   max_issues_per_run: external_exports.number().int().positive().optional(),
-  issue_timeout_minutes: external_exports.number().int().positive().optional()
+  issue_timeout_minutes: external_exports.number().int().positive().optional(),
+  /** Default model for this repo when an issue carries no selector label. */
+  model: external_exports.string().min(1).optional(),
+  /** Default reasoning effort for this repo when an issue carries no selector label. */
+  effort: external_exports.string().min(1).optional(),
+  /** Model-selector labels for this repo (see labelModelsSchema). */
+  label_models: labelModelsSchema.optional()
 });
 var globalConfigSchema = external_exports.object({
   version: external_exports.literal(1),
@@ -49578,11 +49689,71 @@ var globalConfigSchema = external_exports.object({
     labels: labelRuleSchema.optional(),
     agent: external_exports.string().optional(),
     max_issues_per_run: external_exports.number().int().positive().optional(),
-    issue_timeout_minutes: external_exports.number().int().positive().optional()
+    issue_timeout_minutes: external_exports.number().int().positive().optional(),
+    /** Fallback model used by any repo that does not set its own. */
+    model: external_exports.string().min(1).optional(),
+    /** Fallback reasoning effort used by any repo that does not set its own. */
+    effort: external_exports.string().min(1).optional()
   }).optional(),
   agents: external_exports.record(external_exports.string(), agentSettingsSchema).optional(),
   repos: external_exports.array(repoEntrySchema).min(1)
 });
+var globalConfigSchemaChecked = globalConfigSchema.superRefine((config2, ctx) => {
+  for (const entry of config2.repos) {
+    let settings;
+    try {
+      settings = resolveRepoSettings(config2, entry.name);
+    } catch {
+      continue;
+    }
+    for (const message of resolvedModelSelectionErrors(settings)) {
+      ctx.addIssue({ code: external_exports.ZodIssueCode.custom, message: `repo ${entry.name}: ${message}` });
+    }
+  }
+});
+var FIXOWL_DEFAULTS = {
+  schedule: "37 1 * * *",
+  labels: { any: ["overnight"] },
+  agent: "claude",
+  maxIssuesPerRun: 4,
+  issueTimeoutMinutes: 45,
+  runnerDir: "~/.fixowl/runners"
+};
+function resolveRepoSettings(config2, repoName) {
+  const entry = config2.repos.find((repo) => repo.name === repoName);
+  if (!entry) {
+    throw new Error(
+      `repo "${repoName}" is not listed in config (known: ${config2.repos.map((r) => r.name).join(", ")})`
+    );
+  }
+  const defaults = config2.defaults ?? {};
+  const agent = entry.agent ?? defaults.agent ?? FIXOWL_DEFAULTS.agent;
+  return {
+    name: entry.name,
+    schedule: entry.schedule ?? defaults.schedule ?? FIXOWL_DEFAULTS.schedule,
+    labels: entry.labels ?? defaults.labels ?? FIXOWL_DEFAULTS.labels,
+    agent,
+    maxIssuesPerRun: entry.max_issues_per_run ?? defaults.max_issues_per_run ?? FIXOWL_DEFAULTS.maxIssuesPerRun,
+    issueTimeoutMinutes: entry.issue_timeout_minutes ?? defaults.issue_timeout_minutes ?? FIXOWL_DEFAULTS.issueTimeoutMinutes,
+    agentEnv: config2.agents?.[agent]?.env,
+    defaultModel: entry.model ?? defaults.model,
+    defaultEffort: entry.effort ?? defaults.effort,
+    // Selector labels are per-repo by design; they are not merged from defaults.
+    labelModels: entry.label_models ?? {}
+  };
+}
+function resolvedModelSelectionErrors(settings) {
+  const errors = validateModelEffort(settings.agent, {
+    model: settings.defaultModel,
+    effort: settings.defaultEffort
+  });
+  for (const [label, choice] of Object.entries(settings.labelModels)) {
+    for (const message of validateModelEffort(settings.agent, choice)) {
+      errors.push(`selector label "${label}": ${message}`);
+    }
+  }
+  return errors;
+}
 var verifyCheckSchema = external_exports.object({
   name: external_exports.string().min(1),
   run: external_exports.string().min(1)
@@ -50212,7 +50383,7 @@ async function processIssue(deps, ctx) {
     image: ctx.image,
     name: containerName(ctx.repoFullName, issue3.number, "agent"),
     workspaceDir: ctx.workspaceDir,
-    argv: ctx.adapter.argv("fix"),
+    argv: ctx.adapter.argv("fix", ctx.selection),
     env: ctx.agentEnv,
     extraMounts,
     stdin,
@@ -50318,6 +50489,11 @@ async function runNightWithGit(deps, inputs, git) {
     return { results: [], skipped, warnings };
   }
   const image = await buildTargetImage(engine, git, inputs.workspaceDir, repoConfig);
+  const labelModels = inputs.labelModels ?? {};
+  const defaultSelection = {
+    model: inputs.defaultModel,
+    effort: inputs.defaultEffort
+  };
   const chainNumbers = await classifyIssues({
     engine,
     log: log2,
@@ -50326,7 +50502,10 @@ async function runNightWithGit(deps, inputs, git) {
     adapter,
     agentEnv,
     image,
-    inputs
+    inputs,
+    // Classification spans all issues at once, so it uses the repo default, not
+    // any single issue's selector label.
+    selection: defaultSelection
   });
   const chains = planChains(selected, chainNumbers);
   const results = [];
@@ -50336,6 +50515,21 @@ async function runNightWithGit(deps, inputs, git) {
     let stackedOn;
     for (const issue3 of chain) {
       const branch = issueBranchName(issue3.number, issue3.title);
+      const resolution = resolveModelSelection({
+        issueLabels: issue3.labels,
+        labelModels,
+        default: defaultSelection
+      });
+      if (!resolution.ok) {
+        log2.error(`issue #${issue3.number}: ${resolution.error}`);
+        results.push({ issue: issue3, branch, status: "error", verification: [], error: resolution.error });
+        continue;
+      }
+      if (resolution.source === "label") {
+        log2.info(
+          `issue #${issue3.number}: selector label "${resolution.label}" -> model ${resolution.selection.model}, effort ${resolution.selection.effort}`
+        );
+      }
       let result;
       try {
         result = await processIssue(
@@ -50351,6 +50545,7 @@ async function runNightWithGit(deps, inputs, git) {
             repoConfig,
             adapter,
             agentEnv,
+            selection: resolution.selection,
             workspaceDir: inputs.workspaceDir,
             promptDir: join4(inputs.tempDir, "fixowl-prompts"),
             evidenceDir: join4(inputs.tempDir, "fixowl-evidence", `issue-${issue3.number}`),
@@ -50429,7 +50624,7 @@ async function buildTargetImage(engine, git, workspaceDir, repoConfig) {
   return image;
 }
 async function classifyIssues(params) {
-  const { engine, log: log2, warnings, selected, adapter, agentEnv, image, inputs } = params;
+  const { engine, log: log2, warnings, selected, adapter, agentEnv, image, inputs, selection } = params;
   const numbers = selected.map((issue3) => issue3.number);
   if (selected.length < 2) return allIndependent(numbers);
   log2.info(`classifying ${selected.length} issues into dependency chains`);
@@ -50450,7 +50645,7 @@ async function classifyIssues(params) {
     name: containerName(inputs.repoFullName, "classify", adapter.name),
     workspaceDir: inputs.workspaceDir,
     workspaceReadOnly: true,
-    argv: adapter.argv("classify"),
+    argv: adapter.argv("classify", selection),
     env: agentEnv,
     extraMounts,
     stdin,
@@ -50597,6 +50792,16 @@ function requireEnv(name) {
   }
   return value;
 }
+function parseLabelModelsInput(raw) {
+  if (raw.trim() === "") return {};
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error(`input label-models is not valid JSON: ${raw}`);
+  }
+  return labelModelsSchema.parse(parsed);
+}
 function positiveIntInput(name, fallback) {
   const raw = getInput(name);
   if (raw === "") return fallback;
@@ -50646,6 +50851,9 @@ async function run() {
       agentEnvNames: parseLabelInput(getInput("agent-env")),
       maxIssues: positiveIntInput("max-issues-per-run", 4),
       issueTimeoutMinutes: positiveIntInput("issue-timeout-minutes", 45),
+      defaultModel: getInput("default-model") || void 0,
+      defaultEffort: getInput("default-effort") || void 0,
+      labelModels: parseLabelModelsInput(getInput("label-models")),
       workspaceDir,
       tempDir,
       runUrl,

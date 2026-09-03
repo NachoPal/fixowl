@@ -74,6 +74,49 @@ describe("renderConfigYaml", () => {
     });
   });
 
+  it("renders default model/effort into defaults and label_models per repo", () => {
+    const config = loadRendered(
+      renderConfigYaml({
+        agent: "claude",
+        agentEnv: ["CLAUDE_CODE_OAUTH_TOKEN"],
+        repos: [
+          repo({
+            defaultModel: "sonnet",
+            defaultEffort: "medium",
+            labelModels: {
+              heavy: { model: "opus", effort: "max" },
+              quick: { model: "haiku", effort: "low" },
+            },
+          }),
+        ],
+      }),
+    );
+    expect(config.defaults).toMatchObject({ model: "sonnet", effort: "medium" });
+    expect(config.repos[0]).toEqual({
+      name: "NachoPal/storyengine",
+      label_models: {
+        heavy: { model: "opus", effort: "max" },
+        quick: { model: "haiku", effort: "low" },
+      },
+    });
+  });
+
+  it("writes a per-repo model override only where it differs from defaults", () => {
+    const config = loadRendered(
+      renderConfigYaml({
+        agent: "claude",
+        agentEnv: ["CLAUDE_CODE_OAUTH_TOKEN"],
+        repos: [
+          repo({ defaultModel: "sonnet", defaultEffort: "medium" }),
+          repo({ name: "NachoPal/same", defaultModel: "sonnet", defaultEffort: "medium" }),
+          repo({ name: "NachoPal/big", defaultModel: "opus", defaultEffort: "max" }),
+        ],
+      }),
+    );
+    expect(config.repos[1]).toEqual({ name: "NachoPal/same" });
+    expect(config.repos[2]).toEqual({ name: "NachoPal/big", model: "opus", effort: "max" });
+  });
+
   it("keeps secrets out of the config file", () => {
     const yaml = renderConfigYaml({
       agent: "claude",

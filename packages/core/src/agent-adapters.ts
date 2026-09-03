@@ -5,6 +5,8 @@
  * the credential plumbing and the spend-control allowlist.
  */
 
+import type { ModelSelection } from "./model-selection.ts";
+
 export type AgentMode = "fix" | "classify";
 
 /** Path the prompt file is mounted at (read-only) for `promptVia: "file"` adapters. */
@@ -15,7 +17,12 @@ export interface AgentAdapter {
   /** Env var allowlist. Default-deny: anything not listed never reaches the container. */
   env: readonly string[];
   promptVia: "stdin" | "file";
-  argv(mode: AgentMode): string[];
+  /**
+   * Argv for one agent run. `selection` carries the model/effort resolved for
+   * this issue (or the repo default for classify); an absent field means the
+   * flag is omitted and the CLI's own default is used.
+   */
+  argv(mode: AgentMode, selection?: ModelSelection): string[];
 }
 
 const claude: AgentAdapter = {
@@ -24,12 +31,15 @@ const claude: AgentAdapter = {
   promptVia: "stdin",
   // --dangerously-skip-permissions is safe here because the container is the
   // sandbox: no GitHub token, no docker socket, cap-drop ALL, resource limits.
-  argv: (mode) => [
+  // The Claude Code CLI accepts --model and --effort in -p (headless) mode.
+  argv: (mode, selection) => [
     "claude",
     "-p",
     "--dangerously-skip-permissions",
     "--max-turns",
     mode === "classify" ? "30" : "80",
+    ...(selection?.model !== undefined ? ["--model", selection.model] : []),
+    ...(selection?.effort !== undefined ? ["--effort", selection.effort] : []),
   ],
 };
 
@@ -39,7 +49,15 @@ const aider: AgentAdapter = {
   // explicitly via `agents: { aider: { env: [ANTHROPIC_API_KEY] } }` in config.
   env: [],
   promptVia: "file",
-  argv: () => ["aider", "--message-file", PROMPT_MOUNT_PATH, "--yes-always"],
+  // aider takes --model and sets reasoning budget via --reasoning-effort.
+  argv: (_mode, selection) => [
+    "aider",
+    "--message-file",
+    PROMPT_MOUNT_PATH,
+    "--yes-always",
+    ...(selection?.model !== undefined ? ["--model", selection.model] : []),
+    ...(selection?.effort !== undefined ? ["--reasoning-effort", selection.effort] : []),
+  ],
 };
 
 /**

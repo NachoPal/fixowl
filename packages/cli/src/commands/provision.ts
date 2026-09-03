@@ -49,8 +49,12 @@ export async function provisionCommand(
     const { data: repoData } = await ctx.admin.rest.repos.get({ ...ref });
     const defaultBranch = repoData.default_branch;
 
-    // 1. Labels
-    const created = await ensureLabels(ctx.admin, ref, labelsInRule(settings.labels));
+    // 1. Labels: issue-pickup labels plus the model-selector labels.
+    const selectorLabels = Object.keys(settings.labelModels);
+    const created = await ensureLabels(ctx.admin, ref, [
+      ...labelsInRule(settings.labels),
+      ...selectorLabels,
+    ]);
     log.ok(created.length > 0 ? `labels created: ${created.join(", ")}` : "labels already present");
 
     // 2. Secrets: runtime PAT + every agent env var, sealed client-side
@@ -74,6 +78,9 @@ export async function provisionCommand(
       agentEnv: adapter.env,
       maxIssuesPerRun: settings.maxIssuesPerRun,
       issueTimeoutMinutes: settings.issueTimeoutMinutes,
+      defaultModel: settings.defaultModel,
+      defaultEffort: settings.defaultEffort,
+      labelModels: settings.labelModels,
       actionRef: actionRef.ref,
       actionRefComment: actionRef.comment,
     });

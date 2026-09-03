@@ -205,6 +205,47 @@ describe("runNight", () => {
     expect(github.comments[0]?.body).toContain("draft");
   });
 
+  it("routes model/effort from selector labels and fails a multi-label issue loudly", async () => {
+    const { workspaceDir, inputs } = await setup();
+    const github = new FakeGitHub([
+      issue(1, "Heavy fix", "x", ["overnight", "heavy"]),
+      issue(2, "Ambiguous", "y", ["overnight", "heavy", "quick"]),
+      issue(3, "Plain fix", "z", ["overnight"]),
+    ]);
+    const engine = makeEngine({ workspaceDir, classifyOutput: '{"chains": [[1], [2], [3]]}' });
+
+    const summary = await runNight(
+      { github, engine, exec: realExec, log: silentLog },
+      {
+        ...inputs,
+        agentName: "claude",
+        env: { CLAUDE_CODE_OAUTH_TOKEN: "token" },
+        defaultModel: "sonnet",
+        defaultEffort: "medium",
+        labelModels: {
+          heavy: { model: "opus", effort: "max" },
+          quick: { model: "haiku", effort: "low" },
+        },
+      },
+    );
+
+    const byNumber = new Map(summary.results.map((result) => [result.issue.number, result]));
+    // The two-selector-label issue fails, loudly, and by itself.
+    expect(byNumber.get(2)?.status).toBe("error");
+    expect(byNumber.get(2)?.error).toMatch(/model-selector labels \(heavy, quick\)/);
+    expect(engine.runs.some((spec) => spec.name.endsWith("-2-agent"))).toBe(false);
+    // The other issues still open PRs.
+    expect(byNumber.get(1)?.status).toBe("pr-opened");
+    expect(byNumber.get(3)?.status).toBe("pr-opened");
+
+    // The single-selector-label issue runs with that label's model/effort...
+    const agent1 = engine.runs.find((spec) => spec.name.endsWith("-1-agent"));
+    expect(agent1?.argv.join(" ")).toContain("--model opus --effort max");
+    // ...and the unlabeled issue runs with the repo default.
+    const agent3 = engine.runs.find((spec) => spec.name.endsWith("-3-agent"));
+    expect(agent3?.argv.join(" ")).toContain("--model sonnet --effort medium");
+  });
+
   it("an agent that changes nothing produces no PR and no branch", async () => {
     const { originDir, workspaceDir, inputs } = await setup();
     const github = new FakeGitHub([issue(1, "Fix header", "x")]);

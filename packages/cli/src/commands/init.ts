@@ -1,7 +1,12 @@
 import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Octokit } from "@octokit/rest";
-import { getAgentAdapter, repoFullNameSchema } from "@fixowl/core";
+import {
+  agentCatalogEntry,
+  getAgentAdapter,
+  repoFullNameSchema,
+  type AgentCatalogEntry,
+} from "@fixowl/core";
 import { CONFIG_PATH, loadSecrets, SECRETS_PATH } from "../config-load.ts";
 import { makeContext } from "../context.ts";
 import { githubClient } from "../github/client.ts";
@@ -94,7 +99,7 @@ the questions are answered, and every answer is stored in ${dirname(configPath)}
   const secrets = loadSecrets(secretsPath);
   const admin = await stepTokens(prompter, secrets);
   const { agent, agentEnv } = await stepAgent(prompter, secrets);
-  const repos = await stepRepos(prompter, admin);
+  const repos = await stepRepos(prompter, admin, agent);
 
   writeFileSync(configPath, renderConfigYaml({ agent, agentEnv, repos }));
   log.ok(`wrote ${configPath}`);
@@ -204,12 +209,17 @@ Step 2/4  Coding agent
 // Step 3: the repos
 // ---------------------------------------------------------------------------
 
-async function stepRepos(prompter: Prompter, admin: Octokit): Promise<RepoAnswers[]> {
+async function stepRepos(
+  prompter: Prompter,
+  admin: Octokit,
+  agent: string,
+): Promise<RepoAnswers[]> {
   log.info(`
 Step 3/4  Repositories
 ----------------------
 For each repo: which one, when the nightly run fires, which labels mark an
-issue as fixowl's, and how many issues one night may take on.`);
+issue as fixowl's, how many issues one night may take on, and which model the
+coding agent runs with.`);
 
   const repos: RepoAnswers[] = [];
   let lastSchedule = "02:37";
@@ -245,12 +255,15 @@ issue as fixowl's, and how many issues one night may take on.`);
       validate: (value) => (/^[1-9]\d*$/.test(value) ? undefined : "enter a positive whole number"),
     });
 
+    const modelSelection = await stepModelSelection(prompter, agent);
+
     repos.push({
       name,
       schedule: schedule.cron,
       scheduleNote: schedule.note,
       labels: parseLabels(labelsAnswer),
       maxIssuesPerRun: Number(maxIssuesAnswer),
+      ...modelSelection,
     });
     lastSchedule = scheduleAnswer;
     lastLabels = labelsAnswer;
@@ -289,6 +302,95 @@ async function askRepoName(
       if (!(await prompter.confirm("  Try a different repo name?", true))) return name;
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Step 3b: model + reasoning effort for the coding agent
+// ---------------------------------------------------------------------------
+
+interface ModelSelectionAnswers {
+  defaultModel?: string;
+  defaultEffort?: string;
+  labelModels?: Record<string, { model: string; effort: string }>;
+}
+
+/**
+ * Presents the agent's available models/efforts and captures either a per-label
+ * mapping (comma-separated label names, one model+effort each) or a single
+ * default, or neither (fall through to the agent CLI's own default).
+ */
+async function stepModelSelection(
+  prompter: Prompter,
+  agent: string,
+): Promise<ModelSelectionAnswers> {
+  const catalog = agentCatalogEntry(agent);
+  if (catalog === undefined) return {}; // agent has no model/effort axis; nothing to ask
+
+  log.info(`
+  Model selection for "${agent}"
+  Available models:`);
+  for (const model of catalog.models) {
+    log.info(`    ${model.id} - ${model.description}`);
+  }
+  log.info(`  Available reasoning efforts: ${catalog.efforts.join(", ")}`);
+
+  const answers: ModelSelectionAnswers = {};
+
+  const wantsLabels = await prompter.confirm(
+    "\n  Map specific labels to a model + effort (heavy issues get a bigger model)?",
+    false,
+  );
+  if (wantsLabels) {
+    const labelsAnswer = await prompter.ask(
+      "  Selector label names (comma-separated; one model+effort each)",
+      {
+        validate: (value) =>
+          parseLabels(value).length > 0 ? undefined : "enter at least one label",
+      },
+    );
+    const labelModels: Record<string, { model: string; effort: string }> = {};
+    for (const label of parseLabels(labelsAnswer)) {
+      const model = await chooseModel(prompter, catalog, `  Model for "${label}"`);
+      const effort = await chooseEffort(prompter, catalog, `  Effort for "${label}"`);
+      labelModels[label] = { model, effort };
+    }
+    answers.labelModels = labelModels;
+  }
+
+  const setDefault = await prompter.confirm(
+    wantsLabels
+      ? "\n  Set a default model + effort for issues carrying none of those labels?"
+      : "\n  Set a default model + effort for this repo (No = use the agent's own default)?",
+    !wantsLabels,
+  );
+  if (setDefault) {
+    answers.defaultModel = await chooseModel(prompter, catalog, "  Default model");
+    answers.defaultEffort = await chooseEffort(prompter, catalog, "  Default effort");
+  }
+
+  return answers;
+}
+
+async function chooseModel(
+  prompter: Prompter,
+  catalog: AgentCatalogEntry,
+  question: string,
+): Promise<string> {
+  return await prompter.choose(
+    question,
+    catalog.models.map((model) => ({ value: model.id, label: model.id, hint: model.description })),
+  );
+}
+
+async function chooseEffort(
+  prompter: Prompter,
+  catalog: AgentCatalogEntry,
+  question: string,
+): Promise<string> {
+  return await prompter.choose(
+    question,
+    catalog.efforts.map((effort) => ({ value: effort, label: effort })),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -382,6 +484,8 @@ defaults:
   agent: claude
   max_issues_per_run: 4
   issue_timeout_minutes: 45
+  # model: sonnet            # default model when an issue has no selector label
+  # effort: medium           # default reasoning effort (low, medium, high, xhigh, max)
 
 # Per-agent env allowlist: the ONLY env vars entering per-issue containers.
 agents:
@@ -390,6 +494,10 @@ agents:
 repos:
   - name: your-user/your-repo
     # schedule: "30 1 * * *"   # per-repo override
+    # model: opus              # per-repo default model override
+    # label_models:            # dedicated selector labels; exactly one per issue
+    #   heavy: { model: opus, effort: max }
+    #   quick: { model: haiku, effort: low }
 `;
 
 const STARTER_SECRETS = `# chmod 600. Values referenced from config.yaml as \${VAR}, and agent env vars
