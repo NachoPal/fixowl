@@ -64,14 +64,23 @@ await git(seedDir, "remote", "add", "origin", originDir);
 await git(seedDir, "push", "origin", "main");
 await git(root, "clone", originDir, workspaceDir);
 
-// The body doubles as the reviewer's token-exfiltration exploit: it snapshots
-// what the untrusted container can see of .git/config; we assert below that
-// the runtime PAT is not in it.
+// The body doubles as the reviewer's exploit suite: it snapshots what the
+// untrusted container can see of .git/config (must be nothing: the git dir is
+// extracted for the night), then plants a hostile .git - a pre-commit hook and
+// a core.fsmonitor command - hoping host git will execute them during
+// status/add/commit/push. We assert below that none of it ever runs.
 const issues: IssueLite[] = [
   {
     number: 1,
     title: "Create the fix file",
-    body: "cat .git/config > seen-git-config.txt\necho fixed-by-script > fix-1.txt",
+    body: [
+      "cat .git/config > seen-git-config.txt 2>&1 || echo 'NO .git IN WORKSPACE' > seen-git-config.txt",
+      "mkdir -p .git/hooks",
+      "printf '#!/bin/sh\\ntouch hook-ran-on-host.txt\\n' > .git/hooks/pre-commit",
+      "chmod +x .git/hooks/pre-commit",
+      "printf '[core]\\n\\tfsmonitor = touch hook-ran-on-host.txt\\n' > .git/config",
+      "echo fixed-by-script > fix-1.txt",
+    ].join("\n"),
     labels: ["overnight"],
   },
 ];
@@ -124,16 +133,35 @@ assert.ok(branches.includes("issue/1-create-the-fix-file"), "branch pushed to or
 const fileOnBranch = await git(workspaceDir, "show", "issue/1-create-the-fix-file:fix-1.txt");
 assert.equal(fileOnBranch.trim(), "fixed-by-script");
 // The exploit view: everything the agent container could read of .git/config.
+// With the git dir extracted for the night there must be nothing to read.
 const seenConfig = await git(
   workspaceDir,
   "show",
   "issue/1-create-the-fix-file:seen-git-config.txt",
 );
+assert.ok(seenConfig.includes("NO .git IN WORKSPACE"), "agent container saw a .git dir");
 assert.ok(!seenConfig.includes(FAKE_PUSH_TOKEN), "runtime PAT leaked into the agent container");
 assert.ok(
   !seenConfig.includes(Buffer.from(`x-access-token:${FAKE_PUSH_TOKEN}`).toString("base64")),
   "runtime PAT (base64) leaked into the agent container",
 );
+// The planted .git never executed on the host and never reached the branch.
+assert.ok(
+  !existsSync(join(workspaceDir, "hook-ran-on-host.txt")),
+  "a planted git hook or fsmonitor command executed on the host",
+);
+const branchFiles = await git(
+  workspaceDir,
+  "ls-tree",
+  "-r",
+  "--name-only",
+  "issue/1-create-the-fix-file",
+);
+assert.ok(!branchFiles.includes("pre-commit"), "the planted .git was committed");
+// After the night the real git dir is back and free of the planted config.
+const restoredConfig = readFileSync(join(workspaceDir, ".git", "config"), "utf8");
+assert.ok(!restoredConfig.includes("fsmonitor"), "planted config survived the restore");
+assert.ok(!restoredConfig.includes(FAKE_PUSH_TOKEN), "runtime PAT leaked into .git/config");
 assert.ok(existsSync(join(tempDir, "fixowl-evidence", "issue-1", "agent.log")));
 assert.ok(
   readFileSync(

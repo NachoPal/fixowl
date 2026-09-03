@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -294,6 +294,54 @@ describe("runNight", () => {
     expect(agentRun?.env).toEqual({}); // script adapter allowlists nothing
     // prompt file is the only extra mount for a file-prompt adapter
     expect(agentRun?.extraMounts?.map((m) => m.container)).toEqual(["/fixowl/prompt.md"]);
+  });
+
+  it("containers see a git-less workspace; a planted .git is inert and never reaches the host", async () => {
+    const { originDir, workspaceDir, inputs } = await setup();
+    const github = new FakeGitHub([issue(1, "Fix header", "x"), issue(2, "Fix footer", "y")]);
+    const hookMarker = join(workspaceDir, "hook-ran-on-host.txt");
+    const engine = new FakeEngine((spec): ExecResult | undefined => {
+      if (spec.name.startsWith("fixowl-classify-")) {
+        expect(existsSync(join(workspaceDir, ".git"))).toBe(false);
+        return ok('{"chains": [[1], [2]]}');
+      }
+      const issueNumber = issueNumberOfAgentRun(spec);
+      if (issueNumber === undefined) return ok(); // verification containers
+      // The invariant: no agent container ever sees a git dir in the workspace.
+      expect(existsSync(join(workspaceDir, ".git"))).toBe(false);
+      if (issueNumber === 1) {
+        // Hostile agent: plant a .git with a hook and hostile config, hoping
+        // host git will execute them during status/add/commit/push.
+        mkdirSync(join(workspaceDir, ".git", "hooks"), { recursive: true });
+        writeFileSync(
+          join(workspaceDir, ".git", "hooks", "pre-commit"),
+          `#!/bin/sh\ntouch ${hookMarker}\n`,
+          {
+            mode: 0o755,
+          },
+        );
+        writeFileSync(
+          join(workspaceDir, ".git", "config"),
+          `[core]\n\tfsmonitor = touch ${hookMarker}\n`,
+        );
+      }
+      writeFileSync(join(workspaceDir, `fix-${issueNumber}.txt`), `fixed ${issueNumber}\n`);
+      return ok("done");
+    });
+
+    const summary = await runNight({ github, engine, exec: realExec, log: silentLog }, inputs);
+
+    expect(summary.results.map((r) => r.status)).toEqual(["pr-opened", "pr-opened"]);
+    // Neither the planted hook nor fsmonitor ever executed on the host.
+    expect(existsSync(hookMarker)).toBe(false);
+    // The planted .git was never committed or pushed.
+    const files = await git(originDir, "ls-tree", "-r", "--name-only", "issue/1-fix-header");
+    expect(files).toContain("fix-1.txt");
+    expect(files).not.toContain("pre-commit");
+    // After the night, the real git dir is restored and the planted one is gone.
+    const restoredConfig = readFileSync(join(workspaceDir, ".git", "config"), "utf8");
+    expect(restoredConfig).not.toContain("fsmonitor");
+    expect(existsSync(join(workspaceDir, ".git", "hooks", "pre-commit"))).toBe(false);
   });
 
   it("the push token never lands in argv or the mounted workspace", async () => {

@@ -41,6 +41,7 @@ describe("buildFixPrompt", () => {
     expect(prompt).toContain("- tests: `npm test`");
     expect(prompt).toContain("Never re-baseline pinned test expectations.");
     expect(prompt).toContain("harness commits and pushes");
+    expect(prompt).toContain("no .git directory");
   });
 
   it("omits empty sections", () => {

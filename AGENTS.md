@@ -30,6 +30,9 @@ and opens exactly one PR per issue. It never merges.
 - **The coding agent never holds a GitHub token.** Only the allowlisted env vars in the
   agent adapter enter the per-issue container. Commits and pushes happen on the host
   (the runner), outside any container.
+- **The git dir never enters a container.** `.git` is moved out of the workspace for the
+  night (`extractGitDir`), containers mount a git-less working tree, and host git always
+  runs with an explicit `--git-dir`, so a `.git` planted in the workspace is inert.
 - **Issue bodies are untrusted input.** They enter prompts only inside
   `<untrusted-issue-body>` fences, and container hardening assumes fencing fails.
 - **Exactly one level of containerization.** The runner is native; the action calls

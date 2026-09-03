@@ -85,7 +85,10 @@ the only thing you give up.
 Known limitation to close before relying on cloud runs: on a Linux host, an
 agent container running as root leaves root-owned files in the mounted
 workspace, which the runner user's `git clean` may fail to remove, letting one
-issue's leftovers bleed into the next issue's PR within the same night. macOS
-with Colima masks this via ownership mapping. Candidate fixes: run agent
-containers with `--user $(id -u):$(id -g)` where the image tolerates it, or
-reset the workspace from a throwaway root container between issues.
+issue's leftovers bleed into the next issue's PR within the same night. The
+same applies to the security cleanup of a `.git` dir a hostile agent plants in
+the workspace (inert either way, but root-owned it can resist deletion by the
+runner user). macOS with Colima masks this via ownership mapping. Candidate
+fixes: run agent containers with `--user $(id -u):$(id -g)` where the image
+tolerates it, or reset the workspace from a throwaway root container between
+issues.

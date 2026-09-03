@@ -19,6 +19,15 @@ issue body (untrusted)
 - The fence is assumed to fail. The structural backstops are what count:
   - The agent container has NO GitHub token. Commits and pushes happen on the
     host, by the harness, after the agent is done.
+  - The git dir never enters any container. `.git` is moved to a sibling of
+    the workspace for the whole night, so containers mount a git-less working
+    tree, and every host git command names the git dir explicitly
+    (`--git-dir`), never relying on discovery. A `.git` an agent plants in the
+    workspace is therefore inert: its hooks, `core.fsmonitor`, or rewritten
+    remote URLs never execute on the host. Planted `.git` entries are deleted
+    at every branch switch and at the end-of-night restore, and the generated
+    workflow deletes any leftover `.git` before checkout, so even a hard-killed
+    run cannot feed one to `actions/checkout`.
   - No docker socket, no mounts beyond the workspace (plus a read-only prompt
     file), `--cap-drop ALL`, `--security-opt no-new-privileges`,
     `--pids-limit 512`, `--memory 6g`, and a hard timeout with `docker rm -f`.
@@ -41,9 +50,10 @@ Two fine-grained PATs, both scoped to only the target repos:
   triggers on them.
 - On the runner, the runtime PAT is injected into git fetch/push commands as an
   env-based `http.extraheader` only. It never appears in argv (`ps`), in git
-  error output, or in any file under the workspace: the workspace, including
-  `.git/config`, is bind-mounted into the untrusted containers, so a token
-  written there would be readable by the agent. A test asserts all three.
+  error output, or in any file under the workspace or the git dir. The git dir
+  is no longer mounted into containers at all (see above), but the extraheader
+  discipline stays: nothing credential-shaped is ever written to disk. A test
+  asserts all three.
 - Repo secrets are sealed client-side (libsodium sealed box against the repo
   public key) before the API call.
 - The agent credential (e.g. `CLAUDE_CODE_OAUTH_TOKEN`) reaches only the agent

@@ -21,7 +21,7 @@ import type {
   IssueLite,
   Logger,
 } from "./deps.ts";
-import { GitWorkspace } from "./git-ops.ts";
+import { extractGitDir, GitWorkspace, restoreGitDir } from "./git-ops.ts";
 import { filterAlreadyAttempted } from "./idempotency.ts";
 import { selectIssues } from "./issue-selection.ts";
 import { processIssue, type IssueResult } from "./issue-pipeline.ts";
@@ -64,9 +64,31 @@ export interface NightSummary {
 }
 
 export async function runNight(deps: NightDeps, inputs: NightInputs): Promise<NightSummary> {
-  const { github, engine, exec, log } = deps;
+  // Structural backstop: move the git dir out of the workspace for the whole
+  // night, so no container mount ever includes it and a `.git` a hostile
+  // agent plants in the workspace is inert on the host (see git-ops.ts).
+  const gitDir = extractGitDir(inputs.workspaceDir);
+  const git = new GitWorkspace(deps.exec, inputs.workspaceDir, gitDir, inputs.pushToken);
+  try {
+    return await runNightWithGit(deps, inputs, git);
+  } finally {
+    try {
+      restoreGitDir(inputs.workspaceDir, gitDir);
+    } catch (error) {
+      deps.log.warn(
+        `failed to restore .git into the workspace: ${String(error)}; the next checkout re-clones`,
+      );
+    }
+  }
+}
+
+async function runNightWithGit(
+  deps: NightDeps,
+  inputs: NightInputs,
+  git: GitWorkspace,
+): Promise<NightSummary> {
+  const { github, engine, log } = deps;
   const warnings: string[] = [];
-  const git = new GitWorkspace(exec, inputs.workspaceDir, inputs.pushToken);
 
   await git.configureIdentity();
 

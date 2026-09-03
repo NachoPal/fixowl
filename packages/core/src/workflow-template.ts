@@ -68,6 +68,12 @@ jobs:
     runs-on: ${runsOn}
     timeout-minutes: 300
     steps:
+      # Security guard: if a previous run was hard-killed mid-night, the
+      # workspace .git may be one an agent container planted. Checkout must
+      # never run git against it, so every night starts from a clean clone.
+      - name: Reset workspace git state
+        run: rm -rf "$GITHUB_WORKSPACE/.git" "$GITHUB_WORKSPACE.fixowl-git"
+
       - uses: ${CHECKOUT_PIN}
         with:
           fetch-depth: 0
