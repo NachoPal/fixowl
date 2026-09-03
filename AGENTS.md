@@ -23,10 +23,13 @@ and opens exactly one PR per issue. It never merges.
 - `pnpm build` - esbuild bundles for the action (`dist/action/index.js`, checked in;
   CI fails if stale) and the CLI (`packages/cli/dist`, gitignored).
 
-Releases are cut manually by `.github/workflows/release.yml` from the version
+Releases are cut manually by `.github/workflows/release.yml` from the BASE version
 committed in `packages/cli/package.json` (kept in lockstep with root); the channel
-(stable vs `-rc` prerelease) is decided by `scripts/release-channel.ts`. The
-workflow never bumps a version. See [docs/releasing.md](docs/releasing.md).
+(`release`/`prerelease`/`draft`) and any prerelease suffix (`version_suffix`, e.g.
+`-rc.1`) are chosen at trigger time and resolved into a plan by the pure,
+unit-tested `scripts/release-channel.ts`. Any suffix is applied only ephemerally
+in-CI for the publish; the workflow never bumps, commits, or pushes a version.
+See [docs/releasing.md](docs/releasing.md).
 
 ## Hard invariants
 

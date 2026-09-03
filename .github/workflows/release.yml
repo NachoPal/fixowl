@@ -1,14 +1,29 @@
 name: release
 
-# Manually-triggered release of the version already committed in the code.
-# The workflow NEVER bumps or commits a version: a human edits the version in
-# packages/cli/package.json AND the root package.json (same number), commits,
-# pushes, then dispatches this. The channel (stable vs prerelease) is derived
-# from the version string. See docs/releasing.md.
+# Manually-triggered release of the BASE version committed in the code, with the
+# channel and any prerelease suffix chosen at trigger time.
+#
+# The workflow NEVER bumps, commits, or pushes a version: a human edits the base
+# version in packages/cli/package.json AND the root package.json (same number),
+# commits, pushes, then dispatches this. The `version_suffix` input is appended
+# verbatim to that base version and applied only ephemerally in-CI for the
+# publish; `release_type` picks the channel. See docs/releasing.md.
 
 on:
   workflow_dispatch:
     inputs:
+      release_type:
+        description: "Channel: release (stable), prerelease, or draft (prepare only, nothing ships)"
+        type: choice
+        options:
+          - release
+          - prerelease
+          - draft
+        default: release
+      version_suffix:
+        description: "Appended verbatim to the base version, e.g. -rc.1 (empty for a plain version)"
+        type: string
+        default: ""
       dry_run:
         description: "Run everything except npm publish, tag push, and Release creation"
         type: boolean
@@ -56,26 +71,35 @@ jobs:
 
       - name: Compute release plan
         id: plan
+        env:
+          RELEASE_TYPE: ${{ inputs.release_type }}
+          VERSION_SUFFIX: ${{ inputs.version_suffix }}
         run: node scripts/release-plan.ts
 
       - name: Preflight - version not already on npm, tag not already present
         env:
           VERSION: ${{ steps.plan.outputs.version }}
           GIT_TAG: ${{ steps.plan.outputs.git_tag }}
+          PUBLISH_NPM: ${{ steps.plan.outputs.publish_npm }}
+          PUSH_GIT_TAG: ${{ steps.plan.outputs.push_git_tag }}
         run: |
           set -euo pipefail
-          published="$(npm view "fixowl@${VERSION}" version 2>/dev/null || true)"
-          if [ -n "${published}" ]; then
-            echo "fixowl@${VERSION} is already published on npm. Bump the version and commit before releasing." >&2
-            exit 1
+          if [ "${PUBLISH_NPM}" = "true" ]; then
+            published="$(npm view "fixowl@${VERSION}" version 2>/dev/null || true)"
+            if [ -n "${published}" ]; then
+              echo "fixowl@${VERSION} is already published on npm. Bump the base version and commit, or change version_suffix." >&2
+              exit 1
+            fi
           fi
-          if git ls-remote --exit-code --tags origin "refs/tags/${GIT_TAG}" >/dev/null 2>&1; then
-            echo "Git tag ${GIT_TAG} already exists on origin." >&2
-            exit 1
+          if [ "${PUSH_GIT_TAG}" = "true" ]; then
+            if git ls-remote --exit-code --tags origin "refs/tags/${GIT_TAG}" >/dev/null 2>&1; then
+              echo "Git tag ${GIT_TAG} already exists on origin." >&2
+              exit 1
+            fi
           fi
 
       - name: Ensure npm supports OIDC trusted publishing
-        if: ${{ inputs.dry_run == false }}
+        if: ${{ inputs.dry_run == false && steps.plan.outputs.publish_npm == 'true' }}
         run: |
           set -euo pipefail
           # Trusted publishing (OIDC) requires npm >= 11.5.1. The npm bundled
@@ -83,8 +107,19 @@ jobs:
           npm install -g npm@latest
           npm --version
 
+      - name: Set composed version (ephemeral, never committed)
+        if: ${{ inputs.dry_run == false && steps.plan.outputs.publish_npm == 'true' }}
+        working-directory: packages/cli
+        env:
+          VERSION: ${{ steps.plan.outputs.version }}
+        # Applies base + suffix to packages/cli/package.json so `npm publish`
+        # ships the right version. --no-git-tag-version makes no commit or tag;
+        # --allow-same-version covers an empty suffix. This change is never
+        # committed or pushed - the base version in the repo is untouched.
+        run: npm version "${VERSION}" --no-git-tag-version --allow-same-version
+
       - name: Publish fixowl to npm
-        if: ${{ inputs.dry_run == false }}
+        if: ${{ inputs.dry_run == false && steps.plan.outputs.publish_npm == 'true' }}
         working-directory: packages/cli
         env:
           NPM_TAG: ${{ steps.plan.outputs.npm_tag }}
@@ -94,7 +129,7 @@ jobs:
         run: npm publish --access public --provenance --tag "${NPM_TAG}"
 
       - name: Push git tag
-        if: ${{ inputs.dry_run == false }}
+        if: ${{ inputs.dry_run == false && steps.plan.outputs.push_git_tag == 'true' }}
         env:
           GIT_TAG: ${{ steps.plan.outputs.git_tag }}
         run: |
@@ -102,7 +137,7 @@ jobs:
           git tag "${GIT_TAG}"
           git push origin "refs/tags/${GIT_TAG}"
 
-      - name: Move floating major tag (stable only)
+      - name: Move floating major tag (stable release only)
         if: ${{ inputs.dry_run == false && steps.plan.outputs.move_major == 'true' }}
         env:
           MAJOR_TAG: ${{ steps.plan.outputs.major_tag }}
@@ -116,10 +151,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GIT_TAG: ${{ steps.plan.outputs.git_tag }}
+          IS_DRAFT: ${{ steps.plan.outputs.github_draft }}
           IS_PRERELEASE: ${{ steps.plan.outputs.github_prerelease }}
+        # For a draft, gh does not create the public tag until the draft is
+        # published, so `draft` runs never push a ref (see Push git tag above).
         run: |
           set -euo pipefail
           args=(release create "${GIT_TAG}" --title "${GIT_TAG}" --generate-notes)
+          if [ "${IS_DRAFT}" = "true" ]; then
+            args+=(--draft)
+          fi
           if [ "${IS_PRERELEASE}" = "true" ]; then
             args+=(--prerelease)
           fi
@@ -129,15 +170,20 @@ jobs:
         if: ${{ inputs.dry_run == true }}
         env:
           VERSION: ${{ steps.plan.outputs.version }}
+          RELEASE_TYPE: ${{ steps.plan.outputs.release_type }}
           NPM_TAG: ${{ steps.plan.outputs.npm_tag }}
+          PUBLISH_NPM: ${{ steps.plan.outputs.publish_npm }}
           GIT_TAG: ${{ steps.plan.outputs.git_tag }}
+          PUSH_GIT_TAG: ${{ steps.plan.outputs.push_git_tag }}
           MAJOR_TAG: ${{ steps.plan.outputs.major_tag }}
           MOVE_MAJOR: ${{ steps.plan.outputs.move_major }}
+          IS_DRAFT: ${{ steps.plan.outputs.github_draft }}
           IS_PRERELEASE: ${{ steps.plan.outputs.github_prerelease }}
         run: |
           {
             echo "Dry run - nothing was published or tagged."
-            echo "Would publish fixowl@${VERSION} with dist-tag '${NPM_TAG}'."
-            echo "Would create git tag ${GIT_TAG} (move ${MAJOR_TAG}: ${MOVE_MAJOR})."
-            echo "GitHub Release prerelease: ${IS_PRERELEASE}."
+            echo "release_type: ${RELEASE_TYPE}, composed version: ${VERSION}."
+            echo "Would publish to npm: ${PUBLISH_NPM} (dist-tag '${NPM_TAG}')."
+            echo "Would create git tag ${GIT_TAG} (push: ${PUSH_GIT_TAG}; move ${MAJOR_TAG}: ${MOVE_MAJOR})."
+            echo "GitHub Release draft: ${IS_DRAFT}, prerelease: ${IS_PRERELEASE}."
           } >> "${GITHUB_STEP_SUMMARY}"

@@ -1,14 +1,15 @@
 /**
  * Runtime entry the release workflow calls (`node scripts/release-plan.ts`).
- * Reads the two committed versions, derives the release plan via the pure,
- * unit-tested `decideRelease`, and emits the decision as GitHub Actions step
- * outputs so later steps stay declarative. Exits non-zero with a clear message
- * on a version mismatch or an invalid version, halting the run before anything
- * is published.
+ * Reads the committed base versions and the trigger-time inputs (VERSION_SUFFIX,
+ * RELEASE_TYPE), derives the release plan via the pure, unit-tested
+ * `decideRelease`, and emits the decision as GitHub Actions step outputs so later
+ * steps stay declarative. Exits non-zero with a clear message on a version
+ * mismatch, an invalid composed version, or a release/prerelease consistency
+ * violation, halting the run before anything is published.
  */
 import { appendFileSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { decideRelease } from "./release-channel.ts";
+import { decideRelease, type ReleaseType } from "./release-channel.ts";
 
 function versionOf(path: string): string {
   const parsed = JSON.parse(readFileSync(path, "utf8")) as { version?: unknown };
@@ -18,26 +19,43 @@ function versionOf(path: string): string {
   return parsed.version;
 }
 
+function releaseTypeFrom(raw: string | undefined): ReleaseType {
+  if (raw === "release" || raw === "prerelease" || raw === "draft") {
+    return raw;
+  }
+  throw new Error(
+    `RELEASE_TYPE must be one of release, prerelease, draft (got ${JSON.stringify(raw)}).`,
+  );
+}
+
 export function run(): void {
-  const cliVersion = versionOf("packages/cli/package.json");
+  const baseVersion = versionOf("packages/cli/package.json");
   const rootVersion = versionOf("package.json");
-  const plan = decideRelease(cliVersion, rootVersion);
+  const versionSuffix = process.env.VERSION_SUFFIX ?? "";
+  const releaseType = releaseTypeFrom(process.env.RELEASE_TYPE);
+
+  const plan = decideRelease(baseVersion, rootVersion, versionSuffix, releaseType);
 
   const outputs: Record<string, string> = {
     version: plan.version,
+    release_type: plan.releaseType,
     git_tag: plan.gitTag,
     major_tag: plan.majorTag,
     npm_tag: plan.npmTag,
     is_prerelease: String(plan.isPrerelease),
+    publish_npm: String(plan.publishNpm),
+    push_git_tag: String(plan.pushGitTag),
     move_major: String(plan.moveMajorTag),
+    github_draft: String(plan.githubReleaseDraft),
     github_prerelease: String(plan.githubReleasePrerelease),
   };
 
   const summary =
-    `Release plan for ${plan.version}: ` +
-    `channel=${plan.isPrerelease ? "prerelease" : "stable"}, ` +
-    `npm dist-tag=${plan.npmTag}, git tag=${plan.gitTag}, ` +
-    `move ${plan.majorTag}=${plan.moveMajorTag}, prerelease Release=${plan.githubReleasePrerelease}`;
+    `Release plan for ${plan.version} (release_type=${plan.releaseType}): ` +
+    `publish npm=${plan.publishNpm} (dist-tag=${plan.npmTag}), ` +
+    `git tag=${plan.gitTag} (push=${plan.pushGitTag}), ` +
+    `move ${plan.majorTag}=${plan.moveMajorTag}, ` +
+    `Release draft=${plan.githubReleaseDraft} prerelease=${plan.githubReleasePrerelease}`;
   console.log(summary);
 
   const githubOutput = process.env.GITHUB_OUTPUT;
