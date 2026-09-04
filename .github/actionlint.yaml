@@ -1,0 +1,6 @@
+# actionlint config. The fixowl night workflow runs on a self-hosted runner
+# labeled `fixowl` (.github/workflows/fixowl.yml: runs-on [self-hosted, fixowl]).
+# Declare the custom label so actionlint does not flag it as unknown.
+self-hosted-runner:
+  labels:
+    - fixowl

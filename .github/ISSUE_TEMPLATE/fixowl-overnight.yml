@@ -1,0 +1,28 @@
+name: Overnight fix
+description: File an issue for fixowl to fix tonight
+labels: ["for: agent"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        🦉 This issue will be picked up by fixowl on the next scheduled run.
+        Write it for an unattended coding agent: concrete, self-contained, verifiable.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What is wrong
+      description: Current behavior, and where (files, screens, commands).
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What should happen instead
+      description: Expected behavior, precisely enough to verify.
+    validations:
+      required: true
+  - type: textarea
+    id: hints
+    attributes:
+      label: Hints (optional)
+      description: Suspected cause, relevant modules, constraints.
