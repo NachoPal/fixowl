@@ -99,6 +99,9 @@ const github: GitHubApi = {
   async createIssueComment(issueNumber, body) {
     comments.push({ issueNumber, body });
   },
+  async getIssueDependencies(numbers) {
+    return new Map(numbers.map((n) => [n, { number: n, blockedBy: [] }]));
+  },
 };
 
 const summary = await runNight(

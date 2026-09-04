@@ -16,6 +16,8 @@ import { parse as parseYaml } from "yaml";
 import { allIndependent, buildClassifyPrompt, parseClassification } from "./classify.ts";
 import { planChains } from "./chain-planner.ts";
 import { containerName } from "./container-exec.ts";
+import { mergeGraphs } from "./merge-graph.ts";
+import { planPrereqs, type DeferredIssue } from "./prereq-planner.ts";
 import type {
   ContainerEngine,
   ContainerMount,
@@ -69,6 +71,8 @@ export interface NightDeps {
 export interface NightSummary {
   results: IssueResult[];
   skipped: Array<{ issue: IssueLite; branch: string }>;
+  /** Issues held back tonight because a native prerequisite has not shipped (Layer 1). */
+  deferred: DeferredIssue[];
   warnings: string[];
 }
 
@@ -127,7 +131,27 @@ async function runNightWithGit(
   }
   if (selected.length === 0) {
     log.info("nothing to do tonight");
-    return { results: [], skipped, warnings };
+    return { results: [], skipped, deferred: [], warnings };
+  }
+
+  // Layer 1 (authoritative): fetch native prerequisite edges and enforce them.
+  // A dependent whose prerequisite is not in tonight's shippable set is deferred;
+  // the rest are ordered so a prerequisite always precedes (and is stacked under)
+  // its dependent. With no edges this is a no-op and the night is unchanged.
+  const depsMap = await github.getIssueDependencies(selected.map((issue) => issue.number));
+  const prereqPlan = planPrereqs(selected, depsMap, inputs.repoFullName);
+  for (const warning of prereqPlan.warnings) {
+    warnings.push(warning);
+    log.warn(warning);
+  }
+  const deferred: DeferredIssue[] = [...prereqPlan.deferred];
+  for (const item of deferred) {
+    log.info(`issue #${item.issue.number}: deferred - ${item.reason}`);
+  }
+  const shippable = prereqPlan.shippable;
+  if (shippable.length === 0) {
+    log.info("nothing shippable tonight; every selected issue is deferred");
+    return { results: [], skipped, deferred, warnings };
   }
 
   const image = await buildTargetImage(engine, git, inputs.workspaceDir, repoConfig);
@@ -138,11 +162,14 @@ async function runNightWithGit(
     effort: inputs.defaultEffort,
   };
 
-  const chainNumbers = await classifyIssues({
+  // Layer 2 (heuristic): the LLM same-files classifier runs only over the
+  // non-deferred set; its conflict groups are then merged onto the Layer-1
+  // prerequisite order under "prerequisites always win".
+  const conflictChains = await classifyIssues({
     engine,
     log,
     warnings,
-    selected,
+    selected: shippable,
     adapter,
     agentEnv,
     image,
@@ -151,7 +178,12 @@ async function runNightWithGit(
     // any single issue's selector label.
     selection: defaultSelection,
   });
-  const chains = planChains(selected, chainNumbers);
+  const chainNumbers = mergeGraphs(conflictChains, prereqPlan.prereqs);
+  const chains = planChains(shippable, chainNumbers);
+
+  // A prerequisite that fails to ship at runtime defers its dependents (contrast
+  // a conflict chain, whose downstream simply rebases onto the default branch).
+  const shipped = new Set<number>();
 
   const results: IssueResult[] = [];
   for (const chain of chains) {
@@ -159,6 +191,15 @@ async function runNightWithGit(
     let prBase = inputs.defaultBranch;
     let stackedOn: { prNumber: number; branch: string } | undefined;
     for (const issue of chain) {
+      const unshipped = (prereqPlan.prereqs.get(issue.number) ?? []).filter(
+        (prereq) => !shipped.has(prereq),
+      );
+      if (unshipped.length > 0) {
+        const reason = `prerequisite ${unshipped.map((n) => `#${n}`).join(", ")} did not ship tonight`;
+        log.info(`issue #${issue.number}: deferred - ${reason}`);
+        deferred.push({ issue, reason });
+        continue;
+      }
       const branch = issueBranchName(issue.number, issue.title);
 
       // Resolve this issue's model/effort from its labels. A multi-selector-
@@ -223,11 +264,12 @@ async function runNightWithGit(
         baseRef = branch;
         prBase = branch;
         stackedOn = { prNumber: result.prNumber, branch };
+        shipped.add(issue.number);
       }
     }
   }
 
-  return { results, skipped, warnings };
+  return { results, skipped, deferred, warnings };
 }
 
 function loadRepoConfig(workspaceDir: string, warnings: string[]): RepoFileConfig {
@@ -358,7 +400,11 @@ function markdownCell(text: string): string {
 
 export function renderSummary(repoFullName: string, summary: NightSummary): string {
   const lines: string[] = [`# 🦉 fixowl night run: ${repoFullName}`, ""];
-  if (summary.results.length === 0 && summary.skipped.length === 0) {
+  if (
+    summary.results.length === 0 &&
+    summary.skipped.length === 0 &&
+    summary.deferred.length === 0
+  ) {
     lines.push("No open issues matched the label rule. Sleep tight.");
   }
   if (summary.results.length > 0) {
@@ -386,6 +432,15 @@ export function renderSummary(repoFullName: string, summary: NightSummary): stri
     lines.push(`## Skipped (branch already exists)`, "");
     for (const skip of summary.skipped) {
       lines.push(`- #${skip.issue.number} ${markdownCell(skip.issue.title)}: \`${skip.branch}\``);
+    }
+    lines.push("");
+  }
+  if (summary.deferred.length > 0) {
+    lines.push(`## Deferred (blocked by an unshipped prerequisite)`, "");
+    for (const item of summary.deferred) {
+      lines.push(
+        `- #${item.issue.number} ${markdownCell(item.issue.title)}: ${markdownCell(item.reason)}`,
+      );
     }
     lines.push("");
   }

@@ -50006,6 +50006,204 @@ function planChains(issues, chains) {
   );
 }
 
+// packages/action/src/merge-graph.ts
+function mergeGraphs(conflictChains, prereqs) {
+  const all = conflictChains.flat();
+  const position = /* @__PURE__ */ new Map();
+  all.forEach((n, i) => position.set(n, i));
+  const parent = /* @__PURE__ */ new Map();
+  for (const n of all) parent.set(n, n);
+  const find = (x) => {
+    let root = x;
+    while (parent.get(root) !== root) root = parent.get(root);
+    let cur = x;
+    while (parent.get(cur) !== root) {
+      const next = parent.get(cur);
+      parent.set(cur, root);
+      cur = next;
+    }
+    return root;
+  };
+  const union2 = (a, b) => {
+    const ra = find(a);
+    const rb = find(b);
+    if (ra !== rb) parent.set(ra, rb);
+  };
+  for (const chain of conflictChains) {
+    for (let i = 1; i < chain.length; i++) union2(chain[0], chain[i]);
+  }
+  for (const [dependent, preds] of prereqs) {
+    if (!position.has(dependent)) continue;
+    for (const pred of preds) {
+      if (position.has(pred)) union2(dependent, pred);
+    }
+  }
+  const components = /* @__PURE__ */ new Map();
+  for (const n of all) {
+    const root = find(n);
+    const bucket = components.get(root);
+    if (bucket === void 0) components.set(root, [n]);
+    else bucket.push(n);
+  }
+  const ordered = [...components.values()].toSorted(
+    (a, b) => minPosition(a, position) - minPosition(b, position)
+  );
+  return ordered.map((members2) => orderWithinChain(members2, prereqs, position));
+}
+function minPosition(members2, position) {
+  return Math.min(...members2.map((n) => position.get(n) ?? 0));
+}
+function orderWithinChain(members2, prereqs, position) {
+  const inChain = new Set(members2);
+  const inDegree = /* @__PURE__ */ new Map();
+  for (const n of members2) {
+    inDegree.set(n, (prereqs.get(n) ?? []).filter((p) => inChain.has(p)).length);
+  }
+  const ready = members2.filter((n) => (inDegree.get(n) ?? 0) === 0);
+  const order = [];
+  while (ready.length > 0) {
+    ready.sort((a, b) => (position.get(a) ?? 0) - (position.get(b) ?? 0));
+    const n = ready.shift();
+    order.push(n);
+    for (const m of members2) {
+      if ((prereqs.get(m) ?? []).includes(n)) {
+        const d = (inDegree.get(m) ?? 0) - 1;
+        inDegree.set(m, d);
+        if (d === 0) ready.push(m);
+      }
+    }
+  }
+  return order;
+}
+
+// packages/action/src/prereq-planner.ts
+function planPrereqs(selected, deps, currentRepo) {
+  const byNumber = new Map(selected.map((issue3) => [issue3.number, issue3]));
+  const selectedNumbers = new Set(byNumber.keys());
+  const warnings = [];
+  const directDeferReason = /* @__PURE__ */ new Map();
+  const inSetPrereqs = /* @__PURE__ */ new Map();
+  for (const issue3 of selected) inSetPrereqs.set(issue3.number, []);
+  for (const issue3 of selected) {
+    const issueDeps = deps.get(issue3.number);
+    if (issueDeps === void 0) continue;
+    if (issueDeps.blockedByOverflow === true) {
+      directDeferReason.set(
+        issue3.number,
+        "has more blockers than could be read (over 50); deferred conservatively"
+      );
+    }
+    for (const edge of issueDeps.blockedBy) {
+      if (edge.state === "CLOSED") continue;
+      if (edge.repo !== currentRepo) {
+        directDeferReason.set(
+          issue3.number,
+          `blocked by #${edge.number} in another repository (${edge.repo}), which fixowl cannot ship tonight`
+        );
+        continue;
+      }
+      if (selectedNumbers.has(edge.number)) {
+        inSetPrereqs.get(issue3.number)?.push(edge.number);
+      } else {
+        directDeferReason.set(
+          issue3.number,
+          `blocked by #${edge.number}, which is not in tonight's shippable set`
+        );
+      }
+    }
+  }
+  const cycleNodes = findCycleNodes(selectedNumbers, inSetPrereqs);
+  if (cycleNodes.size > 0) {
+    const members2 = [...cycleNodes].toSorted((a, b) => a - b);
+    warnings.push(
+      `issues ${members2.map((n) => `#${n}`).join(", ")} form a dependency cycle; deferred (no valid order)`
+    );
+    for (const n of cycleNodes) {
+      directDeferReason.set(n, "part of a dependency cycle");
+    }
+  }
+  const deferReason = new Map(directDeferReason);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const issue3 of selected) {
+      if (deferReason.has(issue3.number)) continue;
+      for (const prereq of inSetPrereqs.get(issue3.number) ?? []) {
+        if (deferReason.has(prereq)) {
+          deferReason.set(
+            issue3.number,
+            `prerequisite #${prereq} is deferred and will not ship tonight`
+          );
+          changed = true;
+          break;
+        }
+      }
+    }
+  }
+  const deferred = [];
+  for (const issue3 of selected) {
+    const reason = deferReason.get(issue3.number);
+    if (reason !== void 0) deferred.push({ issue: issue3, reason });
+  }
+  const shippableNumbers = new Set(
+    selected.map((i) => i.number).filter((n) => !deferReason.has(n))
+  );
+  const prereqs = /* @__PURE__ */ new Map();
+  for (const n of shippableNumbers) {
+    prereqs.set(
+      n,
+      (inSetPrereqs.get(n) ?? []).filter((p) => shippableNumbers.has(p))
+    );
+  }
+  const order = topoSortOldestFirst(shippableNumbers, prereqs);
+  const shippable = order.map((n) => byNumber.get(n)).filter((i) => i !== void 0);
+  return { shippable, prereqs, deferred, warnings };
+}
+function findCycleNodes(nodes, prereqs) {
+  const inDegree = /* @__PURE__ */ new Map();
+  for (const n of nodes) inDegree.set(n, 0);
+  for (const n of nodes) {
+    for (const p of prereqs.get(n) ?? []) {
+      if (nodes.has(p)) inDegree.set(n, (inDegree.get(n) ?? 0) + 1);
+    }
+  }
+  const queue = [...nodes].filter((n) => (inDegree.get(n) ?? 0) === 0);
+  const settled = /* @__PURE__ */ new Set();
+  while (queue.length > 0) {
+    const n = queue.shift();
+    settled.add(n);
+    for (const m of nodes) {
+      if ((prereqs.get(m) ?? []).includes(n)) {
+        const d = (inDegree.get(m) ?? 0) - 1;
+        inDegree.set(m, d);
+        if (d === 0) queue.push(m);
+      }
+    }
+  }
+  const cyclic = /* @__PURE__ */ new Set();
+  for (const n of nodes) if (!settled.has(n)) cyclic.add(n);
+  return cyclic;
+}
+function topoSortOldestFirst(nodes, prereqs) {
+  const inDegree = /* @__PURE__ */ new Map();
+  for (const n of nodes) inDegree.set(n, (prereqs.get(n) ?? []).filter((p) => nodes.has(p)).length);
+  const ready = [...nodes].filter((n) => (inDegree.get(n) ?? 0) === 0);
+  const order = [];
+  while (ready.length > 0) {
+    ready.sort((a, b) => a - b);
+    const n = ready.shift();
+    order.push(n);
+    for (const m of nodes) {
+      if ((prereqs.get(m) ?? []).includes(n)) {
+        const d = (inDegree.get(m) ?? 0) - 1;
+        inDegree.set(m, d);
+        if (d === 0) ready.push(m);
+      }
+    }
+  }
+  return order;
+}
+
 // packages/action/src/git-ops.ts
 import { existsSync, renameSync, rmSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
@@ -50486,7 +50684,22 @@ async function runNightWithGit(deps, inputs, git) {
   }
   if (selected.length === 0) {
     log2.info("nothing to do tonight");
-    return { results: [], skipped, warnings };
+    return { results: [], skipped, deferred: [], warnings };
+  }
+  const depsMap = await github.getIssueDependencies(selected.map((issue3) => issue3.number));
+  const prereqPlan = planPrereqs(selected, depsMap, inputs.repoFullName);
+  for (const warning2 of prereqPlan.warnings) {
+    warnings.push(warning2);
+    log2.warn(warning2);
+  }
+  const deferred = [...prereqPlan.deferred];
+  for (const item of deferred) {
+    log2.info(`issue #${item.issue.number}: deferred - ${item.reason}`);
+  }
+  const shippable = prereqPlan.shippable;
+  if (shippable.length === 0) {
+    log2.info("nothing shippable tonight; every selected issue is deferred");
+    return { results: [], skipped, deferred, warnings };
   }
   const image = await buildTargetImage(engine, git, inputs.workspaceDir, repoConfig);
   const labelModels = inputs.labelModels ?? {};
@@ -50494,11 +50707,11 @@ async function runNightWithGit(deps, inputs, git) {
     model: inputs.defaultModel,
     effort: inputs.defaultEffort
   };
-  const chainNumbers = await classifyIssues({
+  const conflictChains = await classifyIssues({
     engine,
     log: log2,
     warnings,
-    selected,
+    selected: shippable,
     adapter,
     agentEnv,
     image,
@@ -50507,13 +50720,24 @@ async function runNightWithGit(deps, inputs, git) {
     // any single issue's selector label.
     selection: defaultSelection
   });
-  const chains = planChains(selected, chainNumbers);
+  const chainNumbers = mergeGraphs(conflictChains, prereqPlan.prereqs);
+  const chains = planChains(shippable, chainNumbers);
+  const shipped = /* @__PURE__ */ new Set();
   const results = [];
   for (const chain of chains) {
     let baseRef = `origin/${inputs.defaultBranch}`;
     let prBase = inputs.defaultBranch;
     let stackedOn;
     for (const issue3 of chain) {
+      const unshipped = (prereqPlan.prereqs.get(issue3.number) ?? []).filter(
+        (prereq) => !shipped.has(prereq)
+      );
+      if (unshipped.length > 0) {
+        const reason = `prerequisite ${unshipped.map((n) => `#${n}`).join(", ")} did not ship tonight`;
+        log2.info(`issue #${issue3.number}: deferred - ${reason}`);
+        deferred.push({ issue: issue3, reason });
+        continue;
+      }
       const branch = issueBranchName(issue3.number, issue3.title);
       const resolution = resolveModelSelection({
         issueLabels: issue3.labels,
@@ -50572,10 +50796,11 @@ async function runNightWithGit(deps, inputs, git) {
         baseRef = branch;
         prBase = branch;
         stackedOn = { prNumber: result.prNumber, branch };
+        shipped.add(issue3.number);
       }
     }
   }
-  return { results, skipped, warnings };
+  return { results, skipped, deferred, warnings };
 }
 function loadRepoConfig(workspaceDir, warnings) {
   const path = join4(workspaceDir, REPO_CONFIG_PATH);
@@ -50676,7 +50901,7 @@ function markdownCell(text) {
 }
 function renderSummary(repoFullName, summary2) {
   const lines = [`# \u{1F989} fixowl night run: ${repoFullName}`, ""];
-  if (summary2.results.length === 0 && summary2.skipped.length === 0) {
+  if (summary2.results.length === 0 && summary2.skipped.length === 0 && summary2.deferred.length === 0) {
     lines.push("No open issues matched the label rule. Sleep tight.");
   }
   if (summary2.results.length > 0) {
@@ -50695,6 +50920,15 @@ function renderSummary(repoFullName, summary2) {
     lines.push(`## Skipped (branch already exists)`, "");
     for (const skip of summary2.skipped) {
       lines.push(`- #${skip.issue.number} ${markdownCell(skip.issue.title)}: \`${skip.branch}\``);
+    }
+    lines.push("");
+  }
+  if (summary2.deferred.length > 0) {
+    lines.push(`## Deferred (blocked by an unshipped prerequisite)`, "");
+    for (const item of summary2.deferred) {
+      lines.push(
+        `- #${item.issue.number} ${markdownCell(item.issue.title)}: ${markdownCell(item.reason)}`
+      );
     }
     lines.push("");
   }
@@ -50779,6 +51013,35 @@ function makeGitHubApi(octokit, owner, repo) {
     },
     async createIssueComment(issueNumber, body) {
       await octokit.issues.createComment({ owner, repo, issue_number: issueNumber, body });
+    },
+    async getIssueDependencies(numbers) {
+      const result = /* @__PURE__ */ new Map();
+      if (numbers.length === 0) return result;
+      const aliases = numbers.map(
+        (n) => `i${n}: issue(number: ${n}) { number blockedBy(first: 50) { totalCount nodes { number state repository { nameWithOwner } } } }`
+      ).join("\n");
+      const query = `query($owner: String!, $repo: String!) { repository(owner: $owner, name: $repo) { ${aliases} } }`;
+      const data = await octokit.graphql(
+        query,
+        { owner, repo }
+      );
+      const repository = data.repository ?? {};
+      for (const n of numbers) {
+        const node2 = repository[`i${n}`];
+        const connection = node2?.blockedBy;
+        const nodes = connection?.nodes ?? [];
+        const blockedBy = nodes.filter((edge) => edge !== null).map((edge) => ({
+          number: edge.number,
+          repo: edge.repository.nameWithOwner,
+          state: edge.state
+        }));
+        result.set(n, {
+          number: n,
+          blockedBy,
+          blockedByOverflow: (connection?.totalCount ?? 0) > blockedBy.length
+        });
+      }
+      return result;
     }
   };
 }

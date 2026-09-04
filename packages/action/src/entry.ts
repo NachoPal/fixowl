@@ -7,7 +7,7 @@ import {
   type LabelRule,
 } from "@fixowl/core";
 import { DockerEngine } from "./container-exec.ts";
-import type { GitHubApi, IssueLite, Logger } from "./deps.ts";
+import type { GitHubApi, IssueDeps, IssueLite, Logger } from "./deps.ts";
 import { renderSummary, runNight } from "./main.ts";
 import { realExec } from "./real-exec.ts";
 
@@ -55,7 +55,56 @@ function makeGitHubApi(octokit: Octokit, owner: string, repo: string): GitHubApi
     async createIssueComment(issueNumber, body) {
       await octokit.issues.createComment({ owner, repo, issue_number: issueNumber, body });
     },
+    async getIssueDependencies(numbers: readonly number[]): Promise<Map<number, IssueDeps>> {
+      const result = new Map<number, IssueDeps>();
+      if (numbers.length === 0) return result;
+      // One aliased GraphQL round-trip; `first: 50` covers the whole set (GitHub
+      // caps blockers at 50 per issue), and each node carries repo + state so a
+      // cross-repo or closed blocker is classified without a second fetch.
+      const aliases = numbers
+        .map(
+          (n) =>
+            `i${n}: issue(number: ${n}) { number blockedBy(first: 50) { totalCount nodes { number state repository { nameWithOwner } } } }`,
+        )
+        .join("\n");
+      const query = `query($owner: String!, $repo: String!) { repository(owner: $owner, name: $repo) { ${aliases} } }`;
+      const data = await octokit.graphql<{ repository: Record<string, GraphqlIssueNode | null> }>(
+        query,
+        { owner, repo },
+      );
+      const repository = data.repository ?? {};
+      for (const n of numbers) {
+        const node = repository[`i${n}`];
+        const connection = node?.blockedBy;
+        const nodes = connection?.nodes ?? [];
+        const blockedBy = nodes
+          .filter((edge): edge is NonNullable<typeof edge> => edge !== null)
+          .map((edge) => ({
+            number: edge.number,
+            repo: edge.repository.nameWithOwner,
+            state: edge.state,
+          }));
+        result.set(n, {
+          number: n,
+          blockedBy,
+          blockedByOverflow: (connection?.totalCount ?? 0) > blockedBy.length,
+        });
+      }
+      return result;
+    },
   };
+}
+
+interface GraphqlIssueNode {
+  number: number;
+  blockedBy: {
+    totalCount: number;
+    nodes: Array<{
+      number: number;
+      state: "OPEN" | "CLOSED";
+      repository: { nameWithOwner: string };
+    } | null> | null;
+  } | null;
 }
 
 function parseLabelInput(value: string): string[] {

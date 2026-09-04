@@ -1,11 +1,31 @@
 # Stacked PRs (dependent issues)
 
-When classification predicts two issues touch overlapping code, fixowl fixes
-them as a chain: issue B branches off issue A's branch, and B's PR targets
-A's branch instead of the default branch. The diff of B's PR then shows only
-B's changes, and B structurally cannot reach the default branch before A.
+fixowl stacks a dependent issue's PR on its prerequisite's branch: issue B
+branches off issue A's branch, and B's PR targets A's branch instead of the
+default branch. The diff of B's PR then shows only B's changes, and B
+structurally cannot reach the default branch before A.
 
 Each stacked PR carries a banner: `Stacked on #<parent> - merge that first.`
+
+## Two layers decide the stacking
+
+1. **Native prerequisites (authoritative).** Before anything else, fixowl reads
+   each selected issue's GitHub `blocked-by` edges (the ones `/issue` writes with
+   `--blocked-by`, or that you add by hand). If B is blocked by A and A is also
+   shipping tonight, B stacks on A and is ordered after it. If A is **not** in
+   tonight's shippable set - not selected, capped out, cross-repo, or it failed
+   to ship - B is **deferred**: no PR is attempted, and the reason is logged and
+   listed under "Deferred" in the night summary. A closed blocker counts as
+   satisfied. A dependency cycle defers the whole cycle. Unlike a same-code
+   chain (below), a deferred dependent is never rebased onto the default branch:
+   a real prerequisite that didn't land means the work genuinely cannot proceed.
+2. **Same-code grouping (heuristic).** Over the non-deferred issues, fixowl then
+   predicts which ones touch overlapping code and stacks those into chains to
+   avoid merge conflicts. Prerequisites always win: this pass may reorder or
+   split its groups to respect a `blocked-by` edge, and a prerequisite forces
+   stacking even if the heuristic called two issues independent.
+
+The rest of this doc applies to any stack, however it was formed.
 
 ## The happy path
 
