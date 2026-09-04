@@ -34,6 +34,11 @@ issue body (untrusted)
   - No docker socket, no mounts beyond the workspace (plus a read-only prompt
     file), `--cap-drop ALL`, `--security-opt no-new-privileges`,
     `--pids-limit 512`, `--memory 6g`, and a hard timeout with `docker rm -f`.
+  - Every container runs non-root, as the host runner's `--user <uid>:<gid>`
+    with an explicit writable `HOME`, injected once in `DockerEngine.run`.
+    Beyond dropping root, this keeps bind-mount writes to the workspace owned by
+    the runner user on Linux, so one issue's files never resist cleanup before
+    the next.
   - Worst case: a malicious diff in a PR a human reviews. fixowl never merges;
     there is no merge call anywhere in the codebase, and a grep-test
     (`no-merge.test.ts`) keeps it that way.
@@ -119,8 +124,3 @@ Accepted and bounded rather than eliminated:
   and its own credential (e.g. `CLAUDE_CODE_OAUTH_TOKEN`), whose abuse is
   bounded by the agent vendor's spend and turn limits, not by fixowl. An
   egress allowlist proxy is the upgrade path if this matters for your repos.
-- **Root-owned leftovers on Linux.** See the known limitation in
-  `host-bootstrap.md`: files (including a planted `.git`) written as root in
-  the mounted workspace can resist cleanup by the runner user. The generated
-  workflow's pre-checkout reset step still removes them where the runner user
-  can; run agent containers with `--user` to close it fully.

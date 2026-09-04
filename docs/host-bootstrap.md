@@ -93,15 +93,7 @@ The generated workflow runs on `[self-hosted, fixowl]`. Changing that one line
 to `ubuntu-latest` moves the job to GitHub-hosted runners: Docker is
 preinstalled there, the action is plain Node, and the same `docker run` steps
 just work. Host-bound verification (visible browsers, iOS/macOS targets) is
-the only thing you give up.
-
-Known limitation to close before relying on cloud runs: on a Linux host, an
-agent container running as root leaves root-owned files in the mounted
-workspace, which the runner user's `git clean` may fail to remove, letting one
-issue's leftovers bleed into the next issue's PR within the same night. The
-same applies to the security cleanup of a `.git` dir a hostile agent plants in
-the workspace (inert either way, but root-owned it can resist deletion by the
-runner user). macOS with Colima masks this via ownership mapping. Candidate
-fixes: run agent containers with `--user $(id -u):$(id -g)` where the image
-tolerates it, or reset the workspace from a throwaway root container between
-issues.
+the only thing you give up. Every container already runs as the host runner's
+`--user <uid>:<gid>` (injected in `DockerEngine.run`), so on Linux agent writes
+to the mounted workspace stay owned by the runner user and clean up normally;
+see the security model's container hardening in [security.md](security.md).
