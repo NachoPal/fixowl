@@ -59,8 +59,9 @@ then runs the rest for you and stops with an explanation if a step fails:
 
 ```sh
 fixowl validate      # tokens, repos, docker engine, agent credentials
-fixowl provision     # labels + sealed secrets + workflow into each repo
-fixowl start         # installs, registers, and starts the runner service(s)
+fixowl provision     # labels + sealed secrets + workflow into each repo, and
+                     # registers the runner on this host
+fixowl start         # installs and starts the runner service(s); no admin token needed
 ```
 
 Each of those stays available on its own for later changes. `fixowl init
@@ -84,8 +85,8 @@ Run `fixowl --help` for the full list; every command accepts
 | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `fixowl init`             | Guided setup: tokens, agent, repos, then validate, provision, and start. `--non-interactive` just scaffolds `~/.fixowl` and prints the manual steps.                                                                                |
 | `fixowl validate`         | Check tokens, repos, docker engine, and agent credentials. Exits non-zero if anything fails.                                                                                                                                        |
-| `fixowl provision [repo]` | Create labels, seal secrets, and push the fixowl workflow into target repos. `--pr` proposes the workflow via PR instead of pushing to the default branch; `--no-schedule` generates a `workflow_dispatch`-only workflow (no cron). |
-| `fixowl start [repo]`     | Install, register, and start the self-hosted runner service(s). Auto-starts Colima if installed.                                                                                                                                    |
+| `fixowl provision [repo]` | Create labels, seal secrets, push the fixowl workflow, and register the runner on this host (spends the admin token's Administration: write). `--pr` proposes the workflow via PR instead of pushing to the default branch; `--no-schedule` generates a `workflow_dispatch`-only workflow (no cron); `--no-register` skips registration (register on the runner host with `start --register`). |
+| `fixowl start [repo]`     | Install and start the self-hosted runner service(s); no admin token needed. Auto-starts Colima if installed. `--register` also registers the runner here first (needs admin Administration: write; for a host you didn't provision on).                                                                                                                                    |
 | `fixowl stop [repo]`      | Stop the runner service(s). `--deregister` also uninstalls the service, deregisters it from GitHub, and deletes the install.                                                                                                        |
 | `fixowl status [repo]`    | Show service, runner, last run, and open fixowl PRs per repo.                                                                                                                                                                       |
 | `fixowl run <repo>`       | Dispatch the fixowl workflow now and follow it to completion.                                                                                                                                                                       |
@@ -155,7 +156,7 @@ to fill in by hand.
 ```yaml
 version: 1
 github:
-  admin_token: ${FIXOWL_ADMIN_TOKEN} # provisioning; stays on your machine
+  admin_token: ${FIXOWL_ADMIN_TOKEN} # setup-only; stays on your machine, revocable after provision
   runtime_token: ${FIXOWL_RUNTIME_TOKEN} # pushed to repos as an Actions secret
 defaults:
   schedule: "37 1 * * *" # UTC
