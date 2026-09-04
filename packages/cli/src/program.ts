@@ -39,21 +39,37 @@ export function createProgram(): Command {
 
   program
     .command("provision [repo]")
-    .description("create labels, seal secrets, and push the fixowl workflow into target repos")
+    .description(
+      "create labels, seal secrets, push the workflow, and register the runner on this host",
+    )
     .option("--pr", "propose the workflow file via PR instead of pushing to the default branch")
     .option("--no-schedule", "generate the workflow with workflow_dispatch only (no cron)")
-    .action(async (repo: string | undefined, options: { pr?: boolean; schedule: boolean }) => {
-      await provisionCommand(makeContext(configPath()), repo, {
-        pr: options.pr,
-        noSchedule: !options.schedule,
-      });
-    });
+    .option(
+      "--no-register",
+      "skip runner registration (register on the runner host with `start --register`)",
+    )
+    .action(
+      async (
+        repo: string | undefined,
+        options: { pr?: boolean; schedule: boolean; register: boolean },
+      ) => {
+        await provisionCommand(makeContext(configPath()), repo, {
+          pr: options.pr,
+          noSchedule: !options.schedule,
+          noRegister: !options.register,
+        });
+      },
+    );
 
   program
     .command("start [repo]")
-    .description("install, register, and start the self-hosted runner service(s)")
-    .action(async (repo: string | undefined) => {
-      await startCommand(makeContext(configPath()), repo);
+    .description("install and start the self-hosted runner service(s); no admin token needed")
+    .option(
+      "--register",
+      "also register the runner here first (needs admin Administration: write; for a host you didn't provision on)",
+    )
+    .action(async (repo: string | undefined, options: { register?: boolean }) => {
+      await startCommand(makeContext(configPath()), repo, { register: options.register });
     });
 
   program

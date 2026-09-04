@@ -149,7 +149,11 @@ fixowl needs two fine-grained personal access tokens, each scoped to ONLY the
 repos you want it to touch:
 
   admin    Administration RW, Secrets RW, Contents RW, Workflows RW,
-           Issues RW, Actions RW. Stays on this machine; used to provision.
+           Issues RW, Actions RW. Stays on this machine; used to provision and
+           to register the runner. Setup-only: once \`fixowl provision\` has run
+           you can REVOKE it (or downgrade it to read-only if you want
+           \`fixowl status\` to confirm the runner is online). Routine
+           \`fixowl start\` needs no admin token.
   runtime  Contents RW, Pull requests RW, Issues RW. Pushed to each repo as an
            Actions secret; this is what the night run uses to push and open PRs.
 
@@ -499,7 +503,7 @@ const STARTER_CONFIG = `# fixowl configuration. Secrets live in secrets.env next
 version: 1
 
 github:
-  admin_token: \${FIXOWL_ADMIN_TOKEN}      # fine-grained PAT, CLI machine only
+  admin_token: \${FIXOWL_ADMIN_TOKEN}      # fine-grained PAT, CLI machine only; setup-only, revocable after provision
   runtime_token: \${FIXOWL_RUNTIME_TOKEN}  # fine-grained PAT, pushed to repos as an Actions secret
 
 # runner:
@@ -553,7 +557,8 @@ function scaffoldOnly(configPath: string, secretsPath: string): void {
 Next steps (or re-run \`fixowl init\` on a terminal for the guided setup):
   1. Mint two fine-grained PATs at ${PAT_URL}, scoped to ONLY your target repos:
        admin   - Administration RW, Secrets RW, Contents RW, Workflows RW, Issues RW,
-                 Actions RW (stays on this machine)
+                 Actions RW (stays on this machine; used only to provision and
+                 register the runner - revoke or downgrade to read-only afterward)
        runtime - Contents RW, Pull requests RW, Issues RW (becomes a repo Actions secret)
      Put them in ${secretsPath}.
   2. If using the claude agent: run \`claude setup-token\` and put the resulting

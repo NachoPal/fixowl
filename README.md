@@ -63,10 +63,19 @@ then runs the rest for you and stops with an explanation if a step fails:
 
 ```sh
 fixowl validate      # tokens, repos, docker engine, agent credentials
-fixowl provision     # labels + sealed secrets + workflow into each repo (also proposes
-                     # a starter .fixowl.yml and issue template via PR)
-fixowl start         # installs, registers, and starts the runner service(s)
+fixowl provision     # labels + sealed secrets + workflow into each repo, and
+                     # registers the runner on this host (also proposes a starter
+                     # .fixowl.yml and issue template via PR)
+fixowl start         # installs and starts the runner service(s); no admin token needed
 ```
+
+The admin token is **setup-only**: `fixowl provision` is the only thing that
+spends it (registration is the one step needing Administration: write). After
+provisioning you can revoke it, or downgrade it to read-only if you want
+`fixowl status`/`fixowl start` to confirm the runner is online. Routine
+`fixowl start` needs no admin token. Provisioning from a different host than the
+runner? Use `fixowl provision --no-register`, then `fixowl start --register` on
+the runner host.
 
 Those stay available on their own for later changes, and `fixowl init
 --non-interactive` just scaffolds `~/.fixowl/{config.yaml,secrets.env}` for you
@@ -89,7 +98,7 @@ referenced as `${VAR}`):
 ```yaml
 version: 1
 github:
-  admin_token: ${FIXOWL_ADMIN_TOKEN}      # provisioning; stays on your machine
+  admin_token: ${FIXOWL_ADMIN_TOKEN}      # setup-only; stays on your machine, revocable after provision
   runtime_token: ${FIXOWL_RUNTIME_TOKEN}  # pushed to repos as an Actions secret
 defaults:
   schedule: "37 1 * * *"                  # UTC

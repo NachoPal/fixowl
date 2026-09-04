@@ -33,6 +33,15 @@ See [docs/releasing.md](docs/releasing.md).
 
 ## Hard invariants
 
+- **The admin token is setup-only.** Runner registration (the only step needing
+  Administration: write) lives in `fixowl provision` (and the explicit
+  `fixowl start --register` for another host), via `registerRunner`
+  (`packages/cli/src/runner/register.ts`). Routine `fixowl start` uses no admin
+  token; its online check (and `fixowl status`) soft-fails when the token is
+  revoked/downgraded. Never move a write-scoped GitHub call into the routine
+  `start` path, and never grant the runtime token Administration. See
+  [docs/security.md](docs/security.md).
+
 - **Never merge.** No code path may call a GitHub merge API. `no-merge.test.ts` greps for
   it; do not weaken that test.
 - **The coding agent never holds a GitHub token.** Only the allowlisted env vars in the

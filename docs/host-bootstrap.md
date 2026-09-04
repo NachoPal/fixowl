@@ -52,13 +52,23 @@ The runner must be online when the schedule fires.
 npm install -g fixowl
 # copy ~/.fixowl/ (config.yaml + secrets.env) from your dev machine, then:
 fixowl validate
-fixowl start     # installs runners under ~/.fixowl/runners, registers them,
-                 # starts them as launchd services (reboot-safe via svc.sh)
+fixowl provision # seals secrets, pushes the workflow, downloads runners under
+                 # ~/.fixowl/runners, and registers them (needs the admin token's
+                 # Administration: write)
+fixowl start     # installs and starts the runners as launchd services
+                 # (reboot-safe via svc.sh); needs no admin token
 
 # or set this host up from scratch: the guided setup asks for the tokens, the
 # agent and the repos, then validates, provisions, and offers to start.
 fixowl init
 ```
+
+`fixowl provision` spends the admin token (including its Administration: write,
+for runner registration). After it succeeds the admin token is no longer needed
+for routine operation - **revoke it, or downgrade it to read-only** if you want
+`fixowl status` to confirm the runner is online. If you provision from a
+different machine than the one that runs the runner, run `fixowl provision
+--no-register` there and `fixowl start --register` on the runner host.
 
 `fixowl start` writes each runner's `.env` with `DOCKER_HOST` pointing at the
 Colima socket and a PATH that covers Homebrew on Intel (`/usr/local/bin`) and

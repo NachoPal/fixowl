@@ -53,6 +53,27 @@ Two fine-grained PATs, both scoped to only the target repos:
 | admin | Administration RW, Secrets RW, Contents RW, Workflows RW, Issues RW, Actions RW | CLI machine only (`~/.fixowl/secrets.env`, chmod 600) |
 | runtime | Contents RW, Pull requests RW, Issues RW | repo Actions secret `FIXOWL_GITHUB_TOKEN` |
 
+- **The admin token is setup-only.** It is spent by `fixowl provision` (labels,
+  secrets, workflow) and by runner registration - registration is the only
+  step needing **Administration: write**, and it now happens during provision
+  (`fixowl start --register` covers registering on a host you did not provision
+  on). Once the runner is registered, routine `fixowl start` uses **no admin
+  token at all**: it only installs and starts the local service. So after
+  provisioning you can **revoke** the admin token, or **downgrade it to
+  read-only**, and nightly operation is unaffected.
+- Keeping the admin token at **Administration: read** (rather than revoking it)
+  buys one thing: the local online check in `fixowl start` and `fixowl status`,
+  which lists the repo's runners. That is inherently an Administration read, so
+  it cannot be satisfied by the least-privilege runtime token (see below) - the
+  honest alternatives are a read-only admin token or confirming the runner in
+  the GitHub UI under Settings > Actions > Runners. When the admin token is
+  absent or lacks that read, `fixowl start` still installs and starts the
+  service and just prints how to confirm online status; it never fails on it.
+- The runtime PAT stays least-privilege (Contents / Pull requests / Issues) and
+  is **never** granted Administration. It is the most-exposed credential (a repo
+  Actions secret injected into the night run), so it holds only what pushing
+  branches and opening PRs requires. The online check is deliberately not solved
+  by elevating it.
 - The runtime PAT (not `GITHUB_TOKEN`) authors PRs so the target repo's own CI
   triggers on them.
 - On the runner, the runtime PAT is injected into git fetch/push commands as an

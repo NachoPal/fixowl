@@ -3,6 +3,7 @@ import {
   labelsInRule,
   renderFixowlWorkflow,
   resolveRepoSettings,
+  runnerBaseDir,
   RUNTIME_TOKEN_SECRET,
   STARTER_ISSUE_TEMPLATE,
   STARTER_ISSUE_TEMPLATE_PATH,
@@ -23,10 +24,20 @@ import {
   upsertFile,
 } from "../github/repo-provisioning.ts";
 import { log } from "../log.ts";
+import { runnerDirFor } from "../runner/install.ts";
+import { registerRunner, type RegisterRunnerParams } from "../runner/register.ts";
 
 export interface ProvisionOptions {
   pr?: boolean;
   noSchedule?: boolean;
+  /**
+   * Skip registering the runner on this machine. Use it when you provision from
+   * a different host than the one that runs the runner (register there with
+   * `fixowl start --register`). Defaults to registering here.
+   */
+  noRegister?: boolean;
+  /** Override for tests; defaults to the real registration flow. */
+  registerRunner?: (params: RegisterRunnerParams) => Promise<"configured" | "already">;
 }
 
 export async function provisionCommand(
@@ -150,6 +161,22 @@ export async function provisionCommand(
         });
         log.ok(`starter files proposed: ${url} (${missing.map((f) => f.path).join(", ")})`);
       }
+    }
+
+    // 5. Register the self-hosted runner on THIS host. This is where the admin
+    // token's Administration: write is spent; after this the token can be
+    // revoked (or downgraded to read-only) and routine `fixowl start` still
+    // works. Skip with --no-register when provisioning from a different host
+    // than the one that runs the runner (register there with
+    // `fixowl start --register`).
+    if (options.noRegister === true) {
+      log.info(
+        "skipping runner registration (--no-register); register on the runner host with `fixowl start --register`",
+      );
+    } else {
+      const register = options.registerRunner ?? registerRunner;
+      const dir = runnerDirFor(runnerBaseDir(ctx.config), repoFullName);
+      await register({ admin: ctx.admin, ref, dir, repoFullName });
     }
 
     if (repoData.private === false && options.noSchedule !== true) {

@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { runnerBaseDir } from "@fixowl/core";
 import { targetRepos, type CliContext } from "../context.ts";
+import { describeGitHubError } from "../github/errors.ts";
 import { splitRepoFullName } from "../github/repo-provisioning.ts";
 import { findRunner, runnerNameFor } from "../github/runner-registration.ts";
 import { log } from "../log.ts";
@@ -20,13 +21,22 @@ export async function statusCommand(ctx: CliContext, repoArg: string | undefined
       log.info(`  service: ${await svcStatus(dir)} (${dir})`);
     }
 
-    // Registered runner
-    const runner = await findRunner(ctx.admin, ref, runnerNameFor(repoFullName));
-    log.info(
-      runner !== undefined
-        ? `  runner:  ${runner.status}${runner.busy ? " (busy)" : ""}`
-        : `  runner:  not registered`,
-    );
+    // Registered runner. Listing runners needs Administration: read; if the
+    // admin token was revoked or downgraded below that, report it rather than
+    // failing - confirm online status in Settings > Actions > Runners instead.
+    try {
+      const runner = await findRunner(ctx.admin, ref, runnerNameFor(repoFullName));
+      log.info(
+        runner !== undefined
+          ? `  runner:  ${runner.status}${runner.busy ? " (busy)" : ""}`
+          : `  runner:  not registered`,
+      );
+    } catch (error) {
+      log.info(
+        `  runner:  unknown - needs Administration: read (${describeGitHubError(error)}); ` +
+          `see Settings > Actions > Runners`,
+      );
+    }
 
     // Last scheduled/dispatched run
     try {
