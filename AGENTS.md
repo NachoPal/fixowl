@@ -54,6 +54,11 @@ See [docs/releasing.md](docs/releasing.md).
   `<untrusted-issue-body>` fences, and container hardening assumes fencing fails.
 - **Exactly one level of containerization.** The runner is native; the action calls
   `docker run` once per agent/verify step. Nothing invokes Docker from inside a container.
+- **Containers run non-root.** Every `docker run` (agent, classifier, verify) runs as
+  the host runner's uid/gid with an explicit writable `HOME` - injected once in
+  `DockerEngine.run` (`container-exec.ts`), not per target Dockerfile. The Claude CLI
+  hard-refuses `--dangerously-skip-permissions` under uid 0, and matching the host uid
+  keeps bind-mount writes to `/workspace` owned correctly on Linux. Do not drop `--user`.
 - **One PR per issue**, branch `issue/<n>-<slug>`. The branch is the idempotency marker.
 
 ## Conventions

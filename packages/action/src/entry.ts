@@ -8,7 +8,7 @@ import {
 } from "@fixowl/core";
 import { DockerEngine } from "./container-exec.ts";
 import type { GitHubApi, IssueDeps, IssueLite, Logger } from "./deps.ts";
-import { renderSummary, runNight } from "./main.ts";
+import { renderSummary, runNight, wipeoutFailure } from "./main.ts";
 import { realExec } from "./real-exec.ts";
 
 /** Real-world wiring for the action; all logic lives in main.ts behind fakes-friendly deps. */
@@ -213,6 +213,13 @@ async function run(): Promise<void> {
   const infraErrors = summary.results.filter((result) => result.status === "error");
   if (infraErrors.length > 0) {
     core.warning(`${infraErrors.length} issue(s) hit unexpected errors; see the summary`);
+  }
+
+  // A total wipeout - shippable issues selected, every one failed, nothing
+  // opened - must fail the job so a silent green never hides a full outage.
+  const wipeout = wipeoutFailure(summary);
+  if (wipeout !== undefined) {
+    core.setFailed(`🦉 fixowl: ${wipeout}`);
   }
 }
 

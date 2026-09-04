@@ -47,6 +47,21 @@ describe("dockerRunArgv", () => {
     expect(argv.join(" ")).not.toContain("secret");
   });
 
+  it("runs as a non-root user with an explicit writable HOME when asked", () => {
+    const argv = dockerRunArgv({ ...baseSpec, user: "501:20", homeDir: "/tmp" });
+    // --user goes before the mount; HOME is the one env passed by value (not a secret).
+    expect(argv).toContain("--user");
+    expect(argv[argv.indexOf("--user") + 1]).toBe("501:20");
+    expect(argv).toContain("-e");
+    expect(argv).toContain("HOME=/tmp");
+  });
+
+  it("omits --user and HOME when they are not set (docker default: root)", () => {
+    const argv = dockerRunArgv(baseSpec);
+    expect(argv).not.toContain("--user");
+    expect(argv.join(" ")).not.toContain("HOME=");
+  });
+
   it("mounts the workspace read-only when asked (classification)", () => {
     const argv = dockerRunArgv({ ...baseSpec, workspaceReadOnly: true });
     expect(argv).toContain("/work/space:/workspace:ro");
@@ -115,6 +130,36 @@ describe("DockerEngine.pruneImages", () => {
     await engine.pruneImages("fixowl-target", "fixowl-target:current");
     const removed = calls.filter((argv) => argv[1] === "rmi").map((argv) => argv[2]);
     expect(removed).toEqual(["fixowl-target:old1", "fixowl-target:old2"]);
+  });
+});
+
+describe("DockerEngine non-root injection", () => {
+  it("injects the host uid/gid and HOME into every run so no caller can forget it", async () => {
+    let runArgv: string[] = [];
+    const exec: Exec = {
+      run(argv: readonly string[]): Promise<ExecResult> {
+        if (argv[1] === "run") runArgv = [...argv];
+        return Promise.resolve(ok());
+      },
+    };
+    const engine = new DockerEngine(exec, silentLog, () => "1001:1001");
+    await engine.run(baseSpec);
+    expect(runArgv).toContain("--user");
+    expect(runArgv[runArgv.indexOf("--user") + 1]).toBe("1001:1001");
+    expect(runArgv).toContain("HOME=/tmp");
+  });
+
+  it("leaves the run as docker's default when the host uid cannot be resolved", async () => {
+    let runArgv: string[] = [];
+    const exec: Exec = {
+      run(argv: readonly string[]): Promise<ExecResult> {
+        if (argv[1] === "run") runArgv = [...argv];
+        return Promise.resolve(ok());
+      },
+    };
+    const engine = new DockerEngine(exec, silentLog, () => undefined);
+    await engine.run(baseSpec);
+    expect(runArgv).not.toContain("--user");
   });
 });
 

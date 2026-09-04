@@ -87,6 +87,19 @@ export interface ContainerRunSpec {
   name: string;
   workspaceDir: string;
   workspaceReadOnly?: boolean;
+  /**
+   * `uid:gid` the container process runs as (docker `--user`). Set to the host
+   * runner's uid/gid so the coding agent runs non-root (required by the Claude
+   * CLI's `--dangerously-skip-permissions`) while still owning the bind-mounted
+   * workspace on Linux hosts. Undefined leaves docker's default (root).
+   */
+  user?: string;
+  /**
+   * Writable HOME for the container process. A `--user` uid with no
+   * `/etc/passwd` entry needs an explicit, writable HOME or tools that look up
+   * the current user (npm, git, pnpm) break. Rendered as `-e HOME=<homeDir>`.
+   */
+  homeDir?: string;
   /** Allowlisted env vars entering the container. Nothing else does. */
   env?: Record<string, string>;
   extraMounts?: ContainerMount[];

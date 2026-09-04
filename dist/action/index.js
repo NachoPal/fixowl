@@ -49502,6 +49502,8 @@ var claude = {
   promptVia: "stdin",
   // --dangerously-skip-permissions is safe here because the container is the
   // sandbox: no GitHub token, no docker socket, cap-drop ALL, resource limits.
+  // The CLI hard-refuses this flag under uid 0, so the container must run
+  // non-root (docker `--user`, injected in DockerEngine.run).
   // The Claude Code CLI accepts --model and --effort in -p (headless) mode.
   argv: (mode, selection) => [
     "claude",
@@ -49781,6 +49783,13 @@ var RUNTIME_TOKEN_SECRET = "FIXOWL_GITHUB_TOKEN";
 
 // packages/action/src/container-exec.ts
 var WORKSPACE_MOUNT_PATH = "/workspace";
+var CONTAINER_HOME = "/tmp";
+function hostContainerUser() {
+  if (typeof process.getuid !== "function" || typeof process.getgid !== "function") {
+    return void 0;
+  }
+  return `${process.getuid()}:${process.getgid()}`;
+}
 function dockerRunArgv(spec) {
   const argv = [
     "docker",
@@ -49795,12 +49804,16 @@ function dockerRunArgv(spec) {
     "--pids-limit",
     "512",
     "--memory",
-    "6g",
+    "6g"
+  ];
+  if (spec.user !== void 0) argv.push("--user", spec.user);
+  argv.push(
     "-v",
     `${spec.workspaceDir}:${WORKSPACE_MOUNT_PATH}${spec.workspaceReadOnly ? ":ro" : ""}`,
     "-w",
     WORKSPACE_MOUNT_PATH
-  ];
+  );
+  if (spec.homeDir !== void 0) argv.push("-e", `HOME=${spec.homeDir}`);
   if (spec.stdin !== void 0) argv.push("-i");
   for (const mount of spec.extraMounts ?? []) {
     argv.push("-v", `${mount.host}:${mount.container}${mount.readOnly ? ":ro" : ""}`);
@@ -49821,12 +49834,14 @@ function nameSlug(text) {
   return text.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 }
 var DockerEngine = class {
-  constructor(exec, log2) {
+  constructor(exec, log2, resolveUser = hostContainerUser) {
     this.exec = exec;
     this.log = log2;
+    this.resolveUser = resolveUser;
   }
   exec;
   log;
+  resolveUser;
   async build(params) {
     return await this.exec.run(dockerBuildArgv(params), { cwd: params.contextDir });
   }
@@ -49846,6 +49861,8 @@ var DockerEngine = class {
     }
   }
   async run(spec) {
+    const user = spec.user ?? this.resolveUser();
+    const runSpec = user === void 0 ? spec : { ...spec, user, homeDir: spec.homeDir ?? CONTAINER_HOME };
     let timedOut = false;
     let timer;
     if (spec.timeoutMs !== void 0) {
@@ -49857,7 +49874,7 @@ var DockerEngine = class {
       }, spec.timeoutMs);
     }
     try {
-      const result = await this.exec.run(dockerRunArgv(spec), {
+      const result = await this.exec.run(dockerRunArgv(runSpec), {
         env: spec.env,
         stdin: spec.stdin
       });
@@ -50899,6 +50916,16 @@ function tail(text, max) {
 function markdownCell(text) {
   return text.replaceAll(/\s+/g, " ").replaceAll("|", "\\|").trim();
 }
+function wipeoutFailure(summary2) {
+  const attempted = summary2.results;
+  if (attempted.length === 0) return void 0;
+  const allFailed = attempted.every(
+    (result) => result.status === "agent-failed" || result.status === "error"
+  );
+  if (!allFailed) return void 0;
+  const numbers = attempted.map((result) => `#${result.issue.number}`).join(", ");
+  return `every one of the ${attempted.length} shippable issue(s) failed and no PR was opened (${numbers}); see the run summary for per-issue errors`;
+}
 function renderSummary(repoFullName, summary2) {
   const lines = [`# \u{1F989} fixowl night run: ${repoFullName}`, ""];
   if (summary2.results.length === 0 && summary2.skipped.length === 0 && summary2.deferred.length === 0) {
@@ -51128,6 +51155,10 @@ async function run() {
   const infraErrors = summary2.results.filter((result) => result.status === "error");
   if (infraErrors.length > 0) {
     warning(`${infraErrors.length} issue(s) hit unexpected errors; see the summary`);
+  }
+  const wipeout = wipeoutFailure(summary2);
+  if (wipeout !== void 0) {
+    setFailed(`\u{1F989} fixowl: ${wipeout}`);
   }
 }
 run().catch((error62) => {
