@@ -71,18 +71,56 @@ describe("parsePsOutput", () => {
 });
 
 describe("toLiveContainers", () => {
-  it("keeps this repo's containers and drops names that do not parse", () => {
+  it("keeps the scoped repos' containers and drops names that do not parse", () => {
     const rows = [
       { name: containerName(REPO, 7, "agent"), status: "Up 2 minutes" },
       { name: containerName(REPO, "classify", "claude"), status: "Up 5 seconds" },
       { name: containerName("other/repo", 9, "agent"), status: "Up 1 minute" },
       { name: "totally-unrelated", status: "Up 1 hour" },
     ];
-    const containers = toLiveContainers(rows, REPO);
+    const containers = toLiveContainers(rows, [REPO]);
     expect(containers.map((c) => ({ issue: c.issue, purpose: c.purpose }))).toEqual([
       { issue: 7, purpose: "agent" },
       { issue: "classify", purpose: "claude" },
     ]);
+  });
+
+  it("de-duplicates a name that surfaces under more than one repo's filter", () => {
+    const name = containerName(REPO, 7, "agent");
+    const rows = [
+      { name, status: "Up 2 minutes" },
+      { name, status: "Up 2 minutes" },
+    ];
+    expect(toLiveContainers(rows, [REPO])).toHaveLength(1);
+  });
+
+  it("attributes a prefix-colliding sibling to the longest-matching repo (widgets-2, not widgets)", () => {
+    // `docker ps --filter name=fixowl-acme-widgets-` also matches widgets-2's
+    // containers; without longest-prefix disambiguation they would be mislabeled
+    // as widgets issue 2 ("fixowl-acme-widgets-" stripped leaves "2-7-agent").
+    const widgets = "acme/widgets";
+    const widgets2 = "acme/widgets-2";
+    const sibling = containerName(widgets2, 7, "agent");
+    expect(sibling).toBe("fixowl-acme-widgets-2-7-agent");
+    const rows = [
+      { name: containerName(widgets, 3, "agent"), status: "Up 1 minute" },
+      { name: sibling, status: "Up 2 minutes" },
+    ];
+
+    const containers = toLiveContainers(rows, [widgets, widgets2]);
+    const attributed = containers.find((c) => c.name === sibling);
+    expect(attributed).toMatchObject({ repoFullName: widgets2, issue: 7, purpose: "agent" });
+    // And crucially it is NOT also attributed to widgets as a bogus issue 2.
+    expect(containers.filter((c) => c.name === sibling)).toHaveLength(1);
+    expect(containers.some((c) => c.repoFullName === widgets && c.issue === 2)).toBe(false);
+  });
+
+  it("still attributes the shorter-prefix repo's own containers correctly", () => {
+    const widgets = "acme/widgets";
+    const widgets2 = "acme/widgets-2";
+    const rows = [{ name: containerName(widgets, 3, "check-lint"), status: "Up 1 minute" }];
+    const containers = toLiveContainers(rows, [widgets, widgets2]);
+    expect(containers).toMatchObject([{ repoFullName: widgets, issue: 3, purpose: "check-lint" }]);
   });
 });
 

@@ -66,25 +66,57 @@ export function parsePsOutput(stdout: string): Array<{ name: string; status: str
 }
 
 /**
- * Turns `docker ps` rows for one repo into live containers, dropping any name
- * that does not parse as this repo's fixowl container (foreign or unrelated).
+ * Attributes one discovered container to the configured repo it belongs to.
+ *
+ * `docker ps --filter name=<prefix>` is a substring match, so one repo's prefix
+ * over-matches a sibling whose slug extends it (`fixowl-acme-widgets-` also
+ * matches `fixowl-acme-widgets-2-7-agent`). Disambiguate by the LONGEST matching
+ * configured-repo prefix, so that container is attributed to `acme/widgets-2`
+ * (issue 7) rather than `acme/widgets` (a bogus issue 2). Returns undefined when
+ * no configured repo's prefix matches, or the remainder does not parse.
+ */
+export function attributeContainer(
+  row: { name: string; status: string },
+  repos: ReadonlyArray<string>,
+): LiveContainer | undefined {
+  let bestRepo: string | undefined;
+  let bestPrefixLength = -1;
+  for (const repo of repos) {
+    const prefix = containerNamePrefix(repo);
+    if (row.name.startsWith(prefix) && prefix.length > bestPrefixLength) {
+      bestRepo = repo;
+      bestPrefixLength = prefix.length;
+    }
+  }
+  if (bestRepo === undefined) return undefined;
+  const parsed = parseContainerName(row.name, bestRepo);
+  if (parsed === undefined) return undefined;
+  return {
+    name: row.name,
+    repoFullName: bestRepo,
+    issue: parsed.issue,
+    purpose: parsed.purpose,
+    status: row.status,
+    truncated: parsed.truncated,
+  };
+}
+
+/**
+ * Turns `docker ps` rows into live containers, attributing each to its
+ * configured repo by longest-prefix match against the full `repos` set (so
+ * prefix-related slugs never cross-contaminate the list) and de-duplicating
+ * names that surface under more than one repo's substring filter.
  */
 export function toLiveContainers(
   rows: ReadonlyArray<{ name: string; status: string }>,
-  repoFullName: string,
+  repos: ReadonlyArray<string>,
 ): LiveContainer[] {
+  const byName = new Map<string, { name: string; status: string }>();
+  for (const row of rows) if (!byName.has(row.name)) byName.set(row.name, row);
   const containers: LiveContainer[] = [];
-  for (const row of rows) {
-    const parsed = parseContainerName(row.name, repoFullName);
-    if (parsed === undefined) continue;
-    containers.push({
-      name: row.name,
-      repoFullName,
-      issue: parsed.issue,
-      purpose: parsed.purpose,
-      status: row.status,
-      truncated: parsed.truncated,
-    });
+  for (const row of byName.values()) {
+    const container = attributeContainer(row, repos);
+    if (container !== undefined) containers.push(container);
   }
   return containers;
 }
@@ -148,15 +180,19 @@ async function listContainers(
   repoArg: string | undefined,
   env: Record<string, string> | undefined,
 ): Promise<LiveContainer[]> {
-  const containers: LiveContainer[] = [];
-  for (const repoFullName of targetRepos(ctx.config, repoArg)) {
+  const repos = targetRepos(ctx.config, repoArg);
+  const rows: Array<{ name: string; status: string }> = [];
+  for (const repoFullName of repos) {
     const result = await run(psArgv(containerNamePrefix(repoFullName)), { env });
     if (result.code !== 0) {
       throw new Error(`docker ps failed: ${result.stderr.trim() || result.stdout.trim()}`);
     }
-    containers.push(...toLiveContainers(parsePsOutput(result.stdout), repoFullName));
+    rows.push(...parsePsOutput(result.stdout));
   }
-  return containers;
+  // Attribute against the full repo set so a prefix-related sibling (e.g.
+  // acme/widgets vs acme/widgets-2) is never mislabeled, and de-dup names that
+  // surfaced under more than one repo's substring filter.
+  return toLiveContainers(rows, repos);
 }
 
 export async function watchCommand(
