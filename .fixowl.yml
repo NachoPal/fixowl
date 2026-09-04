@@ -1,0 +1,13 @@
+# fixowl per-repo config. Versioned with your code; evolve it via normal PRs.
+version: 1
+
+# Image the coding agent and verification run in. Must contain: the agent CLI,
+# git, and this repo's toolchain (Node 24 + pnpm).
+dockerfile: Dockerfile
+
+verify:
+  # Commands run in a fresh container after the agent finishes. Any failure
+  # turns the PR into a draft. These are this repo's real CI gates.
+  checks:
+    - { name: lint, run: "pnpm lint" }
+    - { name: tests, run: "pnpm test" }
