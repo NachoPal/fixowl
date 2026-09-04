@@ -42,7 +42,11 @@ export function createProgram(): Command {
     .description(
       "create labels, seal secrets, push the workflow, and register the runner on this host",
     )
-    .option("--pr", "propose the workflow file via PR instead of pushing to the default branch")
+    .option(
+      "--no-pr",
+      "push the workflow file straight to the default branch instead of proposing it via PR (the default)",
+    )
+    .option("--pr", "propose the workflow file via PR (the default; accepted for back-compat)")
     .option("--no-schedule", "generate the workflow with workflow_dispatch only (no cron)")
     .option(
       "--no-register",
