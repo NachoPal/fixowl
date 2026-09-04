@@ -51,6 +51,9 @@ jobs:
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          # `gh` cannot infer the repo without a checkout, so pass it explicitly
+          # via --repo below (GITHUB_REPOSITORY is the "owner/name" of this run).
+          GH_REPO: ${{ github.repository }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
@@ -74,9 +77,11 @@ jobs:
             *) ;;
           esac
 
-          # Breaking change: `!` before the colon, or a "BREAKING CHANGE" note in
-          # the body (the conventional-commit footer, with or without a hyphen).
-          if [[ -n "$bang" ]] || grep -qiE 'BREAKING[ -]CHANGE' <<<"${PR_BODY:-}"; then
+          # Breaking change: `!` before the colon, or a real conventional-commit
+          # "BREAKING CHANGE:" footer in the body - a line-anchored match that
+          # requires the trailing colon, so prose merely mentioning the phrase
+          # (like this workflow's own docs) does not trip it.
+          if [[ -n "$bang" ]] || grep -qiE '^[[:space:]]*BREAKING[ -]CHANGE:' <<<"${PR_BODY:-}"; then
             labels+=("breaking-change")
           fi
 
@@ -92,4 +97,4 @@ jobs:
             add_args+=(--add-label "$l")
           done
           echo "Applying: ${labels[*]}"
-          gh pr edit "$PR_NUMBER" "${add_args[@]}"
+          gh pr edit "$PR_NUMBER" --repo "$GH_REPO" "${add_args[@]}"
