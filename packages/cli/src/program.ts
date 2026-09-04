@@ -40,7 +40,7 @@ export function createProgram(): Command {
   program
     .command("provision [repo]")
     .description(
-      "create labels, seal secrets, push the workflow, and register the runner on this host",
+      "create labels, seal secrets, propose the workflow via PR (--no-pr to push it directly), and register the runner on this host",
     )
     .option(
       "--no-pr",
