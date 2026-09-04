@@ -286,13 +286,18 @@ coding agent runs with.`);
       validate: (value) => (/^[1-9]\d*$/.test(value) ? undefined : "enter a positive whole number"),
     });
 
-    const modelSelection = await stepModelSelection(prompter, agent);
+    const labels = parseLabels(labelsAnswer);
+    const modelSelection = await stepModelSelection(
+      prompter,
+      agent,
+      await fetchLabelCandidates(admin, name, labels),
+    );
 
     repos.push({
       name,
       schedule: schedule.cron,
       scheduleNote: schedule.note,
-      labels: parseLabels(labelsAnswer),
+      labels,
       maxIssuesPerRun: Number(maxIssuesAnswer),
       ...modelSelection,
     });
@@ -345,25 +350,25 @@ interface ModelSelectionAnswers {
   labelModels?: Record<string, { model: string; effort: string }>;
 }
 
+/** A selector-label candidate: one of the repo's labels, or "let me type them". */
+type LabelPick = { kind: "label"; name: string } | { kind: "other" };
+
 /**
- * Presents the agent's available models/efforts and captures either a per-label
- * mapping (comma-separated label names, one model+effort each) or a single
- * default, or neither (fall through to the agent CLI's own default).
+ * Captures either a per-label mapping (one model+effort per selector label) or
+ * a single default, or neither (fall through to the agent CLI's own default).
+ * Every list here is arrow-key driven and sourced from the agent catalog, so an
+ * agent with no model/effort axis asks nothing at all.
  */
 async function stepModelSelection(
   prompter: Prompter,
   agent: string,
+  labelCandidates: readonly string[],
 ): Promise<ModelSelectionAnswers> {
   const catalog = agentCatalogEntry(agent);
   if (catalog === undefined) return {}; // agent has no model/effort axis; nothing to ask
 
   log.info(`
-  Model selection for "${agent}"
-  Available models:`);
-  for (const model of catalog.models) {
-    log.info(`    ${model.id} - ${model.description}`);
-  }
-  log.info(`  Available reasoning efforts: ${catalog.efforts.join(", ")}`);
+  Model selection for "${agent}" (${catalog.models.length} models, efforts: ${catalog.efforts.join(", ")})`);
 
   const answers: ModelSelectionAnswers = {};
 
@@ -372,20 +377,13 @@ async function stepModelSelection(
     false,
   );
   if (wantsLabels) {
-    const labelsAnswer = await prompter.ask(
-      "  Selector label names (comma-separated; one model+effort each)",
-      {
-        validate: (value) =>
-          parseLabels(value).length > 0 ? undefined : "enter at least one label",
-      },
-    );
     const labelModels: Record<string, { model: string; effort: string }> = {};
-    for (const label of parseLabels(labelsAnswer)) {
+    for (const label of await chooseSelectorLabels(prompter, labelCandidates)) {
       const model = await chooseModel(prompter, catalog, `  Model for "${label}"`);
       const effort = await chooseEffort(prompter, catalog, `  Effort for "${label}"`);
       labelModels[label] = { model, effort };
     }
-    answers.labelModels = labelModels;
+    if (Object.keys(labelModels).length > 0) answers.labelModels = labelModels;
   }
 
   const setDefault = await prompter.confirm(
@@ -400,6 +398,60 @@ async function stepModelSelection(
   }
 
   return answers;
+}
+
+/**
+ * Which labels get their own model+effort: ticked off the repo's existing
+ * labels, with an "other" row for labels that do not exist yet (and the plain
+ * typed prompt when the repo's labels could not be listed).
+ */
+async function chooseSelectorLabels(
+  prompter: Prompter,
+  candidates: readonly string[],
+): Promise<string[]> {
+  if (candidates.length === 0) return await askSelectorLabelNames(prompter);
+
+  const picks = await prompter.multiChoose<LabelPick>(
+    "\n  Which labels pick a model + effort?",
+    [
+      ...candidates.map((name) => ({ value: { kind: "label" as const, name }, label: name })),
+      { value: { kind: "other" }, label: "Other…", hint: "type label names yourself" },
+    ],
+    { min: 1 },
+  );
+
+  const chosen = picks.flatMap((pick) => (pick.kind === "label" ? [pick.name] : []));
+  if (!picks.some((pick) => pick.kind === "other")) return chosen;
+  return [...new Set([...chosen, ...(await askSelectorLabelNames(prompter))])];
+}
+
+async function askSelectorLabelNames(prompter: Prompter): Promise<string[]> {
+  const answer = await prompter.ask(
+    "  Selector label names (comma-separated; one model+effort each)",
+    {
+      validate: (value) => (parseLabels(value).length > 0 ? undefined : "enter at least one label"),
+    },
+  );
+  return parseLabels(answer);
+}
+
+/**
+ * The repo's existing labels, minus the ones that already mark issues for
+ * fixowl, offered as selector-label candidates. Read-only and best-effort: an
+ * unreachable repo just means the wizard asks for names to be typed instead.
+ */
+async function fetchLabelCandidates(
+  admin: Octokit,
+  name: string,
+  exclude: readonly string[],
+): Promise<string[]> {
+  const [owner = "", repo = ""] = name.split("/");
+  try {
+    const { data } = await admin.rest.issues.listLabelsForRepo({ owner, repo, per_page: 100 });
+    return data.map((label) => label.name).filter((label) => !exclude.includes(label));
+  } catch {
+    return [];
+  }
 }
 
 async function chooseModel(
