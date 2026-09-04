@@ -31,6 +31,8 @@ const claude: AgentAdapter = {
   promptVia: "stdin",
   // --dangerously-skip-permissions is safe here because the container is the
   // sandbox: no GitHub token, no docker socket, cap-drop ALL, resource limits.
+  // The CLI hard-refuses this flag under uid 0, so the container must run
+  // non-root (docker `--user`, injected in DockerEngine.run).
   // The Claude Code CLI accepts --model and --effort in -p (headless) mode.
   argv: (mode, selection) => [
     "claude",

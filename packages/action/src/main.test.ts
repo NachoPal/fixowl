@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { ContainerRunSpec, Exec, ExecResult, IssueLite } from "./deps.ts";
-import { renderSummary, runNight, type NightInputs } from "./main.ts";
+import { renderSummary, runNight, wipeoutFailure, type NightInputs } from "./main.ts";
+import type { IssueResult } from "./issue-pipeline.ts";
 import { realExec } from "./real-exec.ts";
 import { FakeEngine, FakeGitHub, issue, ok, silentLog } from "./test-helpers.ts";
 
@@ -12,6 +13,19 @@ import { FakeEngine, FakeGitHub, issue, ok, silentLog } from "./test-helpers.ts"
  * workspace clone), fake GitHub API, fake container engine that "edits" the
  * workspace the way an agent would.
  */
+
+function resultRow(number: number, status: IssueResult["status"]): IssueResult {
+  return {
+    issue: issue(number, `#${number}`, "x"),
+    branch: `issue/${number}`,
+    status,
+    verification: [],
+  };
+}
+
+function summarizeWipeout(results: IssueResult[]): string | undefined {
+  return wipeoutFailure({ results, skipped: [], deferred: [], warnings: [] });
+}
 
 async function git(cwd: string, ...argv: string[]): Promise<string> {
   const result = await realExec.run(
@@ -430,6 +444,21 @@ describe("runNight", () => {
         { ...inputs, agentName: "claude", env: {} },
       ),
     ).rejects.toThrow(/CLAUDE_CODE_OAUTH_TOKEN/);
+  });
+
+  it("wipeoutFailure: red only when work was attempted and every issue failed", () => {
+    // Total wipeout: every attempted issue failed, nothing shipped -> red.
+    const wipeout = summarizeWipeout([resultRow(1, "agent-failed"), resultRow(6, "error")]);
+    expect(wipeout).toBeDefined();
+    expect(wipeout).toContain("#1, #6");
+
+    // Nothing to do tonight (no matching issues) -> green.
+    expect(summarizeWipeout([])).toBeUndefined();
+    // A partial night with at least one PR opened -> green.
+    expect(summarizeWipeout([resultRow(1, "pr-opened"), resultRow(6, "error")])).toBeUndefined();
+    // A benign no-change outcome is not a failure -> green.
+    expect(summarizeWipeout([resultRow(1, "no-changes")])).toBeUndefined();
+    expect(summarizeWipeout([resultRow(1, "no-changes"), resultRow(6, "error")])).toBeUndefined();
   });
 
   it("renders a readable summary", async () => {

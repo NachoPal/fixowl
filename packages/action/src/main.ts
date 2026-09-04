@@ -398,6 +398,32 @@ function markdownCell(text: string): string {
   return text.replaceAll(/\s+/g, " ").replaceAll("|", "\\|").trim();
 }
 
+/**
+ * A night that had shippable work but shipped nothing because every attempted
+ * issue failed is a total outage, not a quiet success - it must fail the job.
+ * Returns a message when that happened, otherwise undefined.
+ *
+ * Only issues that were actually attempted appear in `results` (deferred and
+ * already-skipped issues do not), and each carries an `IssueResult.status`. Red
+ * requires that at least one issue was attempted and *every* one ended in a
+ * hard failure ("agent-failed" or "error"). This keeps the benign outcomes
+ * green: no matching issues (empty results), an agent that ran fine but had
+ * "no-changes", and any partial night where at least one "pr-opened" landed.
+ */
+export function wipeoutFailure(summary: NightSummary): string | undefined {
+  const attempted = summary.results;
+  if (attempted.length === 0) return undefined;
+  const allFailed = attempted.every(
+    (result) => result.status === "agent-failed" || result.status === "error",
+  );
+  if (!allFailed) return undefined;
+  const numbers = attempted.map((result) => `#${result.issue.number}`).join(", ");
+  return (
+    `every one of the ${attempted.length} shippable issue(s) failed and no PR was opened ` +
+    `(${numbers}); see the run summary for per-issue errors`
+  );
+}
+
 export function renderSummary(repoFullName: string, summary: NightSummary): string {
   const lines: string[] = [`# 🦉 fixowl night run: ${repoFullName}`, ""];
   if (
