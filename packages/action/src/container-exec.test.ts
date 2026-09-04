@@ -96,17 +96,12 @@ describe("dockerBuildArgv", () => {
 });
 
 describe("containerName", () => {
-  it("sanitizes the repo and purpose", () => {
-    expect(containerName("Acme/Web.App", 7, "check-Client Tests!")).toBe(
-      "fixowl-acme-web-app-7-check-client-tests",
-    );
+  // The name format is owned and exhaustively tested in @fixowl/core
+  // (container-naming.test.ts); this just guards the re-export the action uses.
+  it("is re-exported from core and produces the fixowl-… shape", () => {
     expect(containerName("test/repo", "classify", "claude")).toBe(
       "fixowl-test-repo-classify-claude",
     );
-  });
-
-  it("keeps names for different repos distinct (docker rm -f must never cross repos)", () => {
-    expect(containerName("a/one", 7, "agent")).not.toBe(containerName("a/two", 7, "agent"));
   });
 });
 

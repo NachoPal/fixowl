@@ -88,7 +88,8 @@ night right now:
 fixowl run owner/repo
 ```
 
-Other ops: `fixowl status`, `fixowl stop [--deregister]`, `fixowl logs owner/repo [--runner]`.
+Other ops: `fixowl status`, `fixowl watch [owner/repo]` (stream a live agent
+container's logs), `fixowl stop [--deregister]`, `fixowl logs owner/repo [--runner]`.
 
 ## Configuration
 
