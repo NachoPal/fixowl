@@ -2,6 +2,8 @@
   "name": "fixowl",
   "version": "0.2.0",
   "description": "The owl that fixes your GitHub issues while you sleep",
+  "homepage": "https://github.com/NachoPal/fixowl#readme",
+  "bugs": "https://github.com/NachoPal/fixowl/issues",
   "license": "MIT",
   "repository": {
     "type": "git",
