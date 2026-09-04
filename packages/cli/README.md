@@ -59,8 +59,8 @@ then runs the rest for you and stops with an explanation if a step fails:
 
 ```sh
 fixowl validate      # tokens, repos, docker engine, agent credentials
-fixowl provision     # labels + sealed secrets + workflow into each repo, and
-                     # registers the runner on this host
+fixowl provision     # labels + sealed secrets into each repo, proposes the workflow
+                     # via PR, and registers the runner on this host
 fixowl start         # installs and starts the runner service(s); no admin token needed
 ```
 
@@ -143,7 +143,8 @@ Key action inputs (all optional; see [`action.yml`](https://github.com/NachoPal/
 | `default-effort`        | `""`        | Reasoning effort for the default model. Empty passes no effort flag.                                                                                                 |
 | `label-models`          | `""`        | JSON object mapping a selector label to `{"model","effort"}`. An issue with exactly one such label runs with that model/effort; two or more fails that issue loudly. |
 
-> `fixowl provision` writes this workflow into your repos for you, pinned to a
+> `fixowl provision` proposes this workflow to your repos for you (via a review
+> PR by default; `--no-pr` pushes it straight to the default branch), pinned to a
 > released tag - you don't have to author it by hand.
 
 ## Configuration & secrets
