@@ -80,16 +80,16 @@ Run `fixowl --help` for the full list; every command accepts
 `-c, --config <path>` to point at a config file other than
 `~/.fixowl/config.yaml`.
 
-| Command | What it does |
-| --- | --- |
-| `fixowl init` | Guided setup: tokens, agent, repos, then validate, provision, and start. `--non-interactive` just scaffolds `~/.fixowl` and prints the manual steps. |
-| `fixowl validate` | Check tokens, repos, docker engine, and agent credentials. Exits non-zero if anything fails. |
+| Command                   | What it does                                                                                                                                                                                                                        |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `fixowl init`             | Guided setup: tokens, agent, repos, then validate, provision, and start. `--non-interactive` just scaffolds `~/.fixowl` and prints the manual steps.                                                                                |
+| `fixowl validate`         | Check tokens, repos, docker engine, and agent credentials. Exits non-zero if anything fails.                                                                                                                                        |
 | `fixowl provision [repo]` | Create labels, seal secrets, and push the fixowl workflow into target repos. `--pr` proposes the workflow via PR instead of pushing to the default branch; `--no-schedule` generates a `workflow_dispatch`-only workflow (no cron). |
-| `fixowl start [repo]` | Install, register, and start the self-hosted runner service(s). Auto-starts Colima if installed. |
-| `fixowl stop [repo]` | Stop the runner service(s). `--deregister` also uninstalls the service, deregisters it from GitHub, and deletes the install. |
-| `fixowl status [repo]` | Show service, runner, last run, and open fixowl PRs per repo. |
-| `fixowl run <repo>` | Dispatch the fixowl workflow now and follow it to completion. |
-| `fixowl logs <repo>` | Print the latest fixowl run's logs. `--runner` prints the local runner service diagnostics instead. |
+| `fixowl start [repo]`     | Install, register, and start the self-hosted runner service(s). Auto-starts Colima if installed.                                                                                                                                    |
+| `fixowl stop [repo]`      | Stop the runner service(s). `--deregister` also uninstalls the service, deregisters it from GitHub, and deletes the install.                                                                                                        |
+| `fixowl status [repo]`    | Show service, runner, last run, and open fixowl PRs per repo.                                                                                                                                                                       |
+| `fixowl run <repo>`       | Dispatch the fixowl workflow now and follow it to completion.                                                                                                                                                                       |
+| `fixowl logs <repo>`      | Print the latest fixowl run's logs. `--runner` prints the local runner service diagnostics instead.                                                                                                                                 |
 
 The optional `[repo]` argument narrows a command to a single repo; omit it to act
 on every repo in your config.
@@ -104,7 +104,7 @@ assumptions, so switching `runs-on` to `ubuntu-latest` is the entire migration.
 name: fixowl
 on:
   schedule:
-    - cron: "37 1 * * *"   # UTC
+    - cron: "37 1 * * *" # UTC
   workflow_dispatch:
 
 permissions:
@@ -130,17 +130,17 @@ jobs:
 
 Key action inputs (all optional; see [`action.yml`](https://github.com/NachoPal/fixowl/blob/main/action.yml) for the authoritative list):
 
-| Input | Default | Description |
-| --- | --- | --- |
-| `labels-any` | `overnight` | Comma-separated labels; an issue matches if it has ANY of them. |
-| `labels-all` | `""` | Comma-separated labels; an issue matches only if it has ALL of them. |
-| `agent` | `claude` | Agent adapter to run (`claude`, `aider`). |
-| `agent-env` | `""` | Comma-separated env var names allowed into the agent container, overriding the adapter's built-in allowlist. |
-| `max-issues-per-run` | `4` | Maximum number of issues to process in one run. |
-| `issue-timeout-minutes` | `45` | Hard timeout for the agent container per issue. |
-| `default-model` | `""` | Model id used when an issue carries no selector label. Empty uses the agent CLI's own default. |
-| `default-effort` | `""` | Reasoning effort for the default model. Empty passes no effort flag. |
-| `label-models` | `""` | JSON object mapping a selector label to `{"model","effort"}`. An issue with exactly one such label runs with that model/effort; two or more fails that issue loudly. |
+| Input                   | Default     | Description                                                                                                                                                          |
+| ----------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `labels-any`            | `overnight` | Comma-separated labels; an issue matches if it has ANY of them.                                                                                                      |
+| `labels-all`            | `""`        | Comma-separated labels; an issue matches only if it has ALL of them.                                                                                                 |
+| `agent`                 | `claude`    | Agent adapter to run (`claude`, `aider`).                                                                                                                            |
+| `agent-env`             | `""`        | Comma-separated env var names allowed into the agent container, overriding the adapter's built-in allowlist.                                                         |
+| `max-issues-per-run`    | `4`         | Maximum number of issues to process in one run.                                                                                                                      |
+| `issue-timeout-minutes` | `45`        | Hard timeout for the agent container per issue.                                                                                                                      |
+| `default-model`         | `""`        | Model id used when an issue carries no selector label. Empty uses the agent CLI's own default.                                                                       |
+| `default-effort`        | `""`        | Reasoning effort for the default model. Empty passes no effort flag.                                                                                                 |
+| `label-models`          | `""`        | JSON object mapping a selector label to `{"model","effort"}`. An issue with exactly one such label runs with that model/effort; two or more fails that issue loudly. |
 
 > `fixowl provision` writes this workflow into your repos for you, pinned to a
 > released tag - you don't have to author it by hand.
@@ -155,23 +155,23 @@ to fill in by hand.
 ```yaml
 version: 1
 github:
-  admin_token: ${FIXOWL_ADMIN_TOKEN}      # provisioning; stays on your machine
-  runtime_token: ${FIXOWL_RUNTIME_TOKEN}  # pushed to repos as an Actions secret
+  admin_token: ${FIXOWL_ADMIN_TOKEN} # provisioning; stays on your machine
+  runtime_token: ${FIXOWL_RUNTIME_TOKEN} # pushed to repos as an Actions secret
 defaults:
-  schedule: "37 1 * * *"                  # UTC
-  labels: { any: [overnight] }            # any/all combinations supported
+  schedule: "37 1 * * *" # UTC
+  labels: { any: [overnight] } # any/all combinations supported
   agent: claude
   max_issues_per_run: 4
   issue_timeout_minutes: 45
-  model: sonnet                           # default model when no selector label
-  effort: medium                          # default reasoning effort
+  model: sonnet # default model when no selector label
+  effort: medium # default reasoning effort
 agents:
-  claude: { env: [CLAUDE_CODE_OAUTH_TOKEN] }   # the ONLY env vars agents ever see
+  claude: { env: [CLAUDE_CODE_OAUTH_TOKEN] } # the ONLY env vars agents ever see
 repos:
   - name: you/your-app
-    schedule: "30 1 * * *"                # per-repo override
-    model: opus                           # per-repo default override
-    label_models:                         # dedicated selector labels
+    schedule: "30 1 * * *" # per-repo override
+    model: opus # per-repo default override
+    label_models: # dedicated selector labels
       heavy: { model: opus, effort: max }
       quick: { model: haiku, effort: low }
 ```
