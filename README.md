@@ -1,6 +1,6 @@
 ![fixowl - the owl that fixes your issues while you sleep. You file and label issues during the day; a nightly cron picks them up on a self-hosted runner, runs a coding agent in a Docker container per issue, verifies the change, and opens exactly one pull request per issue with the evidence attached. fixowl never merges.](assets/readme-banner.png)
 
-# fixowl
+# fixowl a
 
 **The owl that fixes your issues while you sleep.**
 
