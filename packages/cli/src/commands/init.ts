@@ -149,8 +149,9 @@ fixowl needs two fine-grained personal access tokens, each scoped to ONLY the
 repos you want it to touch:
 
   admin    Administration RW, Secrets RW, Contents RW, Workflows RW,
-           Issues RW, Actions RW. Stays on this machine; used to provision and
-           to register the runner. Setup-only: once \`fixowl provision\` has run
+           Issues RW, Actions RW, Pull requests RW. Stays on this machine;
+           used to provision and to register the runner. Setup-only: once
+           \`fixowl provision\` has run
            you can REVOKE it (or downgrade it to read-only if you want
            \`fixowl status\` to confirm the runner is online). Routine
            \`fixowl start\` needs no admin token.
@@ -461,8 +462,9 @@ listed above (edit that file or re-run \`fixowl init\`), then continue with:
     log.error(describeError(error));
     log.info(`
 Provisioning stopped. The usual causes are an admin token missing a permission
-(Administration, Secrets, Contents, Workflows, Issues or Actions, all read and
-write) or a repo it was never granted. Fix that and re-run:
+(Administration, Secrets, Contents, Workflows, Issues, Actions or Pull
+requests, all read and write) or a repo it was never granted. Fix that and
+re-run:
 
   fixowl provision`);
     process.exitCode = 1;
@@ -557,8 +559,9 @@ function scaffoldOnly(configPath: string, secretsPath: string): void {
 Next steps (or re-run \`fixowl init\` on a terminal for the guided setup):
   1. Mint two fine-grained PATs at ${PAT_URL}, scoped to ONLY your target repos:
        admin   - Administration RW, Secrets RW, Contents RW, Workflows RW, Issues RW,
-                 Actions RW (stays on this machine; used only to provision and
-                 register the runner - revoke or downgrade to read-only afterward)
+                 Actions RW, Pull requests RW (stays on this machine; used only to
+                 provision and register the runner - revoke or downgrade to
+                 read-only afterward)
        runtime - Contents RW, Pull requests RW, Issues RW (becomes a repo Actions secret)
      Put them in ${secretsPath}.
   2. If using the claude agent: run \`claude setup-token\` and put the resulting
