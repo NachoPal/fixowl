@@ -1,0 +1,45 @@
+# actions/labeler v5 config: maps changed paths to `area:` labels.
+# One entry per monorepo surface (see AGENTS.md "Layout"). Schema:
+# https://github.com/actions/labeler#configuration-options
+#
+# Consumed by .github/workflows/labeler.yml. `sync-labels: true` there means an
+# `area:` label is removed again if a later push drops the matching paths, so
+# these globs are the single source of truth for area labeling.
+
+"area: cli":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "packages/cli/**"
+
+"area: core":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "packages/core/**"
+
+"area: action":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "packages/action/**"
+          - "action.yml"
+
+"area: release":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "scripts/**"
+          - ".github/workflows/release.yml"
+
+# Other CI: any workflow EXCEPT the release workflow (that is `area: release`).
+# The two keys under one `changed-files` are ANDed: a change must touch a
+# workflow AND not be the release workflow, so release.yml never doubles up.
+"area: ci":
+  - changed-files:
+      - any-glob-to-any-file:
+          - ".github/workflows/**"
+      - all-globs-to-all-files:
+          - "!.github/workflows/release.yml"
+
+"area: docs":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "docs/**"
+          - "*.md"

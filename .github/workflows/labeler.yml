@@ -1,0 +1,100 @@
+name: labeler
+
+# Auto-labels every PR with zero manual work, feeding the grouped release notes
+# in .github/release.yml:
+#   1. area:*  labels from changed paths      (.github/labeler.yml)
+#   2. change-type labels from the conventional-commit PR title
+#      (feat: -> enhancement, fix: -> bug, docs: -> documentation, `!`/BREAKING
+#      CHANGE -> breaking-change).
+#
+# Trigger: `pull_request` (NOT pull_request_target). fixowl PRs are opened from
+# same-repo branches by the maintainer/runner, so the default write token works.
+# `pull_request` never hands a write token to fork code; even so, neither job
+# checks out or executes PR content - both only read PR metadata (title/body)
+# and changed-file paths - so there is no untrusted-code path to protect.
+# `edited` is included so a corrected PR title re-runs the change-type job.
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+
+# Least privilege: read the repo, write only PR labels.
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: labeler-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  area:
+    name: area labels (by path)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/labeler@8558fd74291d67161a8a78ce36a881fa63b766a9 # v5
+        with:
+          configuration-path: .github/labeler.yml
+          # Keep area:* labels in sync with the current changed paths so a label
+          # is dropped again if a later push stops touching that surface.
+          sync-labels: true
+
+  change-type:
+    name: change-type labels (by PR title)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Map conventional-commit title to change-type labels
+        env:
+          # Pass PR fields through the environment, never interpolated into the
+          # script body, so a crafted title/body cannot inject shell.
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          # `gh` cannot infer the repo without a checkout, so pass it explicitly
+          # via --repo below (GITHUB_REPOSITORY is the "owner/name" of this run).
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          # Parse: type(optional-scope)optional-bang: ...
+          ctype=""
+          bang=""
+          if [[ "$PR_TITLE" =~ ^([a-zA-Z]+)(\([^\)]*\))?(!)?: ]]; then
+            ctype="${BASH_REMATCH[1]}"
+            bang="${BASH_REMATCH[3]}"
+          fi
+
+          labels=()
+          case "$ctype" in
+            feat) labels+=("enhancement") ;;
+            fix)  labels+=("bug") ;;
+            docs) labels+=("documentation") ;;
+            # ci/build/chore/refactor/perf/test and anything else are left
+            # unlabeled on purpose: auto-excluding real changes hides them, so
+            # they fall through to the release-notes catch-all.
+            *) ;;
+          esac
+
+          # Breaking change: `!` before the colon, or a real conventional-commit
+          # "BREAKING CHANGE:" footer in the body - a line-anchored match that
+          # requires the trailing colon, so prose merely mentioning the phrase
+          # (like this workflow's own docs) does not trip it.
+          if [[ -n "$bang" ]] || grep -qiE '^[[:space:]]*BREAKING[ -]CHANGE:' <<<"${PR_BODY:-}"; then
+            labels+=("breaking-change")
+          fi
+
+          if [[ ${#labels[@]} -eq 0 ]]; then
+            echo "No change-type label for title: '$PR_TITLE'"
+            exit 0
+          fi
+
+          # Add-only: never strip labels a maintainer set by hand. --add-label is
+          # idempotent, so re-runs on title edits are safe.
+          add_args=()
+          for l in "${labels[@]}"; do
+            add_args+=(--add-label "$l")
+          done
+          echo "Applying: ${labels[*]}"
+          gh pr edit "$PR_NUMBER" --repo "$GH_REPO" "${add_args[@]}"
