@@ -41,6 +41,13 @@ jobs:
   release:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # A job-level permissions block REPLACES the workflow-level one for this job,
+    # so it must re-declare contents: write (tag push + GitHub Release) alongside
+    # id-token: write. This is the canonical OIDC form, belt-and-suspenders with
+    # the workflow-level block above.
+    permissions:
+      contents: write # push git tags and create the GitHub Release
+      id-token: write # npm OIDC trusted publishing
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -117,6 +124,15 @@ jobs:
         # --allow-same-version covers an empty suffix. This change is never
         # committed or pushed - the base version in the repo is untouched.
         run: npm version "${VERSION}" --no-git-tag-version --allow-same-version
+
+      - name: OIDC diagnostic (pre-publish)
+        # Read-only: prints node/npm versions and whether the GitHub OIDC token
+        # endpoint env is present (SET/UNSET only, never the value) to settle
+        # whether the id-token reaches this step. Runs regardless of dry_run.
+        run: |
+          echo "node: $(node --version)  npm: $(npm --version)"
+          echo "ACTIONS_ID_TOKEN_REQUEST_URL: ${ACTIONS_ID_TOKEN_REQUEST_URL:+SET}${ACTIONS_ID_TOKEN_REQUEST_URL:-UNSET}"
+          echo "ACTIONS_ID_TOKEN_REQUEST_TOKEN: ${ACTIONS_ID_TOKEN_REQUEST_TOKEN:+SET}${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-UNSET}"
 
       - name: Publish fixowl to npm
         if: ${{ inputs.dry_run == false && steps.plan.outputs.publish_npm == 'true' }}
