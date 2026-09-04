@@ -30,13 +30,13 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - uses: NachoPal/fixowl@639097aa99e3a4940862ebb0e92abb7b7e3f810f # main @ 2026-09-04
+      - uses: NachoPal/fixowl@1d22f2fe0a3eaeacc32da014796d587edccff574 # main @ 2026-09-04
         with:
           labels-any: "for: agent"
           labels-all: ""
           agent: claude
           agent-env: "CLAUDE_CODE_OAUTH_TOKEN"
-          max-issues-per-run: "3"
+          max-issues-per-run: "10"
           issue-timeout-minutes: "45"
           default-model: "opus"
           default-effort: "high"
