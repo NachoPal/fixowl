@@ -83,7 +83,7 @@ export function attributeContainer(
 ): LiveContainer | undefined {
   const candidates = repos
     .filter((repo) => row.name.startsWith(containerNamePrefix(repo)))
-    .sort((a, b) => containerNamePrefix(b).length - containerNamePrefix(a).length);
+    .toSorted((a, b) => containerNamePrefix(b).length - containerNamePrefix(a).length);
   for (const repo of candidates) {
     const parsed = parseContainerName(row.name, repo);
     if (parsed === undefined) continue;
