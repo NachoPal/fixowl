@@ -30,7 +30,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - uses: NachoPal/fixowl@520c39583cc2c0d22bb58e583f8f3b5c2395709e # main @ 2026-09-04
+      - uses: NachoPal/fixowl@639097aa99e3a4940862ebb0e92abb7b7e3f810f # main @ 2026-09-04
         with:
           labels-any: "for: agent"
           labels-all: ""
