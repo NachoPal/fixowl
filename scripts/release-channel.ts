@@ -2,10 +2,10 @@
  * Release plan logic: the one piece of real decision-making in the release
  * workflow, kept pure and unit-tested here rather than embedded in fragile YAML.
  *
- * The BASE version committed in the code is the source of truth
- * (`packages/cli/package.json`, root kept in lockstep). The workflow NEVER bumps
- * or commits it. The channel and any prerelease suffix are chosen at trigger
- * time via `workflow_dispatch` inputs:
+ * The BASE version committed in the code is the single source of truth
+ * (`packages/cli/package.json`, the only published package). The workflow NEVER
+ * bumps or commits it. The channel and any prerelease suffix are chosen at
+ * trigger time via `workflow_dispatch` inputs:
  *
  * - `version_suffix` is appended verbatim to the base version to form the
  *   published version (base `0.2.0` + `-rc.1` -> `0.2.0-rc.1`; empty -> `0.2.0`).
@@ -69,10 +69,9 @@ function prereleaseDistTag(prerelease: string): string {
 }
 
 /**
- * Derive the full release plan from the committed base version, the root version
- * (verified in lockstep), the trigger-time `versionSuffix`, and the `releaseType`.
+ * Derive the full release plan from the committed base version, the trigger-time
+ * `versionSuffix`, and the `releaseType`.
  * Throws with an actionable message on any of:
- * - cli/root version mismatch,
  * - a composed version that is not valid SemVer 2.0.0,
  * - a `release` whose composed version carries a prerelease suffix, or
  * - a `prerelease` whose composed version has no prerelease suffix.
@@ -80,17 +79,9 @@ function prereleaseDistTag(prerelease: string): string {
  */
 export function decideRelease(
   baseVersion: string,
-  rootVersion: string,
   versionSuffix: string,
   releaseType: ReleaseType,
 ): ReleasePlan {
-  if (baseVersion !== rootVersion) {
-    throw new Error(
-      `Version mismatch: packages/cli/package.json is ${baseVersion} but root package.json is ${rootVersion}. ` +
-        `Set both to the same base version and commit before releasing.`,
-    );
-  }
-
   const version = `${baseVersion}${versionSuffix}`;
   const match = SEMVER.exec(version);
   if (match?.groups === undefined) {

@@ -4,8 +4,8 @@ name: release
 # channel and any prerelease suffix chosen at trigger time.
 #
 # The workflow NEVER bumps, commits, or pushes a version: a human edits the base
-# version in packages/cli/package.json AND the root package.json (same number),
-# commits, pushes, then dispatches this. The `version_suffix` input is appended
+# version in packages/cli/package.json (the single source of truth), commits,
+# pushes, then dispatches this. The `version_suffix` input is appended
 # verbatim to that base version and applied only ephemerally in-CI for the
 # publish; `release_type` picks the channel. See docs/releasing.md.
 

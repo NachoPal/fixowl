@@ -14,16 +14,15 @@ fixowl ships two artifacts from a single manual workflow,
 The workflow **never bumps, commits, or pushes a version**. You edit the **base**
 version by hand, commit it, then trigger the workflow. The channel and any
 prerelease suffix are chosen **at trigger time**, not encoded in the committed
-version. The base version lives in **two files that must stay in lockstep**:
+version. The base version lives in a **single source of truth**:
 
-- `packages/cli/package.json` `version` - the source of truth, and
-- the root `package.json` `version` - kept identical by you.
+- `packages/cli/package.json` `version` - the only published package's version.
 
-The workflow reads the base version from `packages/cli/package.json`, verifies
-the root matches, composes the published version, and resolves the full plan via
+The workflow reads the base version from `packages/cli/package.json`, composes
+the published version, and resolves the full plan via
 [`scripts/release-channel.ts`](../scripts/release-channel.ts) (unit-tested in
-`release-channel.test.ts`). It **fails loudly** on a version mismatch, an invalid
-composed version, or a channel/suffix inconsistency.
+`release-channel.test.ts`). It **fails loudly** on an invalid composed version or
+a channel/suffix inconsistency.
 
 ## Trigger inputs
 
@@ -40,17 +39,17 @@ Trigger from Actions -> **release** -> **Run workflow** (or
   publish, tag push, and Release creation (a validation-only pass).
 
 Every run first lints, tests, and builds (failing if the committed `dist/action`
-bundle is stale), verifies the lockstep versions, and computes the plan.
+bundle is stale), then computes the plan.
 
 ## Cutting a stable release (`release_type: release`)
 
 The composed version **must be plain** (no prerelease suffix) - the run fails if
 `version_suffix` makes it a prerelease. So leave `version_suffix` empty:
 
-1. Set both versions to the target plain semver number (e.g. `0.2.0`):
+1. Set the version to the target plain semver number (e.g. `0.2.0`):
 
    ```sh
-   # edit packages/cli/package.json and package.json -> "version": "0.2.0"
+   # edit packages/cli/package.json -> "version": "0.2.0"
    git commit -am "release: 0.2.0"
    git push
    ```
@@ -103,7 +102,7 @@ Use it to stage the target and release notes for review.
 
 When a candidate is good, cut a stable release with the same base number:
 
-1. Ensure both versions are the target plain number (e.g. `0.2.0`), commit, push.
+1. Ensure the version is the target plain number (e.g. `0.2.0`), commit, push.
 2. Run the workflow with `release_type: release` and an empty `version_suffix`.
    This publishes `0.2.0` to `latest`, moves `v0`, and cuts the full Release.
 

@@ -1,11 +1,11 @@
 /**
  * Runtime entry the release workflow calls (`node scripts/release-plan.ts`).
- * Reads the committed base versions and the trigger-time inputs (VERSION_SUFFIX,
+ * Reads the committed base version and the trigger-time inputs (VERSION_SUFFIX,
  * RELEASE_TYPE), derives the release plan via the pure, unit-tested
  * `decideRelease`, and emits the decision as GitHub Actions step outputs so later
- * steps stay declarative. Exits non-zero with a clear message on a version
- * mismatch, an invalid composed version, or a release/prerelease consistency
- * violation, halting the run before anything is published.
+ * steps stay declarative. Exits non-zero with a clear message on an invalid
+ * composed version or a release/prerelease consistency violation, halting the
+ * run before anything is published.
  */
 import { appendFileSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -30,11 +30,10 @@ function releaseTypeFrom(raw: string | undefined): ReleaseType {
 
 export function run(): void {
   const baseVersion = versionOf("packages/cli/package.json");
-  const rootVersion = versionOf("package.json");
   const versionSuffix = process.env.VERSION_SUFFIX ?? "";
   const releaseType = releaseTypeFrom(process.env.RELEASE_TYPE);
 
-  const plan = decideRelease(baseVersion, rootVersion, versionSuffix, releaseType);
+  const plan = decideRelease(baseVersion, versionSuffix, releaseType);
 
   const outputs: Record<string, string> = {
     version: plan.version,
