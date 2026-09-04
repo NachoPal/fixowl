@@ -12,6 +12,14 @@ export {
   type LabelRule,
 } from "./labels.ts";
 export {
+  containerName,
+  containerNamePrefix,
+  CONTAINER_NAME_MAX_LENGTH,
+  parseContainerName,
+  type ContainerIssue,
+  type ParsedContainerName,
+} from "./container-naming.ts";
+export {
   agentAdapterNames,
   FORBIDDEN_AGENT_ENV,
   getAgentAdapter,
