@@ -9,6 +9,7 @@ import {
 } from "@fixowl/core";
 import { CONFIG_PATH, loadSecrets, SECRETS_PATH } from "../config-load.ts";
 import { makeContext } from "../context.ts";
+import { checkDockerEngine, type EngineStatus } from "../docker/engine-check.ts";
 import { githubClient } from "../github/client.ts";
 import { describeGitHubError } from "../github/errors.ts";
 import {
@@ -47,31 +48,55 @@ export interface InitOptions {
   configPath?: string;
   /** Skip the wizard and just scaffold the starter files. */
   nonInteractive?: boolean;
+  /** Engine probe, injectable for tests; defaults to the real detector. */
+  checkEngine?: () => Promise<EngineStatus>;
 }
 
 export async function initCommand(options: InitOptions = {}): Promise<void> {
   const configPath = options.configPath ?? CONFIG_PATH;
   const secretsPath =
     options.configPath !== undefined ? join(dirname(configPath), "secrets.env") : SECRETS_PATH;
+  const checkEngine = options.checkEngine ?? checkDockerEngine;
   mkdirSync(dirname(configPath), { recursive: true });
 
   if (options.nonInteractive === true || process.stdin.isTTY !== true) {
     scaffoldOnly(configPath, secretsPath);
+    await reportEngineStatus(checkEngine);
     return;
   }
 
   const prompter = createPrompter();
   try {
-    await runWizard(prompter, configPath, secretsPath);
+    await runWizard(prompter, configPath, secretsPath, checkEngine);
   } finally {
     prompter.close();
   }
+}
+
+/**
+ * Runs the container-engine probe and reports it, NON-FATALLY: init's job is to
+ * write config, and the user may install an engine afterward. A missing engine
+ * is a warning that points at `fixowl start` and `fixowl validate`, never a
+ * hard failure. Detection is reused from `checkDockerEngine`, not duplicated.
+ */
+async function reportEngineStatus(checkEngine: () => Promise<EngineStatus>): Promise<void> {
+  const engine = await checkEngine();
+  if (engine.ok) {
+    log.ok(`container engine ready: ${engine.detail}`);
+    return;
+  }
+  log.warn(
+    `${engine.detail}\n` +
+      "  fixowl can finish setting up, but `fixowl start` needs a container engine.\n" +
+      "  Install one, then re-check with `fixowl validate`.",
+  );
 }
 
 async function runWizard(
   prompter: Prompter,
   configPath: string,
   secretsPath: string,
+  checkEngine: () => Promise<EngineStatus>,
 ): Promise<void> {
   log.info(`
 🦉 fixowl setup
@@ -79,6 +104,8 @@ async function runWizard(
 This walks you through the whole thing: GitHub tokens, the coding agent, the
 repos to watch, then validates and provisions them. Nothing is written until
 the questions are answered, and every answer is stored in ${dirname(configPath)}.`);
+
+  await reportEngineStatus(checkEngine);
 
   if (existsSync(configPath)) {
     const existing = await prompter.choose(`\nFound an existing config at ${configPath}.`, [

@@ -15,6 +15,25 @@ export function colimaSocketPath(): string {
   return join(homedir(), ".colima", "default", "docker.sock");
 }
 
+/**
+ * OS-aware guidance for installing a Docker-compatible engine, derived from
+ * `process.platform`. macOS gets Colima (fixowl's preferred engine) or Docker
+ * Desktop; Linux gets native Docker; anything else gets a generic hint.
+ */
+export function engineInstallHint(platform: NodeJS.Platform = process.platform): string {
+  switch (platform) {
+    case "darwin":
+      return (
+        "install a container engine - Colima (`brew install colima docker`, then " +
+        "`colima start`) or Docker Desktop"
+      );
+    case "linux":
+      return "install Docker (your distro's package or docker.com) and start the daemon";
+    default:
+      return "install and start a Docker-compatible container engine";
+  }
+}
+
 export async function checkDockerEngine(): Promise<EngineStatus> {
   const colima = await run(["colima", "status"]).catch(() => undefined);
   if (colima?.code === 0) {
@@ -41,8 +60,7 @@ export async function checkDockerEngine(): Promise<EngineStatus> {
   return {
     ok: false,
     engine: "none",
-    detail:
-      "no working docker engine; install colima (brew install colima docker) and run `colima start`",
+    detail: `no working docker engine; ${engineInstallHint()}`,
   };
 }
 
