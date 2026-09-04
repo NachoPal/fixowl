@@ -122,6 +122,19 @@ describe("toLiveContainers", () => {
     const containers = toLiveContainers(rows, [widgets, widgets2]);
     expect(containers).toMatchObject([{ repoFullName: widgets, issue: 3, purpose: "check-lint" }]);
   });
+
+  it("falls back to the shorter prefix when the longest prefix's remainder does not parse", () => {
+    // widgets issue #2's agent container name equals widgets-2's own prefix, so
+    // longest-prefix wins for widgets-2 but its remainder ("agent") is not an
+    // issue token; it must not be dropped, but attributed to widgets issue 2.
+    const widgets = "acme/widgets";
+    const widgets2 = "acme/widgets-2";
+    const name = containerName(widgets, 2, "agent");
+    expect(name).toBe("fixowl-acme-widgets-2-agent");
+    const containers = toLiveContainers([{ name, status: "Up 1 minute" }], [widgets, widgets2]);
+    const attributed = containers.find((c) => c.name === name);
+    expect(attributed).toMatchObject({ repoFullName: widgets, issue: 2, purpose: "agent" });
+  });
 });
 
 describe("describeStep", () => {

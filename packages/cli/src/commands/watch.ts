@@ -71,34 +71,32 @@ export function parsePsOutput(stdout: string): Array<{ name: string; status: str
  * `docker ps --filter name=<prefix>` is a substring match, so one repo's prefix
  * over-matches a sibling whose slug extends it (`fixowl-acme-widgets-` also
  * matches `fixowl-acme-widgets-2-7-agent`). Disambiguate by the LONGEST matching
- * configured-repo prefix, so that container is attributed to `acme/widgets-2`
- * (issue 7) rather than `acme/widgets` (a bogus issue 2). Returns undefined when
- * no configured repo's prefix matches, or the remainder does not parse.
+ * configured-repo prefix WHOSE REMAINDER PARSES, so `fixowl-acme-widgets-2-7-agent`
+ * is attributed to `acme/widgets-2` (issue 7) while `fixowl-acme-widgets-2-agent`
+ * - whose `widgets-2` remainder (`agent`) is not a valid issue token - falls back
+ * to `acme/widgets` (issue 2, agent). Returns undefined when no matching prefix
+ * parses.
  */
 export function attributeContainer(
   row: { name: string; status: string },
   repos: ReadonlyArray<string>,
 ): LiveContainer | undefined {
-  let bestRepo: string | undefined;
-  let bestPrefixLength = -1;
-  for (const repo of repos) {
-    const prefix = containerNamePrefix(repo);
-    if (row.name.startsWith(prefix) && prefix.length > bestPrefixLength) {
-      bestRepo = repo;
-      bestPrefixLength = prefix.length;
-    }
+  const candidates = repos
+    .filter((repo) => row.name.startsWith(containerNamePrefix(repo)))
+    .sort((a, b) => containerNamePrefix(b).length - containerNamePrefix(a).length);
+  for (const repo of candidates) {
+    const parsed = parseContainerName(row.name, repo);
+    if (parsed === undefined) continue;
+    return {
+      name: row.name,
+      repoFullName: repo,
+      issue: parsed.issue,
+      purpose: parsed.purpose,
+      status: row.status,
+      truncated: parsed.truncated,
+    };
   }
-  if (bestRepo === undefined) return undefined;
-  const parsed = parseContainerName(row.name, bestRepo);
-  if (parsed === undefined) return undefined;
-  return {
-    name: row.name,
-    repoFullName: bestRepo,
-    issue: parsed.issue,
-    purpose: parsed.purpose,
-    status: row.status,
-    truncated: parsed.truncated,
-  };
+  return undefined;
 }
 
 /**
