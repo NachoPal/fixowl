@@ -19,9 +19,10 @@ inputs:
     default: ""
   agent:
     description: >-
-      Agent adapter to run (claude, aider). "script" is test-only: it executes
-      issue bodies as shell and is refused unless FIXOWL_UNSAFE_SCRIPT_AGENT=1
-      is set in the workflow env.
+      Agent adapter to run (claude, aider, codex). codex authenticates via
+      OPENAI_API_KEY, opted in with agent-env or `agents.codex.env` in config.
+      "script" is test-only: it executes issue bodies as shell and is refused
+      unless FIXOWL_UNSAFE_SCRIPT_AGENT=1 is set in the workflow env.
     required: false
     default: claude
   agent-env:

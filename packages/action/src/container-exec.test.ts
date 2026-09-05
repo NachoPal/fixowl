@@ -1,3 +1,4 @@
+import { getAgentAdapter } from "@fixowl/core";
 import { describe, expect, it } from "vitest";
 import { containerName, DockerEngine, dockerBuildArgv, dockerRunArgv } from "./container-exec.ts";
 import type { ContainerRunSpec, Exec, ExecOptions, ExecResult } from "./deps.ts";
@@ -155,6 +156,67 @@ describe("DockerEngine non-root injection", () => {
     const engine = new DockerEngine(exec, silentLog, () => undefined);
     await engine.run(baseSpec);
     expect(runArgv).not.toContain("--user");
+  });
+});
+
+// Drives the real codex adapter through the real DockerEngine against a fake
+// Exec, so the whole path - argv, the OPENAI_API_KEY allowlist, and the prompt
+// on stdin - is exercised without ever invoking the paid codex binary.
+async function runCodex(envOverride?: readonly string[], secrets?: Record<string, string>) {
+  const adapter = getAgentAdapter("codex", envOverride);
+  let runArgv: string[] = [];
+  let runOptions: ExecOptions | undefined;
+  const exec: Exec = {
+    run(argv: readonly string[], options?: ExecOptions): Promise<ExecResult> {
+      if (argv[1] === "run") {
+        runArgv = [...argv];
+        runOptions = options;
+      }
+      return Promise.resolve(ok());
+    },
+  };
+  const engine = new DockerEngine(exec, silentLog, () => "501:20");
+  await engine.run({
+    image: "fixowl-target:abc123",
+    argv: adapter.argv("fix", { model: "gpt-5-codex", effort: "high" }),
+    name: "fixowl-7-agent",
+    workspaceDir: "/work/space",
+    env: secrets,
+    stdin: "Fix issue #7.",
+  });
+  return { adapter, runArgv, runOptions };
+}
+
+describe("codex adapter end-to-end plumbing (no live codex)", () => {
+  it("builds `docker run … codex exec …` with the prompt piped on stdin", async () => {
+    const { runArgv, runOptions } = await runCodex(["OPENAI_API_KEY"], {
+      OPENAI_API_KEY: "sk-secret",
+    });
+    const joined = runArgv.join(" ");
+    expect(joined).toContain(
+      "codex exec --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox --ephemeral -C /workspace -m gpt-5-codex -c model_reasoning_effort=high",
+    );
+    // The prompt rides stdin, never the argv.
+    expect(runArgv).toContain("-i");
+    expect(runOptions?.stdin).toBe("Fix issue #7.");
+    expect(joined).not.toContain("Fix issue #7.");
+  });
+
+  it("passes OPENAI_API_KEY by NAME only when the operator opts it in", async () => {
+    const { runArgv } = await runCodex(["OPENAI_API_KEY"], { OPENAI_API_KEY: "sk-secret" });
+    expect(runArgv).toContain("-e");
+    expect(runArgv).toContain("OPENAI_API_KEY");
+    // The secret value never appears in the argv.
+    expect(runArgv.join(" ")).not.toContain("sk-secret");
+  });
+
+  it("gates the container env: nothing enters unless it is on the allowlist", async () => {
+    // Default codex allowlist is empty, so no agent secret is plumbed in.
+    const { adapter, runArgv } = await runCodex(undefined, undefined);
+    expect(adapter.env).toEqual([]);
+    expect(runArgv).not.toContain("OPENAI_API_KEY");
+    // A GitHub credential can never be opted in, structurally.
+    expect(() => getAgentAdapter("codex", ["GITHUB_TOKEN"])).toThrow(/never holds a GitHub token/);
   });
 });
 

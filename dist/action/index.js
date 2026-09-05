@@ -49508,6 +49508,7 @@ function containerName(repoFullName, issueNumber, purpose) {
 
 // packages/core/src/agent-adapters.ts
 var PROMPT_MOUNT_PATH = "/fixowl/prompt.md";
+var WORKSPACE_MOUNT_PATH = "/workspace";
 var claude = {
   name: "claude",
   env: ["CLAUDE_CODE_OAUTH_TOKEN"],
@@ -49543,6 +49544,33 @@ var aider = {
     ...selection?.effort !== void 0 ? ["--reasoning-effort", selection.effort] : []
   ]
 };
+var codex = {
+  name: "codex",
+  // Deliberately empty, exactly like aider: codex needs a paid credential, so
+  // the operator opts one in explicitly via config, e.g.
+  // `agents: { codex: { env: [OPENAI_API_KEY] } }`. This is the API-key auth
+  // path; the ChatGPT/Codex subscription is a separate, file-based credential
+  // that does not ride the env allowlist and is not supported yet.
+  env: [],
+  promptVia: "stdin",
+  // `codex exec` is the non-interactive mode; with no positional prompt it reads
+  // instructions from stdin. The container is the sandbox, so we disable codex's
+  // own approval prompts and sandbox (which would fight `--cap-drop ALL`), and
+  // fixowl moves `.git` out of the tree, so codex must tolerate a git-less root.
+  // `--ephemeral` keeps codex from persisting session/rollout files. Reasoning
+  // effort has no dedicated flag; it is a config override (`-c`).
+  argv: (_mode, selection) => [
+    "codex",
+    "exec",
+    "--skip-git-repo-check",
+    "--dangerously-bypass-approvals-and-sandbox",
+    "--ephemeral",
+    "-C",
+    WORKSPACE_MOUNT_PATH,
+    ...selection?.model !== void 0 ? ["-m", selection.model] : [],
+    ...selection?.effort !== void 0 ? ["-c", `model_reasoning_effort=${selection.effort}`] : []
+  ]
+};
 var SCRIPT_EXTRACT_AND_RUN = `awk '/^<untrusted-issue-body>$/{f=1;next} /^<\\/untrusted-issue-body>$/{f=0} f' ${PROMPT_MOUNT_PATH} | bash`;
 var script = {
   name: "script",
@@ -49550,7 +49578,7 @@ var script = {
   promptVia: "file",
   argv: () => ["bash", "-c", SCRIPT_EXTRACT_AND_RUN]
 };
-var ADAPTERS = { claude, aider, script };
+var ADAPTERS = { claude, aider, codex, script };
 var FORBIDDEN_AGENT_ENV = [
   "FIXOWL_GITHUB_TOKEN",
   "GITHUB_TOKEN",
@@ -49726,6 +49754,20 @@ var AGENT_MODEL_CATALOG = {
       { id: "haiku", description: "aider alias for the latest Anthropic Haiku." }
     ],
     efforts: ["low", "medium", "high"]
+  },
+  // codex (`codex exec`): `-m` takes a model id and reasoning effort is set via
+  // `-c model_reasoning_effort=<level>`. The real model list is server-provided
+  // per account; the ids below are the publicly-known codex family and a safe
+  // starting point - extend it with any model your OPENAI_API_KEY can reach.
+  // Not every model accepts every effort level; codex rejects an unsupported
+  // combination at run time.
+  codex: {
+    models: [
+      { id: "gpt-5-codex", description: "Codex-optimized GPT-5; a good default." },
+      { id: "gpt-5.1-codex", description: "Newer codex model." },
+      { id: "gpt-5.1-codex-max", description: "Highest-capability codex model." }
+    ],
+    efforts: ["minimal", "low", "medium", "high", "xhigh"]
   }
 };
 function agentCatalogEntry(agent) {
@@ -50085,7 +50127,7 @@ function guardScheduledSlot(params) {
 }
 
 // packages/action/src/container-exec.ts
-var WORKSPACE_MOUNT_PATH = "/workspace";
+var WORKSPACE_MOUNT_PATH2 = "/workspace";
 var CONTAINER_HOME = "/tmp";
 function hostContainerUser() {
   if (typeof process.getuid !== "function" || typeof process.getgid !== "function") {
@@ -50112,9 +50154,9 @@ function dockerRunArgv(spec) {
   if (spec.user !== void 0) argv.push("--user", spec.user);
   argv.push(
     "-v",
-    `${spec.workspaceDir}:${WORKSPACE_MOUNT_PATH}${spec.workspaceReadOnly ? ":ro" : ""}`,
+    `${spec.workspaceDir}:${WORKSPACE_MOUNT_PATH2}${spec.workspaceReadOnly ? ":ro" : ""}`,
     "-w",
-    WORKSPACE_MOUNT_PATH
+    WORKSPACE_MOUNT_PATH2
   );
   if (spec.homeDir !== void 0) argv.push("-e", `HOME=${spec.homeDir}`);
   if (spec.stdin !== void 0) argv.push("-i");

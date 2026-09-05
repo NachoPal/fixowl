@@ -41,7 +41,7 @@ In the morning you review. **fixowl never merges.**
   own required CI - not the local `.fixowl.yml` checks, which now run only as a
   cheap pre-filter - is the authority that flips it to ready-for-review in a
   bounded fix loop. See [docs/ci-fix-loop.md](docs/ci-fix-loop.md).
-- **Agent-agnostic**: adapters for `claude` (default), `aider`, and a
+- **Agent-agnostic**: adapters for `claude` (default), `aider`, `codex`, and a
   deterministic `script` adapter used for e2e tests (test-only: it executes
   issue bodies as shell, so the action refuses it without an explicit
   `FIXOWL_UNSAFE_SCRIPT_AGENT=1` opt-in). Adding one is a few lines in
@@ -133,6 +133,7 @@ defaults:
   effort: medium                          # default reasoning effort
 agents:
   claude: { env: [CLAUDE_CODE_OAUTH_TOKEN] }   # the ONLY env vars agents ever see
+  # codex:  { env: [OPENAI_API_KEY] }          # opt an agent's paid key in explicitly (see below)
 repos:
   - name: you/your-app
     schedule: "30 1 * * *"                # per-repo override
@@ -164,6 +165,32 @@ then each gets a model and an effort - and `fixowl validate` rejects any
 unknown value. For
 `claude`, models are aliases like `opus`/`sonnet`/`haiku`/`fable` and efforts
 are `low`/`medium`/`high`/`xhigh`/`max` (both passed as `--model`/`--effort`).
+
+### Using codex
+
+`codex` runs OpenAI's Codex CLI (`codex exec`) headlessly in the same per-issue
+container. Like `aider`, it holds no credential by default: you opt its API key
+into the allowlist explicitly, so no repo starts spending by accident:
+
+```yaml
+agents:
+  codex: { env: [OPENAI_API_KEY] }   # authenticates codex via the OpenAI API
+```
+
+`OPENAI_API_KEY` then rides the same default-deny env allowlist every other
+adapter uses (its value never appears in any argv). Models seed as the
+`gpt-5-codex` family (`gpt-5-codex`, `gpt-5.1-codex`, `gpt-5.1-codex-max`) and
+efforts are `minimal`/`low`/`medium`/`high`/`xhigh`; codex takes `-m <model>`
+and maps effort to `-c model_reasoning_effort=<level>`. The real model list is
+server-provided per account - extend the catalog
+(`packages/core/src/agent-catalog.ts`) with any model your key can reach, and
+note that not every model accepts every effort level.
+
+> **API key only, for now.** This is the OpenAI **API-key** path (billed as API
+> usage). Authenticating codex with a **ChatGPT/Codex subscription** is a
+> separate, deferred path: that credential is a refreshable OAuth token *file*
+> rather than a single env var, so it does not fit the "only allowlisted env
+> vars enter the container" model and is not supported yet.
 
 ### Run budgets
 
