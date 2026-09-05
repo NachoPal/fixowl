@@ -1,0 +1,210 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 1088" width="1200" height="1088" role="img" aria-labelledby="t d">
+  <title id="t">How fixowl orders the night's issues</title>
+  <desc id="d">A top-to-bottom pipeline showing fixowl's two-layer "double ordering" for one example night. Start: six selected overnight-labeled issues (#12, #15, #18, #21, #23, #40). Layer 1 (prereq-planner.ts) reads native GitHub blocked-by edges, which are authoritative: #18 is blocked-by #15 and both ship tonight, so #15 is ordered first and #18 stacks under it; #21 is blocked-by #7 which is not in tonight's set, so #21 is deferred with no PR and the reason is logged in the night summary; #12, #23 and #40 have no edges and pass straight through. Layer 2 (classify.ts) is a same-file conflict heuristic run over the survivors: it groups #12 and #23 because they touch the same files, and predicts #15, #18 and #40 are independent. Merge (merge-graph.ts) overlays Layer 1 onto Layer 2 under the rule "prerequisites always win": chain 1 is [#12 then #23] from the same-file group, chain 2 is [#15 then #18] because the blocked-by edge forces the stack even though the heuristic had split them, chain 3 is [#40] alone, and #21 stays deferred. Finally the main.ts stacking loop turns each chain into stacked PRs: within a chain each issue is fixed one at a time and each PR targets the previous issue's branch instead of the default branch (PR #23 targets issue/12, PR #18 targets issue/15), while the first PR of every chain targets the default branch main. One PR per issue; fixowl never merges.</desc>
+
+  <style>
+    .bg     { fill: #0a0f1e; }
+    .band   { fill: #101a33; }
+    .chip   { fill: #16203a; stroke: #2b3a5c; stroke-width: 1.5; }
+    .prbox  { fill: #16203a; stroke: #2b3a5c; stroke-width: 1.5; }
+    .base   { fill: #0d1730; stroke: #33456e; stroke-width: 1.5; }
+    .ghost  { fill: none; stroke: #4a5a7a; stroke-width: 1.5; stroke-dasharray: 4 4; }
+    .defbox { fill: #241a10; stroke: #7c5a2e; stroke-width: 1.5; }
+    .defchip{ fill: #241a10; stroke: #7c5a2e; stroke-width: 1.5; }
+    .callout{ fill: #1a1730; stroke: #4a3a6e; stroke-width: 1.5; }
+    .hgroup { fill: none; stroke: #60a5fa; stroke-width: 1.5; stroke-dasharray: 5 4; }
+    .divide { stroke: #2c3d5e; stroke-width: 1.5; stroke-dasharray: 3 6; }
+
+    .ttl    { font: 700 21px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #f2ede3; }
+    .sub    { font: 400 14px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #9fb0cc; }
+    .bandt  { font: 700 13px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #a78bfa; letter-spacing: 1.6px; }
+    .rail   { font: 400 13px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #9fb0cc; }
+    .l1     { font: 600 14px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #dbe4f0; }
+    .l2     { font: 400 13px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #9fb0cc; }
+    .l3     { font: 400 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #7b8ca8; }
+    .chipt  { font: 700 15px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #f2ede3; }
+    .mono   { font: 400 12.5px ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; fill: #c4b5fd; }
+    .mono2  { font: 400 11.5px ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; fill: #8fa3c4; }
+    .green  { font: 600 13px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #4ade80; }
+    .greenm { font: 600 11px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fill: #4ade80; }
+    .amber  { font: 700 14px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #f59e0b; }
+    .amber2 { font: 400 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #e0b070; }
+    .purpT  { font: 600 12.5px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #c4b5fd; }
+    .blueT  { font: 600 12.5px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #93c5fd; }
+
+    .ap { stroke: #a78bfa; stroke-width: 2.5; fill: none; marker-end: url(#ap); }
+    .ab { stroke: #60a5fa; stroke-width: 2.5; fill: none; marker-end: url(#ab); stroke-dasharray: 6 4; }
+    .ag { stroke: #4ade80; stroke-width: 2.5; fill: none; marker-end: url(#ag); }
+    .aa { stroke: #f59e0b; stroke-width: 2.5; fill: none; marker-end: url(#aa); stroke-dasharray: 6 4; }
+    .an { stroke: #8fa3c4; stroke-width: 2.5; fill: none; marker-end: url(#an); }
+  </style>
+
+  <defs>
+    <marker id="ap" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 z" fill="#a78bfa"/></marker>
+    <marker id="ab" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 z" fill="#60a5fa"/></marker>
+    <marker id="ag" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 z" fill="#4ade80"/></marker>
+    <marker id="aa" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 z" fill="#f59e0b"/></marker>
+    <marker id="an" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 z" fill="#8fa3c4"/></marker>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1200" height="1088" rx="18"/>
+
+  <!-- header -->
+  <text class="ttl" x="40" y="46">How fixowl orders the night's issues</text>
+  <text class="sub" x="40" y="70">Two layers of pure planning turn the night's issues into stacked-PR chains. Numbers below are an illustrative example.</text>
+
+  <!-- legend -->
+  <rect class="band" x="20" y="88" width="1160" height="44" rx="10"/>
+  <line class="ap" x1="40" y1="110" x2="80" y2="110"/>
+  <text class="l2" x="88" y="114">prerequisite · blocked-by (hard)</text>
+  <line class="ab" x1="330" y1="110" x2="370" y2="110"/>
+  <text class="l2" x="378" y="114">same-file group (heuristic)</text>
+  <line class="ag" x1="620" y1="110" x2="660" y2="110"/>
+  <text class="l2" x="668" y="114">PR targets previous branch</text>
+  <rect class="defchip" x="905" y="100" width="20" height="20" rx="5"/>
+  <text class="l2" x="933" y="114">deferred → retried next night</text>
+
+  <!-- ============ BAND 1: SELECTED ============ -->
+  <rect class="band" x="20" y="144" width="1160" height="96" rx="12"/>
+  <text class="bandt" x="40" y="182">SELECTED</text>
+  <text class="rail"  x="40" y="204">tonight's issues</text>
+  <text class="rail"  x="40" y="222">labeled overnight</text>
+
+  <rect class="chip" x="267" y="177" width="66" height="38" rx="9"/><text class="chipt" x="300" y="201" text-anchor="middle">#12</text>
+  <rect class="chip" x="397" y="177" width="66" height="38" rx="9"/><text class="chipt" x="430" y="201" text-anchor="middle">#15</text>
+  <rect class="chip" x="527" y="177" width="66" height="38" rx="9"/><text class="chipt" x="560" y="201" text-anchor="middle">#18</text>
+  <rect class="chip" x="657" y="177" width="66" height="38" rx="9"/><text class="chipt" x="690" y="201" text-anchor="middle">#21</text>
+  <rect class="chip" x="787" y="177" width="66" height="38" rx="9"/><text class="chipt" x="820" y="201" text-anchor="middle">#23</text>
+  <rect class="chip" x="917" y="177" width="66" height="38" rx="9"/><text class="chipt" x="950" y="201" text-anchor="middle">#40</text>
+  <text class="l2" x="1160" y="201" text-anchor="end">6 selected, capped per repo</text>
+
+  <!-- ============ BAND 2: LAYER 1 ============ -->
+  <rect class="band" x="20" y="252" width="1160" height="206" rx="12"/>
+  <text class="bandt" x="40" y="290">LAYER 1</text>
+  <text class="rail"  x="40" y="312">native blocked-by</text>
+  <text class="rail"  x="40" y="330">edges (authoritative)</text>
+  <text class="mono2" x="40" y="352">prereq-planner.ts</text>
+
+  <!-- prereq edge -->
+  <rect class="chip" x="307" y="293" width="66" height="38" rx="9"/><text class="chipt" x="340" y="317" text-anchor="middle">#15</text>
+  <rect class="chip" x="527" y="293" width="66" height="38" rx="9"/><text class="chipt" x="560" y="317" text-anchor="middle">#18</text>
+  <line class="ap" x1="377" y1="312" x2="523" y2="312"/>
+  <text class="purpT" x="450" y="303" text-anchor="middle">prerequisite</text>
+  <text class="l2"    x="450" y="352" text-anchor="middle">#18 blocked-by #15 → order #15, then #18</text>
+
+  <!-- no-edge pass-through -->
+  <rect class="chip" x="297" y="386" width="66" height="38" rx="9"/><text class="chipt" x="330" y="410" text-anchor="middle">#12</text>
+  <rect class="chip" x="397" y="386" width="66" height="38" rx="9"/><text class="chipt" x="430" y="410" text-anchor="middle">#23</text>
+  <rect class="chip" x="497" y="386" width="66" height="38" rx="9"/><text class="chipt" x="530" y="410" text-anchor="middle">#40</text>
+  <text class="l2" x="430" y="446" text-anchor="middle">no blocked-by edges → pass straight through</text>
+
+  <!-- divider -->
+  <line class="divide" x1="735" y1="276" x2="735" y2="440"/>
+
+  <!-- deferred case -->
+  <text class="amber" x="770" y="300">DEFERRED</text>
+  <rect class="defchip" x="812" y="314" width="66" height="38" rx="9"/><text class="amber" x="845" y="338" text-anchor="middle">#21</text>
+  <line class="aa" x1="882" y1="333" x2="976" y2="333"/>
+  <text class="amber2" x="929" y="323" text-anchor="middle">blocked-by</text>
+  <rect class="ghost" x="980" y="314" width="80" height="38" rx="9"/><text class="l2" x="1020" y="330" text-anchor="middle">#7</text><text class="mono2" x="1020" y="345" text-anchor="middle">not tonight</text>
+  <rect class="defbox" x="770" y="366" width="380" height="66" rx="10"/>
+  <text class="amber"  x="786" y="392">#21 deferred - not shipping tonight</text>
+  <text class="amber2" x="786" y="414">no PR attempted; reason logged in the night summary</text>
+
+  <!-- ============ BAND 3: LAYER 2 ============ -->
+  <rect class="band" x="20" y="470" width="1160" height="150" rx="12"/>
+  <text class="bandt" x="40" y="508">LAYER 2</text>
+  <text class="rail"  x="40" y="530">same-file conflict</text>
+  <text class="rail"  x="40" y="548">heuristic</text>
+  <text class="mono2" x="40" y="570">classify.ts</text>
+
+  <text class="l3" x="395" y="504" text-anchor="middle">runs only over the survivors (#21 is gone)</text>
+
+  <!-- same-file group -->
+  <rect class="hgroup" x="298" y="524" width="196" height="54" rx="12"/>
+  <rect class="chip" x="315" y="532" width="66" height="38" rx="9"/><text class="chipt" x="348" y="556" text-anchor="middle">#12</text>
+  <rect class="chip" x="411" y="532" width="66" height="38" rx="9"/><text class="chipt" x="444" y="556" text-anchor="middle">#23</text>
+  <text class="blueT" x="396" y="596" text-anchor="middle">same files → one group</text>
+
+  <!-- singletons -->
+  <rect class="chip" x="577" y="532" width="66" height="38" rx="9"/><text class="chipt" x="610" y="556" text-anchor="middle">#15</text>
+  <rect class="chip" x="687" y="532" width="66" height="38" rx="9"/><text class="chipt" x="720" y="556" text-anchor="middle">#18</text>
+  <rect class="chip" x="797" y="532" width="66" height="38" rx="9"/><text class="chipt" x="830" y="556" text-anchor="middle">#40</text>
+  <text class="blueT" x="665" y="596" text-anchor="middle">heuristic: #15 and #18 look independent</text>
+
+  <text class="l2" x="940" y="548">prediction only - may be wrong;</text>
+  <text class="l2" x="940" y="566">prerequisites override it next →</text>
+
+  <!-- ============ BAND 4: MERGE ============ -->
+  <rect class="band" x="20" y="632" width="1160" height="166" rx="12"/>
+  <text class="bandt" x="40" y="670">MERGE</text>
+  <text class="rail"  x="40" y="692">prerequisites</text>
+  <text class="rail"  x="40" y="710">always win</text>
+  <text class="mono2" x="40" y="732">merge-graph.ts</text>
+
+  <!-- chain 1 -->
+  <text class="l3" x="405" y="664" text-anchor="middle">chain 1 · same-file</text>
+  <rect class="chip" x="307" y="671" width="66" height="38" rx="9"/><text class="chipt" x="340" y="695" text-anchor="middle">#12</text>
+  <rect class="chip" x="437" y="671" width="66" height="38" rx="9"/><text class="chipt" x="470" y="695" text-anchor="middle">#23</text>
+  <line class="an" x1="377" y1="690" x2="433" y2="690"/><text class="l3" x="405" y="682" text-anchor="middle">then</text>
+
+  <!-- chain 3 -->
+  <text class="l3" x="620" y="664" text-anchor="middle">chain 3 · independent</text>
+  <rect class="chip" x="587" y="671" width="66" height="38" rx="9"/><text class="chipt" x="620" y="695" text-anchor="middle">#40</text>
+
+  <!-- deferred set-aside -->
+  <text class="amber2" x="1000" y="664" text-anchor="middle">deferred</text>
+  <rect class="defchip" x="967" y="671" width="66" height="38" rx="9"/><text class="amber" x="1000" y="695" text-anchor="middle">#21</text>
+  <text class="l3" x="1000" y="726" text-anchor="middle">set aside</text>
+
+  <!-- chain 2 (prereq forced) -->
+  <text class="l3" x="405" y="736" text-anchor="middle">chain 2 · prerequisite</text>
+  <rect class="chip" x="307" y="743" width="66" height="38" rx="9"/><text class="chipt" x="340" y="767" text-anchor="middle">#15</text>
+  <rect class="chip" x="437" y="743" width="66" height="38" rx="9"/><text class="chipt" x="470" y="767" text-anchor="middle">#18</text>
+  <line class="ap" x1="377" y1="762" x2="433" y2="762"/><text class="purpT" x="405" y="754" text-anchor="middle">then</text>
+  <rect class="callout" x="545" y="742" width="430" height="40" rx="8"/>
+  <text class="purpT" x="562" y="766">prereq forces this stack - the heuristic had split #15 and #18</text>
+
+  <!-- ============ BAND 5: STACK & SHIP ============ -->
+  <rect class="band" x="20" y="810" width="1160" height="258" rx="12"/>
+  <text class="bandt" x="40" y="848">STACK &amp; SHIP</text>
+  <text class="rail"  x="40" y="870">one PR per issue,</text>
+  <text class="rail"  x="40" y="888">each targets the</text>
+  <text class="rail"  x="40" y="906">previous branch</text>
+  <text class="mono2" x="40" y="928">main.ts loop</text>
+  <text class="green" x="40" y="952">fixowl never merges</text>
+
+  <!-- ladder A: chain 1 -->
+  <text class="l3" x="360" y="890" text-anchor="middle">chain 1</text>
+  <rect class="prbox" x="285" y="898" width="150" height="42" rx="9"/>
+  <text class="chipt" x="360" y="917" text-anchor="middle">PR #23</text><text class="mono2" x="360" y="933" text-anchor="middle">base: issue/12</text>
+  <line class="ag" x1="360" y1="940" x2="360" y2="962"/><text class="greenm" x="368" y="956">targets</text>
+  <rect class="prbox" x="285" y="964" width="150" height="42" rx="9"/>
+  <text class="chipt" x="360" y="983" text-anchor="middle">PR #12</text><text class="mono2" x="360" y="999" text-anchor="middle">base: main</text>
+  <line class="ag" x1="360" y1="1006" x2="360" y2="1028"/><text class="greenm" x="368" y="1022">targets</text>
+  <rect class="base" x="285" y="1030" width="150" height="30" rx="8"/><text class="l1" x="360" y="1050" text-anchor="middle">main · default</text>
+
+  <!-- ladder B: chain 2 -->
+  <text class="l3" x="640" y="890" text-anchor="middle">chain 2</text>
+  <rect class="prbox" x="565" y="898" width="150" height="42" rx="9"/>
+  <text class="chipt" x="640" y="917" text-anchor="middle">PR #18</text><text class="mono2" x="640" y="933" text-anchor="middle">base: issue/15</text>
+  <line class="ag" x1="640" y1="940" x2="640" y2="962"/><text class="greenm" x="648" y="956">targets</text>
+  <rect class="prbox" x="565" y="964" width="150" height="42" rx="9"/>
+  <text class="chipt" x="640" y="983" text-anchor="middle">PR #15</text><text class="mono2" x="640" y="999" text-anchor="middle">base: main</text>
+  <line class="ag" x1="640" y1="1006" x2="640" y2="1028"/><text class="greenm" x="648" y="1022">targets</text>
+  <rect class="base" x="565" y="1030" width="150" height="30" rx="8"/><text class="l1" x="640" y="1050" text-anchor="middle">main · default</text>
+
+  <!-- ladder C: chain 3 -->
+  <text class="l3" x="880" y="890" text-anchor="middle">chain 3</text>
+  <rect class="prbox" x="805" y="964" width="150" height="42" rx="9"/>
+  <text class="chipt" x="880" y="983" text-anchor="middle">PR #40</text><text class="mono2" x="880" y="999" text-anchor="middle">base: main</text>
+  <line class="ag" x1="880" y1="1006" x2="880" y2="1028"/><text class="greenm" x="888" y="1022">targets</text>
+  <rect class="base" x="805" y="1030" width="150" height="30" rx="8"/><text class="l1" x="880" y="1050" text-anchor="middle">main · default</text>
+
+  <!-- deferred summary -->
+  <rect class="defbox" x="1005" y="898" width="150" height="108" rx="10"/>
+  <text class="amber"  x="1080" y="924" text-anchor="middle">#21 deferred</text>
+  <text class="amber2" x="1080" y="948" text-anchor="middle">no PR tonight</text>
+  <text class="amber2" x="1080" y="970" text-anchor="middle">retried next night</text>
+  <text class="amber2" x="1080" y="990" text-anchor="middle">once unblocked</text>
+</svg>

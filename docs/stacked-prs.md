@@ -25,6 +25,15 @@ Each stacked PR carries a banner: `Stacked on #<parent> - merge that first.`
    split its groups to respect a `blocked-by` edge, and a prerequisite forces
    stacking even if the heuristic called two issues independent.
 
+![How fixowl orders one example night. The night's selected issues (#12, #15, #18, #21, #23, #40) flow through two layers of pure planning. Layer 1 (prereq-planner.ts) reads native GitHub blocked-by edges, which are authoritative: #18 is blocked-by #15 and both ship tonight, so #15 is ordered first and #18 stacks under it; #21 is blocked-by #7 which is not in tonight's set, so #21 is deferred with no PR and its reason is logged in the night summary; #12, #23 and #40 have no edges and pass through. Layer 2 (classify.ts) is a same-file conflict heuristic over the survivors: it groups #12 and #23 because they touch the same files and predicts #15, #18 and #40 are independent. The merge (merge-graph.ts) overlays Layer 1 onto Layer 2 under "prerequisites always win": chain 1 is #12 then #23, chain 2 is #15 then #18 because the blocked-by edge forces the stack even though the heuristic split them, chain 3 is #40 alone, and #21 stays deferred. Finally the main.ts stacking loop turns each chain into stacked PRs: within a chain each PR targets the previous issue's branch (PR #23 targets issue/12, PR #18 targets issue/15) and the first PR of every chain targets the default branch main. One PR per issue; fixowl never merges.](../assets/issue-ordering.svg)
+
+*The two-layer "double ordering": Layer 1 (`blocked-by`, authoritative) defers
+what cannot ship and orders the rest; Layer 2 groups same-file issues; the two
+merge into chains under "prerequisites always win", and each chain's PRs stack on
+the previous branch. Numbers are illustrative. The behavior lives in
+`packages/action/src/{prereq-planner,classify,merge-graph,main}.ts` and is
+summarized in [AGENTS.md](../AGENTS.md) under "Night planning".*
+
 The rest of this doc applies to any stack, however it was formed.
 
 ## The happy path
