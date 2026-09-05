@@ -47,6 +47,8 @@ describe("resolveRepoSettings", () => {
       labels: { any: ["overnight"] },
       agent: "claude",
       maxIssuesPerRun: 4,
+      usageBudgetPercent: undefined,
+      runBudgetMinutes: undefined,
       issueTimeoutMinutes: 45,
       ciMaxTries: 3,
       ciTimeoutMinutes: 60,
@@ -81,6 +83,35 @@ describe("resolveRepoSettings", () => {
     expect(
       resolveRepoSettings(repoOverride, "NachoPal/storyengine").heuristicConflictOrdering,
     ).toBe(false);
+  });
+
+  it("resolves run-budget fields: repo > defaults, and undefined (opted out) when unset", () => {
+    // Unset everywhere: no built-in fallback, so the usage/wall-clock axes opt out.
+    const bare = resolveRepoSettings(
+      globalConfigSchema.parse(minimalConfig),
+      "NachoPal/storyengine",
+    );
+    expect(bare.usageBudgetPercent).toBeUndefined();
+    expect(bare.runBudgetMinutes).toBeUndefined();
+
+    // Inherited from defaults, then overridden per-repo.
+    const config = globalConfigSchema.parse({
+      ...minimalConfig,
+      defaults: { usage_budget_percent: 80, run_budget_minutes: 200 },
+      repos: [{ name: "NachoPal/storyengine", usage_budget_percent: 60 }],
+    });
+    const settings = resolveRepoSettings(config, "NachoPal/storyengine");
+    expect(settings.usageBudgetPercent).toBe(60); // repo wins
+    expect(settings.runBudgetMinutes).toBe(200); // inherited from defaults
+  });
+
+  it("rejects a usage_budget_percent outside 0..100", () => {
+    expect(() =>
+      globalConfigSchema.parse({
+        ...minimalConfig,
+        repos: [{ name: "NachoPal/storyengine", usage_budget_percent: 150 }],
+      }),
+    ).toThrow();
   });
 
   it("prefers repo entry over defaults over built-ins", () => {

@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import type { Octokit } from "@octokit/rest";
 import {
   agentCatalogEntry,
+  FIXOWL_DEFAULTS,
   getAgentAdapter,
   repoFullNameSchema,
   type AgentCatalogEntry,
@@ -298,13 +299,17 @@ async function stepRepos(
 Step 3/4  Repositories
 ----------------------
 For each repo: which one, when the nightly run fires, which labels mark an
-issue as fixowl's, how many issues one night may take on, and which model the
+issue as fixowl's, the run budgets that stop the night (usage %, wall-clock,
+and an optional issue-count cap), the per-issue timeout, and which model the
 coding agent runs with.`);
 
   const repos: RepoAnswers[] = [];
   let lastSchedule = "02:37";
   let lastLabels = "overnight";
   let lastMaxIssues = "4";
+  let lastUsageBudget = String(FIXOWL_DEFAULTS.usageBudgetPercent);
+  let lastRunBudget = String(FIXOWL_DEFAULTS.runBudgetMinutes);
+  let lastIssueTimeout = String(FIXOWL_DEFAULTS.issueTimeoutMinutes);
 
   for (;;) {
     log.info(`\nRepo ${repos.length + 1}`);
@@ -330,10 +335,44 @@ coding agent runs with.`);
           parseLabels(value).length > 0 ? undefined : "at least one label is required",
       },
     );
-    const maxIssuesAnswer = await prompter.ask("  Max issues per night", {
-      default: lastMaxIssues,
-      validate: (value) => (/^[1-9]\d*$/.test(value) ? undefined : "enter a positive whole number"),
-    });
+    // Layered run-budget (issue #21): the night stops on the first condition
+    // that trips. Each is optional; a blank answer opts that axis out.
+    const usageBudgetAnswer = await prompter.ask(
+      "  Usage budget - stop the night at what % of the agent's usage window? (blank = no usage cap)",
+      {
+        default: lastUsageBudget,
+        validate: (value) =>
+          value.trim() === "" || isPercent(value)
+            ? undefined
+            : "enter a percent 0-100, or leave blank for no usage cap",
+      },
+    );
+    const runBudgetAnswer = await prompter.ask(
+      "  Graceful run budget - don't start a new issue after how many minutes? (blank = none)",
+      {
+        default: lastRunBudget,
+        validate: (value) =>
+          value.trim() === "" || /^[1-9]\d*$/.test(value.trim())
+            ? undefined
+            : "enter a positive whole number of minutes, or leave blank",
+      },
+    );
+    const maxIssuesAnswer = await prompter.ask(
+      "  Optional hard cap - max issues per night (secondary count cap)",
+      {
+        default: lastMaxIssues,
+        validate: (value) =>
+          /^[1-9]\d*$/.test(value) ? undefined : "enter a positive whole number",
+      },
+    );
+    const issueTimeoutAnswer = await prompter.ask(
+      "  Per-issue timeout in minutes (a stuck agent is killed after this)",
+      {
+        default: lastIssueTimeout,
+        validate: (value) =>
+          /^[1-9]\d*$/.test(value) ? undefined : "enter a positive whole number",
+      },
+    );
 
     const labels = parseLabels(labelsAnswer);
     const modelSelection = await stepModelSelection(
@@ -348,14 +387,26 @@ coding agent runs with.`);
       scheduleNote: schedule.note,
       labels,
       maxIssuesPerRun: Number(maxIssuesAnswer),
+      usageBudgetPercent: usageBudgetAnswer.trim() === "" ? undefined : Number(usageBudgetAnswer),
+      runBudgetMinutes: runBudgetAnswer.trim() === "" ? undefined : Number(runBudgetAnswer),
+      issueTimeoutMinutes: Number(issueTimeoutAnswer),
       ...modelSelection,
     });
     lastSchedule = scheduleAnswer;
     lastLabels = labelsAnswer;
     lastMaxIssues = maxIssuesAnswer;
+    lastUsageBudget = usageBudgetAnswer;
+    lastRunBudget = runBudgetAnswer;
+    lastIssueTimeout = issueTimeoutAnswer;
 
     if (!(await prompter.confirm("\nAdd another repo?", false))) return repos;
   }
+}
+
+/** True when the answer is a number in 0..100 (the usage-budget percent range). */
+function isPercent(value: string): boolean {
+  const parsed = Number(value.trim());
+  return Number.isFinite(parsed) && parsed >= 0 && parsed <= 100;
 }
 
 async function askRepoName(
@@ -655,8 +706,12 @@ defaults:
   schedule: "37 1 * * *"     # UTC; odd minute dodges GitHub's peak-time cron delays
   labels: { any: [overnight] }
   agent: claude
-  max_issues_per_run: 4
-  issue_timeout_minutes: 45
+  # Layered run-budget (issue #21): the night stops on the first condition that
+  # trips. Each is optional; delete/omit a line to opt that axis out.
+  max_issues_per_run: 4        # secondary cap: at most this many PRs ship
+  # usage_budget_percent: 85   # stop before a new issue once the usage window hits this %
+  # run_budget_minutes: 240    # graceful wall-clock: don't start a new issue after this long
+  issue_timeout_minutes: 45    # per-issue hard timeout (a stuck agent is killed)
   ci_max_tries: 3            # CI-gated fix loop: agent passes before a draft PR is left
   ci_timeout_minutes: 60     # minutes each pass waits for the base branch's required checks
   # model: sonnet            # default model when an issue has no selector label

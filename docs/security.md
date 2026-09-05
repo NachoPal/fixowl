@@ -125,7 +125,8 @@ The env allowlist is default-deny: an agent adapter (or the `agents:` config
 override) names exactly the env vars its container receives. Anything else,
 e.g. `ANTHROPIC_API_KEY` or `FAL_KEY` for a repo whose code has paid API
 paths, is structurally absent, so those paths fail closed inside the
-container. Each night is further bounded by `max_issues_per_run`, the
+container. Each night is further bounded by the layered run budgets (count,
+usage %, and graceful wall-clock; see the README "Run budgets" section), the
 per-issue timeout, and the agent's own turn limit.
 
 ## Runner posture

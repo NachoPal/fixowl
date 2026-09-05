@@ -31,7 +31,16 @@ const repoEntrySchema = z.object({
   schedule: cronSchema.optional(),
   labels: labelRuleSchema.optional(),
   agent: z.string().optional(),
+  /**
+   * Run-budget stop conditions (issue #21), each optional. The night stops on
+   * the first that trips; leaving one unset opts that axis out.
+   * `max_issues_per_run` is the kept secondary count cap.
+   */
   max_issues_per_run: z.number().int().positive().optional(),
+  /** Stop before starting a new issue once the agent's usage window hits this % (0..100). */
+  usage_budget_percent: z.number().min(0).max(100).optional(),
+  /** Graceful wall-clock: don't start a new issue after this many minutes of the run. */
+  run_budget_minutes: z.number().int().positive().optional(),
   issue_timeout_minutes: z.number().int().positive().optional(),
   /** Max agent passes in the CI-gated fix loop before a draft PR is left. */
   ci_max_tries: z.number().int().positive().optional(),
@@ -84,6 +93,10 @@ export const globalConfigSchema = z.object({
       labels: labelRuleSchema.optional(),
       agent: z.string().optional(),
       max_issues_per_run: z.number().int().positive().optional(),
+      /** Default usage-budget stop % for every repo (issue #21). */
+      usage_budget_percent: z.number().min(0).max(100).optional(),
+      /** Default graceful wall-clock stop, in minutes, for every repo (issue #21). */
+      run_budget_minutes: z.number().int().positive().optional(),
       issue_timeout_minutes: z.number().int().positive().optional(),
       /** Default CI-gated-loop try budget for any repo that does not set its own. */
       ci_max_tries: z.number().int().positive().optional(),
@@ -131,6 +144,16 @@ export const FIXOWL_DEFAULTS = {
   labels: { any: ["overnight"] } satisfies LabelRule,
   agent: "claude",
   maxIssuesPerRun: 4,
+  /**
+   * Starter run-budget values (issue #21), written into a fresh config by
+   * `fixowl init` and offered as the wizard's prefilled defaults. They are NOT a
+   * resolution fallback: an operator who leaves `usage_budget_percent` /
+   * `run_budget_minutes` unset opts that axis out (undefined), so a config
+   * written before this feature behaves exactly as it did. 240 min sits
+   * comfortably under the workflow's blunt `timeout-minutes: 300` ceiling.
+   */
+  usageBudgetPercent: 85,
+  runBudgetMinutes: 240,
   issueTimeoutMinutes: 45,
   /**
    * Layer 2 (heuristic same-files conflict-ordering) is off by default: fixowl
@@ -163,6 +186,13 @@ export interface ResolvedRepoSettings {
   labels: LabelRule;
   agent: string;
   maxIssuesPerRun: number;
+  /**
+   * Usage-budget stop % (issue #21), or undefined to opt the usage condition
+   * out. No built-in fallback, so an unset value stays undefined.
+   */
+  usageBudgetPercent: number | undefined;
+  /** Graceful wall-clock stop in minutes (issue #21), or undefined to opt out. */
+  runBudgetMinutes: number | undefined;
   issueTimeoutMinutes: number;
   /** Max agent passes in the CI-gated fix loop before leaving a draft PR. */
   ciMaxTries: number;
@@ -199,6 +229,11 @@ export function resolveRepoSettings(config: GlobalConfig, repoName: string): Res
     agent,
     maxIssuesPerRun:
       entry.max_issues_per_run ?? defaults.max_issues_per_run ?? FIXOWL_DEFAULTS.maxIssuesPerRun,
+    // Usage % and wall-clock have no built-in fallback: unset stays undefined
+    // (opted out), so a pre-#21 config is unchanged. The starter values live in
+    // FIXOWL_DEFAULTS only for `init` to write into a fresh config.
+    usageBudgetPercent: entry.usage_budget_percent ?? defaults.usage_budget_percent,
+    runBudgetMinutes: entry.run_budget_minutes ?? defaults.run_budget_minutes,
     issueTimeoutMinutes:
       entry.issue_timeout_minutes ??
       defaults.issue_timeout_minutes ??

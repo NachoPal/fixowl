@@ -126,6 +126,24 @@ See [docs/releasing.md](docs/releasing.md).
   `ci_timeout_minutes` (60) in `config-schema.ts`, propagated through
   `provision` -> `action.yml` inputs. See [docs/ci-fix-loop.md](docs/ci-fix-loop.md).
 
+- Run budgets (issue #21) bound the night with a set of independent,
+  each-optional stop conditions - count (`max_issues_per_run`), usage %
+  (`usage_budget_percent`), graceful wall-clock (`run_budget_minutes`) - and the
+  run stops on the first that trips. The trip/no-trip and first-trip-wins logic
+  is pure in `packages/core/src/run-budget.ts`; `main.ts` assembles the state
+  snapshot and evaluates it at two gates (pre-run, and between-issues at the top
+  of the inner loop). Keep the conditions pure and keep state assembly the only
+  I/O, so parallel chains (#36) only have to make the snapshot consistent. Usage
+  is read out-of-band on the host behind the model-agnostic `UsageReader`
+  (`agent-usage.ts`, selected by `getUsageReader(agentName)`); an agent with no
+  observable window returns `undefined` and opts out automatically, and a read
+  failure is advisory (abstains, never aborts the night). `usage_budget_percent`
+  and `run_budget_minutes` have no built-in resolution fallback (unset == opted
+  out), so a pre-#21 config is unchanged; the starter values in `FIXOWL_DEFAULTS`
+  are only what `fixowl init` writes. `max_issues_per_run` stays the count cap and
+  still bounds how many issues are selected/classified. See the README "Run
+  budgets" section.
+
 ## Maintaining this file
 
 Keep this file for knowledge useful to almost every future agent session in this
