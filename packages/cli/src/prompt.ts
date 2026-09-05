@@ -61,6 +61,18 @@ export function maskSecret(value: string): string {
     : `${head}… (${value.length} chars)`;
 }
 
+/**
+ * The line shown right after a masked prompt is submitted, confirming what
+ * happened without ever revealing the raw secret. Empty string means "say
+ * nothing" (the caller falls back to a bare newline), which only happens for
+ * an empty answer with no existing value to keep - that case gets its own
+ * "please paste a value" error instead of a false confirmation.
+ */
+export function secretConfirmation(raw: string, keeps: boolean): string {
+  if (raw === "") return keeps ? "✓ kept existing\n" : "";
+  return `✓ received ${maskSecret(raw)}\n`;
+}
+
 export function createPrompter(): Prompter {
   const output = new MutableOutput(process.stdout);
   const rl: ReadlineInterface = createInterface({
@@ -99,7 +111,7 @@ export function createPrompter(): Prompter {
       output.muted = true;
       const raw = (await rl.question("")).trim();
       output.muted = false;
-      write("\n");
+      write(secretConfirmation(raw, keeps) || "\n");
       if (raw === "" && keeps) return options.existing ?? "";
       const problem = raw === "" ? "please paste a value" : options.validate?.(raw);
       if (problem === undefined) return raw;
