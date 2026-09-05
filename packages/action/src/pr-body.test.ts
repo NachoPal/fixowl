@@ -91,15 +91,17 @@ describe("buildPrBody", () => {
         state: "failed",
         reason: "red",
         failures: [
-          { name: "build", summary: "boom", detailsUrl: "https://ci.test/run(1) [x](javascript:1)" },
+          {
+            name: "build",
+            summary: "boom",
+            detailsUrl: "https://ci.test/run(1) [x](javascript:1)",
+          },
         ],
       },
     });
     // The raw ')' and '(' must be percent-escaped, so the link target ends at
     // the encoded URL and nothing after it leaks out as markdown.
-    expect(body).toContain(
-      "[logs](https://ci.test/run%281%29%20%5Bx%5D%28javascript:1%29)",
-    );
+    expect(body).toContain("[logs](https://ci.test/run%281%29%20%5Bx%5D%28javascript:1%29)");
     expect(body).not.toContain("run(1) [x]");
   });
 
