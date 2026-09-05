@@ -63,6 +63,42 @@ A_ID=$(gh api "repos/$R/issues/$A" --jq .id)
 gh api -X POST "repos/$R/issues/$B/dependencies/blocked_by" -F issue_id="$A_ID" >/dev/null
 
 echo "seeded [$RUN_TAG] in $R: A=$A (blocker) B=$B (blocked_by A)"
+
+# Read-after-write race: GitHub's label-filtered issue list is eventually
+# consistent, so a just-created labeled issue can be absent from
+# `GET /issues?state=open&labels=for: agent` for a few seconds. That is the exact
+# query fixowl selects with (packages/action/src/entry.ts listOpenIssuesWithLabels,
+# minus pull requests). If the "Run fixowl" step fires into that lag it sees zero
+# matching issues -> "nothing to do tonight" -> no PR -> a false E2E failure.
+#
+# Block here (in the seed step, inherited by both tiers) until BOTH seeded issues
+# are visible to that exact query. Poll, never a fixed sleep, so we wait exactly as
+# long as the variable lag needs and no longer; bounded so a genuine problem still
+# fails loudly.
+WAIT_TIMEOUT_SECS="${SEED_WAIT_TIMEOUT_SECS:-60}"
+WAIT_INTERVAL_SECS="${SEED_WAIT_INTERVAL_SECS:-3}"
+deadline=$(( $(date +%s) + WAIT_TIMEOUT_SECS ))
+echo "waiting for issues $A and $B to be visible to the 'for: agent' selection query..."
+while :; do
+  # Same shape fixowl uses: state=open, labels="for: agent", drop pull requests.
+  visible=$(gh api -X GET "repos/$R/issues" \
+    -f state=open \
+    -f "labels=for: agent" \
+    -f per_page=100 \
+    --paginate \
+    --jq '.[] | select(.pull_request == null) | .number' 2>/dev/null | tr '\n' ' ')
+  if grep -qw "$A" <<<"$visible" && grep -qw "$B" <<<"$visible"; then
+    echo "both issues visible to the selection query: [$visible]"
+    break
+  fi
+  if [ "$(date +%s)" -ge "$deadline" ]; then
+    echo "ERROR: issues $A and $B not visible to 'for: agent' selection query after ${WAIT_TIMEOUT_SECS}s" >&2
+    echo "       last visible set: [$visible]" >&2
+    exit 1
+  fi
+  sleep "$WAIT_INTERVAL_SECS"
+done
+
 if [ -n "${GITHUB_OUTPUT:-}" ]; then
   {
     echo "A=$A"
