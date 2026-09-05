@@ -170,3 +170,21 @@ export interface ContainerEngine {
   /** Best-effort removal of stale images in `repository`, keeping `keepImage`; the runner host's disk is finite. */
   pruneImages?(repository: string, keepImage: string): Promise<void>;
 }
+
+export interface ArtifactUploader {
+  /**
+   * Upload one directory as a named workflow-run artifact, from within the action
+   * while the job is still running. Progressive per-issue upload (evidence on
+   * cancel) relies on this: an artifact finalized mid-job survives a later job
+   * cancellation, unlike the single end-of-job `upload-artifact` step, which a
+   * cancelled job never reaches - the self-hosted runner reconnects only after
+   * the job is already server-side "completed", so that upload 403s and all
+   * evidence is lost.
+   *
+   * Returns true when an artifact was created, false when there was nothing to
+   * upload (a missing or empty directory - e.g. an issue that never wrote
+   * evidence). Any real upload failure is thrown so the caller can log it; the
+   * caller keeps it best-effort and never lets it abort the night.
+   */
+  uploadDirectory(params: { name: string; dir: string }): Promise<boolean>;
+}

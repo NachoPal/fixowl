@@ -29,6 +29,7 @@ import { containerName } from "./container-exec.ts";
 import { mergeGraphs } from "./merge-graph.ts";
 import { planPrereqs, type DeferredIssue, type InFlightPrereq } from "./prereq-planner.ts";
 import type {
+  ArtifactUploader,
   ContainerEngine,
   ContainerMount,
   Exec,
@@ -37,6 +38,7 @@ import type {
   IssueLite,
   Logger,
 } from "./deps.ts";
+import { issueEvidenceArtifactName, issueEvidenceDir } from "./evidence.ts";
 import { extractGitDir, GitWorkspace, restoreGitDir } from "./git-ops.ts";
 import { filterAlreadyAttempted } from "./idempotency.ts";
 import { selectIssues } from "./issue-selection.ts";
@@ -117,6 +119,14 @@ export interface NightDeps {
    * bounded only by count + wall-clock.
    */
   httpJson?: (url: string, headers: Record<string, string>) => Promise<unknown>;
+  /**
+   * Progressive per-issue evidence upload (evidence on cancel). Each issue's
+   * evidence is uploaded as its own artifact right after it finishes, while the
+   * job is still running, so a later cancellation cannot lose the work already
+   * done. Undefined (the in-process tests) skips upload, leaving the end-of-job
+   * `upload-artifact` step as the only path - the pre-fix behavior.
+   */
+  artifacts?: ArtifactUploader;
 }
 
 export interface NightSummary {
@@ -427,6 +437,7 @@ async function runNightWithGit(
         );
       }
 
+      const evidenceDir = issueEvidenceDir(inputs.tempDir, issue.number);
       let result: IssueResult;
       try {
         result = await processIssue(
@@ -445,7 +456,7 @@ async function runNightWithGit(
             selection: resolution.selection,
             workspaceDir: inputs.workspaceDir,
             promptDir: join(inputs.tempDir, "fixowl-prompts"),
-            evidenceDir: join(inputs.tempDir, "fixowl-evidence", `issue-${issue.number}`),
+            evidenceDir,
             timeoutMs: inputs.issueTimeoutMinutes * 60 * 1000,
             ciMaxTries: inputs.ciMaxTries ?? FIXOWL_DEFAULTS.ciMaxTries,
             ciTimeoutMs: (inputs.ciTimeoutMinutes ?? FIXOWL_DEFAULTS.ciTimeoutMinutes) * 60 * 1000,
@@ -468,6 +479,11 @@ async function runNightWithGit(
         };
       }
       results.push(result);
+      // Progressive upload: this issue has finished, so its evidence is complete.
+      // Uploading it now - while the job is still genuinely running - is what
+      // makes it survive a later cancellation; the single end-of-job step never
+      // runs on a cancelled job (see NightDeps.artifacts).
+      await uploadIssueEvidence(deps, issue.number, evidenceDir);
       if (result.status === "pr-opened" && result.prNumber !== undefined) {
         // The next chain member stacks on this branch; failed members are skipped over.
         baseRef = branch;
@@ -486,6 +502,34 @@ async function runNightWithGit(
     budgetStop,
     warnings,
   };
+}
+
+/**
+ * Best-effort progressive upload of one finished issue's evidence as its own
+ * artifact. Runs while the job is still live so the evidence survives a later
+ * cancellation. A missing/empty dir uploads nothing (returns false); any upload
+ * failure is logged and swallowed - the end-of-job `upload-artifact` step is the
+ * fallback for the fully-successful case, and evidence loss must never abort the
+ * night. Injecting no `artifacts` (the in-process tests) skips upload entirely.
+ */
+async function uploadIssueEvidence(
+  deps: NightDeps,
+  issueNumber: number,
+  evidenceDir: string,
+): Promise<void> {
+  if (deps.artifacts === undefined) return;
+  const name = issueEvidenceArtifactName(issueNumber);
+  try {
+    const uploaded = await deps.artifacts.uploadDirectory({ name, dir: evidenceDir });
+    if (uploaded) {
+      deps.log.info(`issue #${issueNumber}: evidence uploaded as artifact "${name}"`);
+    }
+  } catch (error) {
+    deps.log.warn(
+      `issue #${issueNumber}: progressive evidence upload failed (${String(error)}); ` +
+        `the end-of-job artifact is the fallback`,
+    );
+  }
 }
 
 /**

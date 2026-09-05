@@ -9,6 +9,7 @@ import {
   type LabelRule,
   type RequiredChecks,
 } from "@fixowl/core";
+import { GitHubArtifactUploader } from "./artifact-upload.ts";
 import { DockerEngine } from "./container-exec.ts";
 import type { GitHubApi, IssueDeps, IssueLite, Logger, PullRequestLite } from "./deps.ts";
 import { renderSummary, runNight, wipeoutFailure } from "./main.ts";
@@ -409,6 +410,7 @@ async function run(): Promise<void> {
       exec: realExec,
       log,
       httpJson: fetchJson,
+      artifacts: new GitHubArtifactUploader(),
     },
     {
       repoFullName,

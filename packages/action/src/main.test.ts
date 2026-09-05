@@ -6,7 +6,16 @@ import type { ContainerRunSpec, Exec, ExecResult, IssueLite } from "./deps.ts";
 import { renderSummary, runNight, wipeoutFailure, type NightInputs } from "./main.ts";
 import type { IssueResult } from "./issue-pipeline.ts";
 import { realExec } from "./real-exec.ts";
-import { FakeEngine, FakeGitHub, instantClock, issue, ok, silentLog } from "./test-helpers.ts";
+import {
+  FakeArtifactUploader,
+  FakeEngine,
+  FakeGitHub,
+  instantClock,
+  issue,
+  ok,
+  silentLog,
+} from "./test-helpers.ts";
+import { issueEvidenceArtifactName } from "./evidence.ts";
 
 /**
  * In-process integration of the whole night: real git (temp bare origin +
@@ -268,6 +277,88 @@ describe("runNight", () => {
       "issue/1-fix-header",
       "issue/3-fix-sidebar",
     ]);
+  });
+
+  describe("progressive evidence upload (evidence on cancel)", () => {
+    it("uploads each finished issue's evidence under its own per-issue artifact name", async () => {
+      const { workspaceDir, inputs } = await setup();
+      const github = new FakeGitHub(structuredClone(threeIssues));
+      // #2's agent fails; it still produced an agent-attempt log, so its evidence
+      // is uploaded like the two that opened PRs. "Whatever was done" is preserved.
+      const engine = makeEngine({
+        workspaceDir,
+        failAgentFor: [2],
+        classifyOutput: '{"chains": [[1], [2], [3]]}',
+      });
+      const artifacts = new FakeArtifactUploader();
+
+      const summary = await runNight(
+        { github, engine, exec: realExec, log: silentLog, clock: instantClock(), artifacts },
+        inputs,
+      );
+
+      expect(summary.results.map((r) => [r.issue.number, r.status])).toEqual([
+        [1, "pr-opened"],
+        [2, "agent-failed"],
+        [3, "pr-opened"],
+      ]);
+      expect(artifacts.uploads.map((u) => u.name)).toEqual([
+        issueEvidenceArtifactName(1),
+        issueEvidenceArtifactName(2),
+        issueEvidenceArtifactName(3),
+      ]);
+      // Each upload points at that issue's own evidence directory.
+      for (const upload of artifacts.uploads) {
+        expect(upload.dir).toContain("fixowl-evidence");
+      }
+    });
+
+    it("a failed upload stays best-effort: the night finishes and later issues still upload", async () => {
+      const { workspaceDir, inputs } = await setup();
+      const github = new FakeGitHub(structuredClone(threeIssues));
+      const engine = makeEngine({ workspaceDir, classifyOutput: '{"chains": [[1], [2], [3]]}' });
+      const artifacts = new FakeArtifactUploader(new Set([issueEvidenceArtifactName(1)]));
+
+      const summary = await runNight(
+        { github, engine, exec: realExec, log: silentLog, clock: instantClock(), artifacts },
+        inputs,
+      );
+
+      // The upload throwing for #1 does not abort the night: all three still ship.
+      expect(summary.results.map((r) => r.status)).toEqual(["pr-opened", "pr-opened", "pr-opened"]);
+      expect(artifacts.uploads.map((u) => u.name)).toEqual([
+        issueEvidenceArtifactName(2),
+        issueEvidenceArtifactName(3),
+      ]);
+    });
+
+    it("evidence for an issue finished before a mid-night stop is already uploaded", async () => {
+      const { workspaceDir, inputs } = await setup();
+      const github = new FakeGitHub(structuredClone(threeIssues));
+      const engine = makeEngine({ workspaceDir });
+      const artifacts = new FakeArtifactUploader();
+      // Usage crosses the budget at the gate before #2, so #1 finishes and #2/#3
+      // never start - exactly the "run interrupted mid-flight" shape. #1's
+      // evidence was uploaded the moment it finished, before the stop.
+      const { httpJson } = usageFetcher((call) => (call >= 3 ? 0.9 : 0.1));
+
+      const summary = await runNight(
+        {
+          github,
+          engine,
+          exec: realExec,
+          log: silentLog,
+          httpJson,
+          clock: instantClock(),
+          artifacts,
+        },
+        { ...claudeBudgetInputs(inputs), usageBudgetPercent: 50 },
+      );
+
+      expect(summary.budgetStop?.condition).toBe("usage");
+      expect(summary.notStarted?.map((i) => i.number)).toEqual([2, 3]);
+      expect(artifacts.uploads.map((u) => u.name)).toEqual([issueEvidenceArtifactName(1)]);
+    });
   });
 
   it("agent failure error carries a sanitized tail of the agent's real output", async () => {

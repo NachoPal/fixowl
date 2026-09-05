@@ -1,3 +1,5 @@
+import { issueEvidenceArtifactName } from "./evidence.ts";
+
 export interface CheckOutcome {
   name: string;
   status: "passed" | "failed" | "unavailable";
@@ -144,7 +146,9 @@ export function buildPrBody(params: {
 
   if (params.runUrl) {
     lines.push(
-      `Screenshots and logs are in the \`fixowl-evidence\` artifact of [this run](${params.runUrl}).`,
+      `Screenshots and logs are in the \`${issueEvidenceArtifactName(params.issueNumber)}\` ` +
+        `artifact of [this run](${params.runUrl}) (uploaded as this issue finishes, so it ` +
+        `survives even if the run is later cancelled).`,
       ``,
     );
   }
