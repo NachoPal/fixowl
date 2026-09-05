@@ -181,6 +181,15 @@ function parseLabelModelsInput(raw: string): LabelModelMap {
   return labelModelsSchema.parse(parsed);
 }
 
+/** Parses a boolean input; a hand-edited workflow with garbage fails loudly. */
+function booleanInput(name: string, fallback: boolean): boolean {
+  const raw = core.getInput(name);
+  if (raw === "") return fallback;
+  if (raw === "true") return true;
+  if (raw === "false") return false;
+  throw new Error(`input ${name} must be "true" or "false", got "${raw}"`);
+}
+
 /** A hand-edited workflow with a bad number must fail loudly, not as NaN weirdness. */
 function positiveIntInput(name: string, fallback: number): number {
   const raw = core.getInput(name);
@@ -269,6 +278,7 @@ async function run(): Promise<void> {
       defaultModel: core.getInput("default-model") || undefined,
       defaultEffort: core.getInput("default-effort") || undefined,
       labelModels: parseLabelModelsInput(core.getInput("label-models")),
+      heuristicConflictOrdering: booleanInput("heuristic-conflict-ordering", false),
       workspaceDir,
       tempDir,
       runUrl,

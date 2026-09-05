@@ -50,6 +50,13 @@ export interface NightInputs {
   defaultEffort?: string;
   /** Selector-label -> {model, effort}; per-issue resolution reads this. */
   labelModels?: LabelModelMap;
+  /**
+   * Opt-in Layer 2: when true, run the heuristic same-files classifier and stack
+   * its conflict groups. Default (undefined/false) skips the classifier entirely
+   * and treats every non-deferred issue as independent. Layer 1 native
+   * `blocked_by` ordering is always-on regardless.
+   */
+  heuristicConflictOrdering?: boolean;
   workspaceDir: string;
   tempDir: string;
   runUrl?: string;
@@ -229,22 +236,30 @@ async function runNightWithGit(
     effort: inputs.defaultEffort,
   };
 
-  // Layer 2 (heuristic): the LLM same-files classifier runs only over the
-  // non-deferred set; its conflict groups are then merged onto the Layer-1
-  // prerequisite order under "prerequisites always win".
-  const conflictChains = await classifyIssues({
-    engine,
-    log,
-    warnings,
-    selected: shippable,
-    adapter,
-    agentEnv,
-    image,
-    inputs,
-    // Classification spans all issues at once, so it uses the repo default, not
-    // any single issue's selector label.
-    selection: defaultSelection,
-  });
+  // Layer 2 (heuristic, opt-in): the LLM same-files classifier runs only over
+  // the non-deferred set; its conflict groups are then merged onto the Layer-1
+  // prerequisite order under "prerequisites always win". Off by default - fixowl
+  // never merges, so it never restacks what it stacks; independent PRs review
+  // more robustly, and the classifier is a paid LLM guess (see docs/stacked-prs.md).
+  // When off, the classifier call is skipped entirely and every non-deferred
+  // issue is independent; Layer 1 native `blocked_by` ordering still applies via
+  // mergeGraphs below in both modes.
+  const conflictChains =
+    inputs.heuristicConflictOrdering === true
+      ? await classifyIssues({
+          engine,
+          log,
+          warnings,
+          selected: shippable,
+          adapter,
+          agentEnv,
+          image,
+          inputs,
+          // Classification spans all issues at once, so it uses the repo default,
+          // not any single issue's selector label.
+          selection: defaultSelection,
+        })
+      : allIndependent(shippable.map((issue) => issue.number));
   const chainNumbers = mergeGraphs(conflictChains, prereqPlan.prereqs);
   const chains = planChains(shippable, chainNumbers);
 

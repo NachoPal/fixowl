@@ -35,11 +35,29 @@ Each stacked PR carries a banner: `Stacked on #<parent> - merge that first.`
    across nights. A dependent blocked by several distinct in-flight bases, or by
    an in-flight base mixed with a same-night prerequisite, cannot be linearized
    and is deferred conservatively.
-2. **Same-code grouping (heuristic).** Over the non-deferred issues, fixowl then
-   predicts which ones touch overlapping code and stacks those into chains to
-   avoid merge conflicts. Prerequisites always win: this pass may reorder or
-   split its groups to respect a `blocked-by` edge, and a prerequisite forces
-   stacking even if the heuristic called two issues independent.
+2. **Same-code grouping (heuristic, opt-in - off by default).** Over the
+   non-deferred issues, fixowl can predict which ones touch overlapping code and
+   stack those into chains to avoid merge conflicts. This layer is **disabled by
+   default**; enable it with `heuristic_conflict_ordering: true` in your config
+   (`defaults:` block or a per-repo entry). When on, prerequisites always win:
+   this pass may reorder or split its groups to respect a `blocked-by` edge, and
+   a prerequisite forces stacking even if the heuristic called two issues
+   independent. When off, the classifier LLM call is skipped entirely and every
+   non-deferred issue is independent, branched from the default branch - only
+   Layer 1 native `blocked-by` edges cause any stacking.
+
+   **Why default-off.** fixowl never merges (a hard invariant), so it never
+   restacks what it stacks: any human edit to a base PR, or an out-of-order or
+   partial merge, leaves the stacked children stale and hands you a manual
+   restack - for a stack that was never *required* (these issues do not depend on
+   each other). Independent PRs are more robust for piecemeal review: each is
+   self-contained against the default branch, reviewable in isolation, and
+   mergeable in any order, with a bounded, predictable merge conflict resolved at
+   merge time. And the classifier is a paid LLM guess with real cost and latency
+   and its own parse-failure fallback; when the guess is wrong it either invents a
+   spurious stack or misses the overlap, so it only pays off when correct *and*
+   you merge the whole stack promptly and in order. Native `blocked-by` ordering
+   (Layer 1, above) is unaffected and always-on in both modes.
 
 ![How fixowl orders one example night. The night's selected issues (#12, #15, #18, #21, #23, #40) flow through two layers of pure planning. Layer 1 (prereq-planner.ts) reads native GitHub blocked-by edges, which are authoritative: #18 is blocked-by #15 and both ship tonight, so #15 is ordered first and #18 stacks under it; #21 is blocked-by #7 which is not in tonight's set, so #21 is deferred with no PR and its reason is logged in the night summary; #12, #23 and #40 have no edges and pass through. Layer 2 (classify.ts) is a same-file conflict heuristic over the survivors: it groups #12 and #23 because they touch the same files and predicts #15, #18 and #40 are independent. The merge (merge-graph.ts) overlays Layer 1 onto Layer 2 under "prerequisites always win": chain 1 is #12 then #23, chain 2 is #15 then #18 because the blocked-by edge forces the stack even though the heuristic split them, chain 3 is #40 alone, and #21 stays deferred. Finally the main.ts stacking loop turns each chain into stacked PRs: within a chain each PR targets the previous issue's branch (PR #23 targets issue/12, PR #18 targets issue/15) and the first PR of every chain targets the default branch main. One PR per issue; fixowl never merges.](../assets/issue-ordering.svg)
 

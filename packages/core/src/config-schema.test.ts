@@ -52,7 +52,33 @@ describe("resolveRepoSettings", () => {
       defaultModel: undefined,
       defaultEffort: undefined,
       labelModels: {},
+      heuristicConflictOrdering: false,
     });
+  });
+
+  it("resolves heuristic_conflict_ordering: repo > defaults > built-in (off)", () => {
+    // Built-in default is off.
+    const base = globalConfigSchema.parse(minimalConfig);
+    expect(resolveRepoSettings(base, "NachoPal/storyengine").heuristicConflictOrdering).toBe(false);
+
+    // A defaults value is inherited when the repo does not override it.
+    const fromDefaults = globalConfigSchema.parse({
+      ...minimalConfig,
+      defaults: { heuristic_conflict_ordering: true },
+    });
+    expect(
+      resolveRepoSettings(fromDefaults, "NachoPal/storyengine").heuristicConflictOrdering,
+    ).toBe(true);
+
+    // A per-repo value wins over the defaults value.
+    const repoOverride = globalConfigSchema.parse({
+      ...minimalConfig,
+      defaults: { heuristic_conflict_ordering: true },
+      repos: [{ name: "NachoPal/storyengine", heuristic_conflict_ordering: false }],
+    });
+    expect(
+      resolveRepoSettings(repoOverride, "NachoPal/storyengine").heuristicConflictOrdering,
+    ).toBe(false);
   });
 
   it("prefers repo entry over defaults over built-ins", () => {

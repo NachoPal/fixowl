@@ -91,6 +91,7 @@ export async function provisionCommand(
       defaultModel: settings.defaultModel,
       defaultEffort: settings.defaultEffort,
       labelModels: settings.labelModels,
+      heuristicConflictOrdering: settings.heuristicConflictOrdering,
       actionRef: actionRef.ref,
       actionRefComment: actionRef.comment,
     });

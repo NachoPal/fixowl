@@ -39,6 +39,12 @@ const repoEntrySchema = z.object({
   effort: z.string().min(1).optional(),
   /** Model-selector labels for this repo (see labelModelsSchema). */
   label_models: labelModelsSchema.optional(),
+  /**
+   * Opt-in Layer 2: the LLM same-files classifier that groups and stacks
+   * non-dependent issues to reduce merge conflicts. Default off; native
+   * `blocked_by` ordering (Layer 1) is always-on and unaffected.
+   */
+  heuristic_conflict_ordering: z.boolean().optional(),
 });
 
 export { labelModelsSchema };
@@ -79,6 +85,8 @@ export const globalConfigSchema = z.object({
       model: z.string().min(1).optional(),
       /** Fallback reasoning effort used by any repo that does not set its own. */
       effort: z.string().min(1).optional(),
+      /** Default Layer 2 (heuristic conflict-ordering) toggle for every repo. */
+      heuristic_conflict_ordering: z.boolean().optional(),
     })
     .optional(),
   agents: z.record(z.string(), agentSettingsSchema).optional(),
@@ -116,6 +124,13 @@ export const FIXOWL_DEFAULTS = {
   agent: "claude",
   maxIssuesPerRun: 4,
   issueTimeoutMinutes: 45,
+  /**
+   * Layer 2 (heuristic same-files conflict-ordering) is off by default: fixowl
+   * never merges, so it never restacks what it stacks; independent PRs are more
+   * robust for piecemeal review; and the classifier is a paid LLM guess. Layer 1
+   * native `blocked_by` ordering is always-on and unaffected. See docs/stacked-prs.md.
+   */
+  heuristicConflictOrdering: false,
   runnerDir: "~/.fixowl/runners",
   /**
    * Minutes after the cron the local fallback fires. Generous on purpose:
@@ -141,6 +156,11 @@ export interface ResolvedRepoSettings {
   defaultEffort: string | undefined;
   /** Model-selector labels for this repo; empty when none configured. */
   labelModels: LabelModelMap;
+  /**
+   * Whether Layer 2 (the heuristic same-files classifier) runs for this repo.
+   * Off by default; Layer 1 native `blocked_by` ordering is always-on regardless.
+   */
+  heuristicConflictOrdering: boolean;
 }
 
 export function resolveRepoSettings(config: GlobalConfig, repoName: string): ResolvedRepoSettings {
@@ -168,6 +188,10 @@ export function resolveRepoSettings(config: GlobalConfig, repoName: string): Res
     defaultEffort: entry.effort ?? defaults.effort,
     // Selector labels are per-repo by design; they are not merged from defaults.
     labelModels: entry.label_models ?? {},
+    heuristicConflictOrdering:
+      entry.heuristic_conflict_ordering ??
+      defaults.heuristic_conflict_ordering ??
+      FIXOWL_DEFAULTS.heuristicConflictOrdering,
   };
 }
 
