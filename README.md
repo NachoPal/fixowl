@@ -36,8 +36,12 @@ In the morning you review. **fixowl never merges.**
   [docs/stacked-prs.md](docs/stacked-prs.md).
 - **Verification is a capability, not a mandate**: repos declare checks and
   optional web screenshot targets in `.fixowl.yml`; missing capability
-  degrades to "unavailable", and screenshots/logs land in the run's
-  `fixowl-evidence` artifact. Every PR opens as a **draft**; the target repo's
+  degrades to "unavailable", and each issue's screenshots/logs land in a
+  per-issue `fixowl-evidence-issue-<n>` artifact - uploaded from within the
+  action the moment that issue finishes, so a run that is cancelled mid-flight
+  (e.g. the self-hosted host sleeps) still keeps the evidence for every issue it
+  completed. A combined `fixowl-evidence` artifact is also uploaded at job end
+  for the fully-successful case. Every PR opens as a **draft**; the target repo's
   own required CI - not the local `.fixowl.yml` checks, which now run only as a
   cheap pre-filter - is the authority that flips it to ready-for-review in a
   bounded fix loop. See [docs/ci-fix-loop.md](docs/ci-fix-loop.md).

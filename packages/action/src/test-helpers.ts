@@ -1,6 +1,8 @@
+import { readdirSync } from "node:fs";
 import type { CheckStatusLite, RequiredChecks, WorkflowRunLite } from "@fixowl/core";
 import type { Clock } from "./ci-poll.ts";
 import type {
+  ArtifactUploader,
   ContainerEngine,
   ContainerRunSpec,
   ExecResult,
@@ -181,4 +183,32 @@ export class FakeEngine implements ContainerEngine {
 
 export function issue(number: number, title: string, body = "", labels = ["overnight"]): IssueLite {
   return { number, title, body, labels };
+}
+
+/**
+ * Records the progressive per-issue evidence uploads the night makes. Mirrors the
+ * real uploader's "nothing to upload for an empty/missing dir" contract by
+ * reading the directory, so a wiring test sees exactly the artifacts a real run
+ * would create. `failFor` makes chosen artifact names throw, to prove an upload
+ * failure stays best-effort and never aborts the night.
+ */
+export class FakeArtifactUploader implements ArtifactUploader {
+  uploads: Array<{ name: string; dir: string }> = [];
+
+  constructor(private readonly failFor: Set<string> = new Set()) {}
+
+  async uploadDirectory(params: { name: string; dir: string }): Promise<boolean> {
+    if (this.failFor.has(params.name)) {
+      throw new Error(`simulated upload failure for ${params.name}`);
+    }
+    let entries: string[];
+    try {
+      entries = readdirSync(params.dir);
+    } catch {
+      return false;
+    }
+    if (entries.length === 0) return false;
+    this.uploads.push({ name: params.name, dir: params.dir });
+    return true;
+  }
 }
