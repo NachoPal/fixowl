@@ -63,6 +63,11 @@ See [docs/releasing.md](docs/releasing.md).
 
 ## Conventions
 
+- The container name format (`fixowl-<repo>-<issue|classify>-<purpose>`) is owned by
+  `packages/core/src/container-naming.ts` (`containerName`, `containerNamePrefix`,
+  `parseContainerName`). The action re-exports `containerName` from `container-exec.ts`;
+  the CLI's `watch` command discovers live containers via the same helpers. Do not
+  re-derive the slug shape anywhere else.
 - Actions in workflows are SHA-pinned with a `# vN` comment. Workflows get minimal
   `permissions:`. actionlint runs in CI over both our workflows and rendered templates.
 - Spawn processes with argv arrays, never shell string interpolation.

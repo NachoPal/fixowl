@@ -88,7 +88,8 @@ night right now:
 fixowl run owner/repo
 ```
 
-Other ops: `fixowl status`, `fixowl stop [--deregister]`, `fixowl logs owner/repo [--runner]`.
+Other ops: `fixowl status`, `fixowl watch [owner/repo]` (stream a live agent
+container's logs), `fixowl stop [--deregister]`, `fixowl logs owner/repo [--runner]`.
 
 ## Configuration
 
@@ -135,8 +136,10 @@ ways that compose:
   `--model`/effort flag, falling through to the agent CLI's own default.
 
 Every model and effort is validated against the agent that repo uses (the
-catalog lives in `packages/core/src/agent-catalog.ts`). `fixowl init` presents
-the available options, and `fixowl validate` rejects any unknown value. For
+catalog lives in `packages/core/src/agent-catalog.ts`). `fixowl init` offers
+them as arrow-key lists - selector labels are ticked off the repo's own labels,
+then each gets a model and an effort - and `fixowl validate` rejects any
+unknown value. For
 `claude`, models are aliases like `opus`/`sonnet`/`haiku`/`fable` and efforts
 are `low`/`medium`/`high`/`xhigh`/`max` (both passed as `--model`/`--effort`).
 

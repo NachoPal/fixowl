@@ -1,4 +1,9 @@
+import { containerName } from "@fixowl/core";
 import type { ContainerEngine, ContainerRunSpec, Exec, ExecResult, Logger } from "./deps.ts";
+
+// Re-exported so existing action callers keep importing it from here; the
+// canonical name format now lives in @fixowl/core so the CLI can share it.
+export { containerName };
 
 /** Mount point of the repo checkout inside every container. */
 export const WORKSPACE_MOUNT_PATH = "/workspace";
@@ -70,26 +75,6 @@ export function dockerBuildArgv(params: {
   contextDir: string;
 }): string[] {
   return ["docker", "build", "-t", params.image, "-f", params.dockerfile, params.contextDir];
-}
-
-/**
- * Container names include the repo so two runners for different repos on one
- * host can never collide on `docker run --name` - or worse, have one repo's
- * timeout `docker rm -f` kill the other repo's live container.
- */
-export function containerName(
-  repoFullName: string,
-  issueNumber: number | "classify",
-  purpose: string,
-): string {
-  return `fixowl-${nameSlug(repoFullName)}-${issueNumber}-${nameSlug(purpose)}`.slice(0, 63);
-}
-
-function nameSlug(text: string): string {
-  return text
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
 }
 
 export class DockerEngine implements ContainerEngine {

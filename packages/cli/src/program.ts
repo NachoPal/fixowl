@@ -7,6 +7,7 @@ import { startCommand } from "./commands/start.ts";
 import { statusCommand } from "./commands/status.ts";
 import { stopCommand } from "./commands/stop.ts";
 import { validateCommand } from "./commands/validate.ts";
+import { watchCommand } from "./commands/watch.ts";
 import { makeContext } from "./context.ts";
 import { version } from "./version.ts";
 
@@ -90,6 +91,25 @@ export function createProgram(): Command {
     .action(async (repo: string | undefined) => {
       await statusCommand(makeContext(configPath()), repo);
     });
+
+  program
+    .command("watch [repo]")
+    .description("list the live agent containers and stream one's logs in real time")
+    .option("--issue <n>", "watch the container(s) for this issue without prompting")
+    .option("--container <name>", "watch this exact container by name without prompting")
+    .option("--no-follow", "print a one-shot log snapshot instead of streaming live")
+    .action(
+      async (
+        repo: string | undefined,
+        options: { issue?: string; container?: string; follow: boolean },
+      ) => {
+        await watchCommand(makeContext(configPath()), repo, {
+          issue: options.issue,
+          container: options.container,
+          follow: options.follow,
+        });
+      },
+    );
 
   program
     .command("run <repo>")

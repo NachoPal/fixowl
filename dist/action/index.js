@@ -49494,6 +49494,18 @@ function labelQueriesForRule(rule) {
   return any2.map((label) => label);
 }
 
+// packages/core/src/container-naming.ts
+var CONTAINER_NAME_MAX_LENGTH = 63;
+function nameSlug(text) {
+  return text.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
+function containerName(repoFullName, issueNumber, purpose) {
+  return `fixowl-${nameSlug(repoFullName)}-${issueNumber}-${nameSlug(purpose)}`.slice(
+    0,
+    CONTAINER_NAME_MAX_LENGTH
+  );
+}
+
 // packages/core/src/agent-adapters.ts
 var PROMPT_MOUNT_PATH = "/fixowl/prompt.md";
 var claude = {
@@ -49826,12 +49838,6 @@ function dockerRunArgv(spec) {
 }
 function dockerBuildArgv(params) {
   return ["docker", "build", "-t", params.image, "-f", params.dockerfile, params.contextDir];
-}
-function containerName(repoFullName, issueNumber, purpose) {
-  return `fixowl-${nameSlug(repoFullName)}-${issueNumber}-${nameSlug(purpose)}`.slice(0, 63);
-}
-function nameSlug(text) {
-  return text.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 }
 var DockerEngine = class {
   constructor(exec, log2, resolveUser = hostContainerUser) {
