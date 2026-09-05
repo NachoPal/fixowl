@@ -30,7 +30,7 @@ import type {
 import { extractGitDir, GitWorkspace, restoreGitDir } from "./git-ops.ts";
 import { filterAlreadyAttempted } from "./idempotency.ts";
 import { selectIssues } from "./issue-selection.ts";
-import { processIssue, type IssueResult } from "./issue-pipeline.ts";
+import { markdownCell, processIssue, tail, type IssueResult } from "./issue-pipeline.ts";
 
 const CLASSIFY_TIMEOUT_MS = 10 * 60 * 1000;
 
@@ -445,15 +445,6 @@ async function classifyIssues(params: {
     );
   }
   return classification.chains;
-}
-
-function tail(text: string, max: number): string {
-  return text.length <= max ? text : `...${text.slice(-max)}`;
-}
-
-/** Issue titles and error output are untrusted/arbitrary text; keep them from breaking the summary's markdown tables. */
-function markdownCell(text: string): string {
-  return text.replaceAll(/\s+/g, " ").replaceAll("|", "\\|").trim();
 }
 
 /**

@@ -54,6 +54,18 @@ export interface IssueResult {
   error?: string;
 }
 
+/** Longest agent output excerpt carried into a failure's `error` string. */
+const AGENT_ERROR_EXCERPT_MAX = 300;
+
+export function tail(text: string, max: number): string {
+  return text.length <= max ? text : `...${text.slice(-max)}`;
+}
+
+/** Issue titles and agent output are untrusted/arbitrary text; keep them from breaking the summary's markdown tables. */
+export function markdownCell(text: string): string {
+  return text.replaceAll(/\s+/g, " ").replaceAll("|", "\\|").trim();
+}
+
 export async function processIssue(
   deps: IssuePipelineDeps,
   ctx: IssueRunContext,
@@ -98,12 +110,15 @@ export async function processIssue(
 
   if (agentResult.timedOut || agentResult.code !== 0) {
     await git.discardAllChanges();
+    const reason = agentResult.timedOut
+      ? `agent timed out after ${ctx.timeoutMs}ms`
+      : `agent exited with code ${agentResult.code}`;
+    const output = `${agentResult.stdout}\n${agentResult.stderr}`.trim();
+    const excerpt = output.length > 0 ? markdownCell(tail(output, AGENT_ERROR_EXCERPT_MAX)) : "";
     return {
       ...base,
       status: "agent-failed",
-      error: agentResult.timedOut
-        ? `agent timed out after ${ctx.timeoutMs}ms`
-        : `agent exited with code ${agentResult.code}`,
+      error: excerpt.length > 0 ? `${reason} - ${excerpt}` : reason,
     };
   }
 

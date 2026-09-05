@@ -206,6 +206,48 @@ describe("runNight", () => {
     ]);
   });
 
+  it("agent failure error carries a sanitized tail of the agent's real output", async () => {
+    const { inputs } = await setup();
+    const github = new FakeGitHub([issue(1, "Fix header", "x")]);
+    const rawOutput = `${"noise ".repeat(100)}\nline with a | pipe\nYou've hit your session limit · resets 6pm (UTC)`;
+    const engine = new FakeEngine((spec): ExecResult | undefined => {
+      if (issueNumberOfAgentRun(spec) === 1) {
+        return { code: 1, stdout: "", stderr: rawOutput, timedOut: false };
+      }
+      return ok();
+    });
+
+    const summary = await runNight({ github, engine, exec: realExec, log: silentLog }, inputs);
+    const result = summary.results[0];
+    expect(result?.status).toBe("agent-failed");
+    expect(result?.error).toContain("agent exited with code 1");
+    expect(result?.error).toContain("You've hit your session limit");
+    expect(result?.error).not.toContain("\n");
+    expect(result?.error?.length ?? 0).toBeLessThan(400);
+  });
+
+  it("timeout error still reads clearly and includes the output tail", async () => {
+    const { inputs } = await setup();
+    const github = new FakeGitHub([issue(1, "Fix header", "x")]);
+    const engine = new FakeEngine((spec): ExecResult | undefined => {
+      if (issueNumberOfAgentRun(spec) === 1) {
+        return {
+          code: 1,
+          stdout: "stuck waiting on network | retrying",
+          stderr: "",
+          timedOut: true,
+        };
+      }
+      return ok();
+    });
+
+    const summary = await runNight({ github, engine, exec: realExec, log: silentLog }, inputs);
+    const result = summary.results[0];
+    expect(result?.status).toBe("agent-failed");
+    expect(result?.error).toMatch(/^agent timed out after \d+ms - /);
+    expect(result?.error).toContain("stuck waiting on network \\| retrying");
+  });
+
   it("failed verification opens a draft PR (work preserved)", async () => {
     const { workspaceDir, inputs } = await setup();
     const github = new FakeGitHub([issue(1, "Fix header", "x")]);
