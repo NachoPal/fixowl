@@ -108,7 +108,11 @@ export async function fallbackCheckCommand(
       await deps.dispatch(ref, branch);
       log.ok(`${repoFullName}: dispatched fallback run - ${decision.reason}`);
     } catch (error) {
-      log.error(`${repoFullName}: fallback check failed - ${describeGitHubError(error)}`);
+      const detail = describeGitHubError(error);
+      const hint = /unexpected inputs/i.test(detail)
+        ? " (the workflow predates the fallback; run `fixowl provision` to update it)"
+        : "";
+      log.error(`${repoFullName}: fallback check failed - ${detail}${hint}`);
       process.exitCode = 1;
     }
   }

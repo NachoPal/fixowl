@@ -221,10 +221,14 @@ export async function uninstallFallbackAgent(label: string): Promise<boolean> {
   return existed;
 }
 
-/** Whether launchd currently has the agent loaded. */
+/** Whether launchd currently has the agent loaded. Tolerant of a missing launchctl. */
 export async function isFallbackLoaded(label: string): Promise<boolean> {
-  const result = await run(["launchctl", "print", `${guiDomain()}/${label}`]);
-  return result.code === 0;
+  try {
+    const result = await run(["launchctl", "print", `${guiDomain()}/${label}`]);
+    return result.code === 0;
+  } catch {
+    return false;
+  }
 }
 
 /** Reads the Hour/Minute programmed into an installed plist, for status. */
