@@ -19,16 +19,17 @@ never both - while manual runs stay unrestricted. Two pure, unit-tested pieces
 (`packages/core/src/fallback-dispatch.ts`) enforce exactly that:
 
 1. **Pre-dispatch check** (`decideFallbackDispatch`, run by the launchd agent):
-   dispatch only if there is no `event: schedule` run for today (UTC). A manual
-   `workflow_dispatch` never counts, so it never suppresses the fallback.
+   dispatch only if there is no `event: schedule` run covering the current
+   occurrence (see [the occurrence window](#the-occurrence-window) below). A
+   manual `workflow_dispatch` never counts, so it never suppresses the fallback.
 
 2. **In-run budget guard** (`guardScheduledSlot`, run at the start of every night
    inside the action): a *scheduled-slot* run - a cron run, or a fallback-tagged
    dispatch - stands down as a clean no-op if an earlier scheduled-slot run
-   already covered today. So a late cron arriving after the fallback (or vice
-   versa) collapses to a single execution. A plain manual dispatch is never a
-   scheduled-slot run and is never guarded, so you can run the workflow by hand
-   as often as you like.
+   already covered the current occurrence. So a late cron arriving after the
+   fallback (or vice versa) collapses to a single execution. A plain manual
+   dispatch is never a scheduled-slot run and is never guarded, so you can run
+   the workflow by hand as often as you like.
 
 The fallback tags its dispatch with the `source: scheduled-fallback`
 workflow input, surfaced in the run-name as `[scheduled-fallback]`, so:
@@ -43,6 +44,30 @@ cron health - the fallback never masks a broken cron.
 > Duplicate *PRs* were never the risk (per-issue branch idempotency and the
 > workflow `concurrency` group already prevent those). The guard exists because a
 > second run still spends subscription usage picking up newly-eligible issues.
+
+### The occurrence window
+
+Both pieces decide "already ran?" over the current **occurrence window**, the
+half-open interval `[anchor, next occurrence)`, where `anchor` is the most recent
+scheduled cron time at or before now (computed in UTC). A run covers the
+occurrence when it started at or after that anchor.
+
+This is deliberately **not** the UTC calendar day, which breaks for a cron near
+UTC midnight. Worked example - cron `55 23 * * *` (23:55 UTC):
+
+- The on-time cron fires **Mon 23:55**.
+- The fallback pre-check runs **Tue 00:25**. `anchor(Tue 00:25) = Mon 23:55`, so
+  it sees Monday's schedule run (its `created_at` is `>= anchor`) and **does not
+  dispatch**.
+- A plain UTC-calendar-day check would look only at *Tuesday*, miss Monday's run,
+  and wrongly dispatch a duplicate.
+
+The anchored window keeps an on-time run just before UTC midnight and its
+post-midnight check in one occurrence, so they always dedupe to one run. The cron
+is passed to the action as the `schedule` workflow input so the in-run guard can
+compute the same anchor; an old workflow that predates this input degrades to the
+UTC calendar day (harmless away from midnight). Manual (untagged) dispatches are
+never guarded, regardless of window.
 
 ## The token: `FIXOWL_FALLBACK_TOKEN`
 
@@ -79,17 +104,14 @@ fixowl schedules the agent at the local time of
 (`fallbackLocalTime`, `packages/cli/src/runner/fallback-launchd.ts`). Converted
 back to UTC at either seasonal offset, the fire always lands between `gap` and
 `gap + (DST swing)` after the cron - **never before it**, in any season. Because
-the "already ran today?" decision keys on the UTC calendar day, the exact minute
-doesn't matter as long as the fire is reliably after the cron, which this
-guarantees.
+the "already ran?" decision keys on the [occurrence window](#the-occurrence-window)
+(anchored to the cron, not the calendar day), the exact minute doesn't matter as
+long as the fire is reliably after the cron, which this guarantees - and the
+anchoring means a cron near UTC midnight is handled correctly too.
 
 The gap defaults to **30 minutes** (configurable via `fallback.gap_minutes`).
 30 is deliberately generous: GitHub schedules also arrive *late*, and a too-tight
 gap risks firing while a late-but-pending cron run is still queued.
-
-> Caveat: the "today" window is the UTC calendar day, so keep the cron time away
-> from UTC midnight (the defaults are). A cron within ~one gap of 00:00 UTC could
-> push the fallback's fire into the next UTC day.
 
 ## Using it
 

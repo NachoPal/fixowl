@@ -66,6 +66,12 @@ export interface NightInputs {
   scheduledSlot?: boolean;
   /** This run's id (GITHUB_RUN_ID), used by the scheduled-slot guard. */
   currentRunId?: number;
+  /**
+   * The workflow's cron expression (UTC), passed through by the generated
+   * workflow. The scheduled-slot guard anchors its once-a-day window to this
+   * occurrence; absent (an old workflow), it falls back to the UTC calendar day.
+   */
+  cronSchedule?: string;
   /** Source of agent env values (normally process.env). */
   env: Record<string, string | undefined>;
 }
@@ -140,6 +146,7 @@ async function checkScheduledSlotBudget(
     now: new Date(),
     currentRunId: inputs.currentRunId,
     selfIsScheduledSlot: true,
+    cronSchedule: inputs.cronSchedule,
   });
   if (guard.proceed) return undefined;
   deps.log.info(`🦉 fixowl: ${guard.reason}`);

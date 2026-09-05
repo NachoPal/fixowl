@@ -240,6 +240,7 @@ async function run(): Promise<void> {
       defaultBranch: repoData.default_branch,
       scheduledSlot,
       currentRunId,
+      cronSchedule: core.getInput("schedule") || undefined,
       labels,
       agentName,
       agentEnvNames: parseLabelInput(core.getInput("agent-env")),

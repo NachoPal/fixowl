@@ -70,13 +70,17 @@ export {
   type WorkflowTemplateOptions,
 } from "./workflow-template.ts";
 export {
+  anchorOccurrence,
   decideFallbackDispatch,
   guardScheduledSlot,
   isSameUtcDay,
   isScheduledSlotRun,
+  scheduledRunSince,
   scheduledRunToday,
+  tryParseDailyCron,
   SCHEDULED_FALLBACK_MARKER,
   SCHEDULED_FALLBACK_SOURCE,
+  type DailyCron,
   type FallbackDecision,
   type SlotGuardParams,
   type SlotGuardResult,

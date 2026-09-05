@@ -16,9 +16,10 @@ import { run, runOrThrow } from "../exec.ts";
  * season we schedule it at the local time of `cronUTC + gap + the zone's larger
  * (summer) UTC offset`. That makes the actual fire land between `gap` and
  * `gap + (DST swing)` after the cron all year, never before it - see
- * {@link fallbackLocalTime}. Because the "already ran today?" decision keys on
- * the UTC calendar day, exact timing is not critical as long as the fire stays
- * after the cron, which this guarantees.
+ * {@link fallbackLocalTime}. Because the "already ran?" decision keys on the
+ * cron-anchored occurrence window (not the calendar day - see
+ * `fallback-dispatch.ts`), exact timing is not critical as long as the fire
+ * stays after the cron, which this guarantees.
  */
 
 const MINUTES_PER_DAY = 24 * 60;

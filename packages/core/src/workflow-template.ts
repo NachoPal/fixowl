@@ -76,6 +76,13 @@ ${dispatchBlock}`;
     `          issue-timeout-minutes: "${options.issueTimeoutMinutes}"`,
     `          source: "\${{ github.event.inputs.source }}"`,
   ];
+  // The cron is passed to the action so its once-a-day budget guard can anchor
+  // the "already ran" window to the schedule occurrence (correct across UTC
+  // midnight) rather than the UTC calendar day. Omitted for a dispatch-only
+  // workflow, where the guard degrades to the calendar day harmlessly.
+  if (options.schedule) {
+    withLines.push(`          schedule: "${options.schedule}"`);
+  }
   if (options.defaultModel !== undefined) {
     withLines.push(`          default-model: "${options.defaultModel}"`);
   }

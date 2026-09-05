@@ -99,7 +99,8 @@ export async function fallbackCheckCommand(
     const ref = splitRepoFullName(repoFullName);
     try {
       const runs = await deps.listRecentRuns(ref);
-      const decision = decideFallbackDispatch(runs, deps.now());
+      const schedule = resolveRepoSettings(ctx.config, repoFullName).schedule;
+      const decision = decideFallbackDispatch(runs, deps.now(), schedule);
       if (!decision.dispatch) {
         log.info(`${repoFullName}: skip - ${decision.reason}`);
         continue;

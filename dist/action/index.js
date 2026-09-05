@@ -49817,6 +49817,23 @@ var SCHEDULED_FALLBACK_MARKER = "[scheduled-fallback]";
 function isSameUtcDay(a, b) {
   return a.getUTCFullYear() === b.getUTCFullYear() && a.getUTCMonth() === b.getUTCMonth() && a.getUTCDate() === b.getUTCDate();
 }
+function tryParseDailyCron(cron) {
+  const fields = cron.trim().split(/\s+/);
+  if (fields.length !== 5) return void 0;
+  const [minute, hour, dom, month, dow] = fields;
+  if (dom !== "*" || month !== "*" || dow !== "*") return void 0;
+  const minuteUtc = Number(minute);
+  const hourUtc = Number(hour);
+  if (!Number.isInteger(minuteUtc) || minuteUtc < 0 || minuteUtc > 59) return void 0;
+  if (!Number.isInteger(hourUtc) || hourUtc < 0 || hourUtc > 23) return void 0;
+  return { hourUtc, minuteUtc };
+}
+function anchorOccurrence(cron, now) {
+  const anchor2 = new Date(now);
+  anchor2.setUTCHours(cron.hourUtc, cron.minuteUtc, 0, 0);
+  if (anchor2.getTime() > now.getTime()) anchor2.setUTCDate(anchor2.getUTCDate() - 1);
+  return anchor2;
+}
 function isScheduledSlotRun(run2, marker = SCHEDULED_FALLBACK_MARKER) {
   if (run2.event === "schedule") return true;
   return run2.event === "workflow_dispatch" && run2.displayTitle.includes(marker);
@@ -49829,8 +49846,11 @@ function guardScheduledSlot(params) {
     };
   }
   const marker = params.marker ?? SCHEDULED_FALLBACK_MARKER;
+  const cronTime = params.cronSchedule !== void 0 ? tryParseDailyCron(params.cronSchedule) : void 0;
+  const anchor2 = cronTime !== void 0 ? anchorOccurrence(cronTime, params.now) : void 0;
+  const coversOccurrence = (run2) => anchor2 !== void 0 ? new Date(run2.createdAt).getTime() >= anchor2.getTime() : isSameUtcDay(new Date(run2.createdAt), params.now);
   const earlier = params.runs.find(
-    (run2) => run2.id !== params.currentRunId && run2.id < params.currentRunId && isSameUtcDay(new Date(run2.createdAt), params.now) && isScheduledSlotRun(run2, marker)
+    (run2) => run2.id < params.currentRunId && coversOccurrence(run2) && isScheduledSlotRun(run2, marker)
   );
   if (earlier !== void 0) {
     return {
@@ -50747,7 +50767,8 @@ async function checkScheduledSlotBudget(deps, inputs) {
     runs,
     now: /* @__PURE__ */ new Date(),
     currentRunId: inputs.currentRunId,
-    selfIsScheduledSlot: true
+    selfIsScheduledSlot: true,
+    cronSchedule: inputs.cronSchedule
   });
   if (guard.proceed) return void 0;
   deps.log.info(`\u{1F989} fixowl: ${guard.reason}`);
@@ -51237,6 +51258,7 @@ async function run() {
       defaultBranch: repoData.default_branch,
       scheduledSlot,
       currentRunId,
+      cronSchedule: getInput("schedule") || void 0,
       labels,
       agentName,
       agentEnvNames: parseLabelInput(getInput("agent-env")),

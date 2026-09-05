@@ -48,6 +48,7 @@ jobs:
           max-issues-per-run: "4"
           issue-timeout-minutes: "45"
           source: "\${{ github.event.inputs.source }}"
+          schedule: "30 1 * * *"
         env:
           GITHUB_TOKEN: \${{ github.token }} # Actions: read, for the once-a-day budget guard
           FIXOWL_GITHUB_TOKEN: \${{ secrets.FIXOWL_GITHUB_TOKEN }}

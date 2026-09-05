@@ -63,6 +63,14 @@ inputs:
       blank for the cron and for manual runs.
     required: false
     default: ""
+  schedule:
+    description: >-
+      Internal. The workflow's cron expression (UTC), passed by the generated
+      workflow so the once-a-day budget guard anchors its "already ran" window to
+      the schedule occurrence instead of the UTC calendar day (correct across UTC
+      midnight). Empty degrades to the calendar day.
+    required: false
+    default: ""
 
 runs:
   using: node24
