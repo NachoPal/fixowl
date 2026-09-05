@@ -69,6 +69,13 @@ export {
   type WorkflowTemplateOptions,
 } from "./workflow-template.ts";
 export {
+  decideFallbackDispatch,
+  isSameUtcDay,
+  scheduledRunToday,
+  type FallbackDecision,
+  type WorkflowRunLite,
+} from "./fallback-dispatch.ts";
+export {
   STARTER_ISSUE_TEMPLATE,
   STARTER_ISSUE_TEMPLATE_PATH,
   STARTER_REPO_CONFIG,
