@@ -50653,6 +50653,13 @@ function sanitize(name) {
 }
 
 // packages/action/src/issue-pipeline.ts
+var AGENT_ERROR_EXCERPT_MAX = 300;
+function tail(text, max) {
+  return text.length <= max ? text : `...${text.slice(-max)}`;
+}
+function markdownCell(text) {
+  return text.replaceAll(/\s+/g, " ").replaceAll("|", "\\|").trim();
+}
 async function processIssue(deps, ctx) {
   const { git, engine, github, log: log2 } = deps;
   const { issue: issue3, branch } = ctx;
@@ -50691,10 +50698,14 @@ ${agentResult.stderr}
   );
   if (agentResult.timedOut || agentResult.code !== 0) {
     await git.discardAllChanges();
+    const reason = agentResult.timedOut ? `agent timed out after ${ctx.timeoutMs}ms` : `agent exited with code ${agentResult.code}`;
+    const output2 = `${agentResult.stdout}
+${agentResult.stderr}`.trim();
+    const excerpt = output2.length > 0 ? markdownCell(tail(output2, AGENT_ERROR_EXCERPT_MAX)) : "";
     return {
       ...base,
       status: "agent-failed",
-      error: agentResult.timedOut ? `agent timed out after ${ctx.timeoutMs}ms` : `agent exited with code ${agentResult.code}`
+      error: excerpt.length > 0 ? `${reason} - ${excerpt}` : reason
     };
   }
   if (!await git.hasChangesAgainst(ctx.baseRef)) {
@@ -51009,12 +51020,6 @@ async function classifyIssues(params) {
     );
   }
   return classification.chains;
-}
-function tail(text, max) {
-  return text.length <= max ? text : `...${text.slice(-max)}`;
-}
-function markdownCell(text) {
-  return text.replaceAll(/\s+/g, " ").replaceAll("|", "\\|").trim();
 }
 function wipeoutFailure(summary2) {
   const attempted = summary2.results;
