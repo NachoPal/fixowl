@@ -29,17 +29,25 @@
           - ".github/workflows/release.yml"
 
 # Other CI: any workflow EXCEPT the release workflow (that is `area: release`).
-# The two keys under one `changed-files` are ANDed: a change must touch a
-# workflow AND not be the release workflow, so release.yml never doubles up.
+# `all-globs-to-any-file` is true iff at least one changed file matches ALL of
+# these globs at once (labeler evaluates the two globs against the SAME file):
+# a file under .github/workflows/** AND, via Minimatch negation, not release.yml.
+# So the label fires exactly when some non-release workflow changed - a PR that
+# touches ONLY release.yml never matches (that is `area: release`), and a mixed
+# PR touching release.yml plus another workflow still gets `area: ci` for the
+# real CI change. This deliberately replaces the earlier two-rule form, whose
+# clauses labeler ORs (not ANDs), so the negated clause fired on nearly every PR.
 "area: ci":
   - changed-files:
-      - any-glob-to-any-file:
+      - all-globs-to-any-file:
           - ".github/workflows/**"
-      - all-globs-to-all-files:
           - "!.github/workflows/release.yml"
 
+# Docs: the docs/ tree and the top-level README. NOT a bare `*.md`, which also
+# catches root AGENTS.md / CLAUDE.md - those are agent-instruction files, not
+# documentation, and must not carry `area: docs`.
 "area: docs":
   - changed-files:
       - any-glob-to-any-file:
           - "docs/**"
-          - "*.md"
+          - "README.md"
