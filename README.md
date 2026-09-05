@@ -73,9 +73,9 @@ then runs the rest for you and stops with an explanation if a step fails:
 
 ```sh
 fixowl validate      # tokens, repos, docker engine, agent credentials
-fixowl provision     # labels + sealed secrets + workflow into each repo, and
-                     # registers the runner on this host (also proposes a starter
-                     # .fixowl.yml and issue template via PR)
+fixowl provision     # labels + sealed secrets into each repo, registers the runner
+                     # on this host, and proposes the workflow, a starter .fixowl.yml,
+                     # and an issue template via PR (--no-pr pushes the workflow direct)
 fixowl start         # installs and starts the runner service(s); no admin token needed
 ```
 
@@ -164,6 +164,11 @@ Playwright with chromium. Samples live in [templates/dockerfiles/](templates/doc
 Any Mac or Linux box with Docker. The reference setup is a spare Intel MacBook
 Pro with Colima; the host runs nothing stack-specific, only Docker and the
 runner. See [docs/host-bootstrap.md](docs/host-bootstrap.md).
+
+GitHub's `schedule` cron is unreliable. An opt-in **local fallback trigger** on
+the runner host dispatches the night run if the cron misses - without duplicate
+runs and without masking whether the cron works. See
+[docs/local-fallback.md](docs/local-fallback.md).
 
 ## Development
 

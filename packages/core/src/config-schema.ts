@@ -49,10 +49,23 @@ export const globalConfigSchema = z.object({
   github: z.object({
     admin_token: z.string().min(1),
     runtime_token: z.string().min(1),
+    /**
+     * Least-privilege PAT for the optional local fallback trigger: Actions:
+     * write only, used solely to dispatch the workflow when the cron misses.
+     * Separate from the setup-only admin token and the minimal runtime token.
+     */
+    fallback_token: z.string().min(1).optional(),
   }),
   runner: z
     .object({
       dir: z.string().min(1).optional(),
+    })
+    .optional(),
+  /** The optional host-local fallback trigger (`fixowl fallback`). */
+  fallback: z
+    .object({
+      /** Minutes after each repo's cron to run the local backup check. */
+      gap_minutes: z.number().int().positive().optional(),
     })
     .optional(),
   defaults: z
@@ -104,6 +117,13 @@ export const FIXOWL_DEFAULTS = {
   maxIssuesPerRun: 4,
   issueTimeoutMinutes: 45,
   runnerDir: "~/.fixowl/runners",
+  /**
+   * Minutes after the cron the local fallback fires. Generous on purpose:
+   * GitHub schedules also arrive late, and the check-then-dispatch logic makes
+   * exact timing non-critical as long as the fallback is reliably after the cron
+   * window. See docs/local-fallback.md.
+   */
+  fallbackGapMinutes: 30,
 } as const;
 
 export interface ResolvedRepoSettings {
@@ -170,6 +190,11 @@ export function resolvedModelSelectionErrors(settings: ResolvedRepoSettings): st
 
 export function runnerBaseDir(config: GlobalConfig): string {
   return config.runner?.dir ?? FIXOWL_DEFAULTS.runnerDir;
+}
+
+/** Minutes after the cron the local fallback trigger fires. */
+export function fallbackGapMinutes(config: GlobalConfig): number {
+  return config.fallback?.gap_minutes ?? FIXOWL_DEFAULTS.fallbackGapMinutes;
 }
 
 // ---------------------------------------------------------------------------

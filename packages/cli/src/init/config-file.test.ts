@@ -182,6 +182,26 @@ describe("renderConfigYaml", () => {
       /at least one repo/,
     );
   });
+
+  it("omits the fallback token unless the fallback is enabled", () => {
+    expect(
+      renderConfigYaml({ agent: "claude", agentEnv: ["CLAUDE_CODE_OAUTH_TOKEN"], repos: [repo()] }),
+    ).not.toContain("fallback_token");
+  });
+
+  it("wires the fallback token into the github block when enabled", () => {
+    const yaml = renderConfigYaml({
+      agent: "claude",
+      agentEnv: ["CLAUDE_CODE_OAUTH_TOKEN"],
+      repos: [repo()],
+      fallback: true,
+    });
+    expect(yaml).toContain("fallback_token: ${FIXOWL_FALLBACK_TOKEN}");
+    const config = globalConfigSchema.parse(
+      substituteSecretRefs(parseYaml(yaml), { ...SECRETS, FIXOWL_FALLBACK_TOKEN: "fb" }),
+    );
+    expect(config.github.fallback_token).toBe("fb");
+  });
 });
 
 describe("renderSecretsEnv", () => {

@@ -45,6 +45,7 @@ export {
   type ResolveModelSelectionParams,
 } from "./model-selection.ts";
 export {
+  fallbackGapMinutes,
   FIXOWL_DEFAULTS,
   globalConfigSchema,
   globalConfigSchemaChecked,
@@ -68,6 +69,23 @@ export {
   WORKFLOW_PATH,
   type WorkflowTemplateOptions,
 } from "./workflow-template.ts";
+export {
+  anchorOccurrence,
+  decideFallbackDispatch,
+  guardScheduledSlot,
+  isSameUtcDay,
+  isScheduledSlotRun,
+  scheduledRunSince,
+  scheduledRunToday,
+  tryParseDailyCron,
+  SCHEDULED_FALLBACK_MARKER,
+  SCHEDULED_FALLBACK_SOURCE,
+  type DailyCron,
+  type FallbackDecision,
+  type SlotGuardParams,
+  type SlotGuardResult,
+  type WorkflowRunLite,
+} from "./fallback-dispatch.ts";
 export {
   STARTER_ISSUE_TEMPLATE,
   STARTER_ISSUE_TEMPLATE_PATH,

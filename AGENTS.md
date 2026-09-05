@@ -77,6 +77,16 @@ See [docs/releasing.md](docs/releasing.md).
   read it. Extend an agent there rather than hardcoding a model list elsewhere.
   Per-issue model/effort resolution is pure logic in
   `packages/core/src/model-selection.ts`.
+- The optional local fallback trigger backs up GitHub's flaky `schedule` cron:
+  a per-repo macOS launchd agent runs `fixowl fallback check` after the cron and
+  dispatches the workflow only if today's `schedule` run is missing. Pure
+  decisions (`decideFallbackDispatch`, plus the once-a-day slot budget guard
+  `guardScheduledSlot` the action runs at night start) live in
+  `packages/core/src/fallback-dispatch.ts`; launchd/plist + DST-safe timing in
+  `packages/cli/src/runner/fallback-launchd.ts`; commands in
+  `packages/cli/src/commands/fallback.ts`. It uses its own least-privilege
+  `FIXOWL_FALLBACK_TOKEN` (Actions: write only) so the admin token stays
+  setup-only and revocable. See [docs/local-fallback.md](docs/local-fallback.md).
 - Night planning is two layers of pure logic between selection and the stacking
   loop in `main.ts`. Layer 1 (`packages/action/src/prereq-planner.ts`) enforces
   native `blocked-by` edges - fetched read-only via `GitHubApi.getIssueDependencies`
