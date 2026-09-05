@@ -7,9 +7,13 @@ export interface IdempotencyResult {
 }
 
 /**
- * The remote branch is the single source of truth for "already attempted":
- * open PR means in review, merged means done, closed-unmerged means
- * deliberately abandoned. Retrying an issue = delete its `issue/<n>-*` branch.
+ * A remote `issue/<n>-*` branch marks an issue as "already touched": every issue
+ * whose branch exists is returned in `skipped`. Whether that branch is genuinely
+ * *attempted* (has an associated PR - open means in review, merged means done,
+ * closed-unmerged means deliberately abandoned) or is *orphaned* interrupted
+ * work (pushed, then interrupted before the PR opened) is resolved by the caller
+ * via a per-branch PR lookup: an orphaned branch is reset and its issue retried,
+ * not stranded (issue #57). Retrying an issue = delete its `issue/<n>-*` branch.
  */
 export function filterAlreadyAttempted(
   issues: readonly IssueLite[],

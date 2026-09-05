@@ -56,8 +56,10 @@ export class FakeGitHub implements GitHubApi {
   comments: Array<{ issueNumber: number; body: string }> = [];
   /** Native dependency edges keyed by issue number; empty means no edges (today's behavior). */
   dependencies: Map<number, IssueDeps> = new Map();
-  /** PR liveness keyed by head branch, for the in-flight stacking-base lookup (issue #48). */
+  /** PR liveness keyed by head branch, for the per-branch PR lookup (issues #48, #57). */
   pullsByBranch: Map<string, PullRequestLite> = new Map();
+  /** Every branch passed to getPullRequestForBranch, in call order (boundedness assertions). */
+  prLookups: string[] = [];
   /** Recent workflow runs the scheduled-slot guard sees; empty by default. */
   workflowRuns: WorkflowRunLite[] = [];
   /** PR numbers flipped ready-for-review, in order. */
@@ -95,6 +97,7 @@ export class FakeGitHub implements GitHubApi {
   }
 
   async getPullRequestForBranch(branch: string): Promise<PullRequestLite | undefined> {
+    this.prLookups.push(branch);
     return this.pullsByBranch.get(branch);
   }
 
@@ -111,6 +114,11 @@ export class FakeGitHub implements GitHubApi {
     }
     const number = ++this.nextPrNumber;
     this.pulls.push({ number, ...params });
+    // A created PR is discoverable by its head branch (open), matching the real
+    // API, so a rerun's per-branch PR lookup sees it (issues #48, #57).
+    if (!this.pullsByBranch.has(params.head)) {
+      this.pullsByBranch.set(params.head, { number, state: "OPEN" });
+    }
     return { number, url: this.prUrl(number) };
   }
 

@@ -1049,6 +1049,78 @@ describe("runNight", () => {
     });
   });
 
+  describe("orphaned branch retry (issue #57)", () => {
+    it("re-selects an issue whose branch exists but has no PR, resetting the stale branch", async () => {
+      const { originDir, workspaceDir, inputs } = await setup();
+      // A prior night pushed #1's branch, then was interrupted before opening a
+      // PR: the branch exists remotely but no PR points at it.
+      await pushInFlightBranch(originDir, "issue/1-fix-header", "orphan.txt");
+      const github = new FakeGitHub([issue(1, "Fix header", "x")]);
+      // Deliberately no pullsByBranch entry: getPullRequestForBranch returns undefined.
+      const engine = makeEngine({ workspaceDir });
+
+      const summary = await runNight(
+        { github, engine, exec: realExec, log: silentLog, clock: instantClock() },
+        inputs,
+      );
+
+      // The issue is retried, not stranded: the agent ran and a PR was opened.
+      expect(summary.skipped).toEqual([]);
+      expect(summary.results.map((r) => [r.issue.number, r.status])).toEqual([[1, "pr-opened"]]);
+      expect(engine.runs.some((spec) => spec.name.endsWith("-1-agent"))).toBe(true);
+      expect(github.pulls.map((pr) => [pr.head, pr.base])).toEqual([
+        ["issue/1-fix-header", "main"],
+      ]);
+      // The stale branch was reset: it now carries the fresh fix, not the orphan work.
+      const files = await git(workspaceDir, "ls-tree", "-r", "--name-only", "issue/1-fix-header");
+      expect(files).toContain("fix-1.txt");
+      expect(files).not.toContain("orphan.txt");
+    });
+
+    it.each([
+      ["open", "OPEN"],
+      ["merged", "MERGED"],
+      ["closed-unmerged", "CLOSED"],
+    ] as const)("still skips a branch whose PR is %s", async (_label, state) => {
+      const { originDir, workspaceDir, inputs } = await setup();
+      await pushInFlightBranch(originDir, "issue/1-fix-header", "prior.txt");
+      const github = new FakeGitHub([issue(1, "Fix header", "x")]);
+      github.pullsByBranch.set("issue/1-fix-header", { number: 101, state });
+      const engine = makeEngine({ workspaceDir });
+
+      const summary = await runNight(
+        { github, engine, exec: realExec, log: silentLog, clock: instantClock() },
+        inputs,
+      );
+
+      // A branch with any PR is a genuine attempt: skip it, run nothing, touch nothing.
+      expect(summary.skipped.map((s) => s.issue.number)).toEqual([1]);
+      expect(summary.results).toEqual([]);
+      expect(engine.runs.some((spec) => spec.name.endsWith("-1-agent"))).toBe(false);
+      expect(github.pulls).toEqual([]);
+      expect(await remoteBranches(originDir)).toContain("issue/1-fix-header");
+    });
+
+    it("looks up PRs only for branch-matching issues, not every issue", async () => {
+      const { originDir, workspaceDir, inputs } = await setup();
+      // Only #1 has an existing branch (an open PR); #2 and #3 are fresh.
+      await pushInFlightBranch(originDir, "issue/1-fix-header", "prior.txt");
+      const github = new FakeGitHub(structuredClone(threeIssues));
+      github.pullsByBranch.set("issue/1-fix-header", { number: 101, state: "OPEN" });
+      const engine = makeEngine({ workspaceDir, classifyOutput: '{"chains": [[2], [3]]}' });
+
+      const summary = await runNight(
+        { github, engine, exec: realExec, log: silentLog, clock: instantClock() },
+        inputs,
+      );
+
+      // The per-branch PR lookup touched only the one branch-matching issue.
+      expect(github.prLookups).toEqual(["issue/1-fix-header"]);
+      expect(summary.skipped.map((s) => s.issue.number)).toEqual([1]);
+      expect(summary.results.map((r) => r.issue.number)).toEqual([2, 3]);
+    });
+  });
+
   describe("scheduled-slot budget guard", () => {
     it("stands a scheduled-slot run down when an earlier slot run already covered today", async () => {
       const { workspaceDir, inputs } = await setup();
