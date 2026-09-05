@@ -203,3 +203,136 @@ jobs:
             echo "Would create git tag ${GIT_TAG} (push: ${PUSH_GIT_TAG}; move ${MAJOR_TAG}: ${MOVE_MAJOR})."
             echo "GitHub Release draft: ${IS_DRAFT}, prerelease: ${IS_PRERELEASE}."
           } >> "${GITHUB_STEP_SUMMARY}"
+
+  # Real-call end-to-end smoke test of the just-built action against a dedicated,
+  # persistent sandbox repo (NachoPal/fixowl-e2e-sandbox). It seeds throwaway
+  # `for: agent` issues with one native blocked_by edge, runs the freshly-built
+  # dist/action/index.js retargeted at the sandbox with a forced-cheap model
+  # (sonnet/medium for EVERY issue), asserts loosely that PRs landed on the
+  # expected issue/<n>-* branches with the dependency order respected and CI
+  # green, and tears everything down. See docs/adr/0001-*.
+  #
+  # REPORT-ONLY (continue-on-error): a paid, nondeterministic agent test must not
+  # veto a release on its first flake. Promote to a hard gate once the flake rate
+  # is known. This validates the GitHub-hosted action->docker->agent->push->PR->
+  # CI-gate path; it does NOT cover self-hosted runner registration, the launchd
+  # fallback, or the scheduled-slot budget guard (all inert on manual dispatch).
+  e2e:
+    name: E2E (real sonnet call against the sandbox)
+    needs: [release]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    continue-on-error: true # report-only to start; see the ADR
+    permissions:
+      contents: read # checkout only; the sandbox is reached with its own PAT
+    # Serialize every workflow that touches the one shared sandbox (this job and
+    # the free script-adapter E2E) so runs never race on branches/issues.
+    concurrency:
+      group: fixowl-e2e-sandbox
+      cancel-in-progress: false
+    env:
+      SANDBOX_REPO: NachoPal/fixowl-e2e-sandbox
+      E2E_MODE: paid
+      RUN_TAG: paid-${{ github.run_id }}-${{ github.run_attempt }}
+      GH_TOKEN: ${{ secrets.FIXOWL_E2E_SANDBOX_TOKEN }} # for the fixture gh calls
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@d9184bf108216479bc5a137cc391f4d7b14c870b # v6.1.0
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build the action bundle under test
+        run: pnpm build
+
+      # The action operates on whatever GITHUB_WORKSPACE points at, so check the
+      # sandbox out beside the fixowl tree and retarget the action at it below.
+      - name: Checkout the sandbox repo
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: NachoPal/fixowl-e2e-sandbox
+          token: ${{ secrets.FIXOWL_E2E_SANDBOX_TOKEN }}
+          path: sandbox
+          fetch-depth: 0
+          persist-credentials: false # the action pushes with its own PAT
+
+      - name: Seed sandbox fixtures
+        id: seed
+        run: bash scripts/e2e/seed.sh
+
+      - name: Run fixowl against the sandbox (real sonnet call)
+        id: run
+        env:
+          FIXOWL_GITHUB_TOKEN: ${{ secrets.FIXOWL_E2E_SANDBOX_TOKEN }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Action inputs (read by @actions/core.getInput as INPUT_<NAME
+          # upper-cased, spaces->_, hyphens kept>).
+          INPUT_LABELS-ANY: "for: agent"
+          INPUT_AGENT: claude
+          INPUT_AGENT-ENV: CLAUDE_CODE_OAUTH_TOKEN
+          INPUT_DEFAULT-MODEL: sonnet
+          INPUT_DEFAULT-EFFORT: medium
+          INPUT_LABEL-MODELS: "" # empty => every issue falls back to sonnet/medium
+          INPUT_MAX-ISSUES-PER-RUN: "3"
+          INPUT_ISSUE-TIMEOUT-MINUTES: "15"
+          INPUT_MAX-CI-TRIES: "2"
+          INPUT_CI-TIMEOUT-MINUTES: "15"
+          INPUT_HEURISTIC-CONFLICT-ORDERING: "false"
+        run: |
+          set -euo pipefail
+          DIST="$PWD/dist/action/index.js"
+          # The runner ignores env: overrides of GITHUB_*/RUNNER_* vars, so a
+          # `uses: ./` step would run against the real fixowl repo. Set them with
+          # a shell export (not policed) and run the built binary directly.
+          export GITHUB_REPOSITORY="$SANDBOX_REPO"
+          export GITHUB_WORKSPACE="$GITHUB_WORKSPACE/sandbox"
+          export GITHUB_EVENT_NAME=workflow_dispatch # keep the budget guard inert
+          node "$DIST"
+
+      - name: Assert delivery (loose)
+        id: assert
+        env:
+          A: ${{ steps.seed.outputs.A }}
+          B: ${{ steps.seed.outputs.B }}
+        run: bash scripts/e2e/assert.sh
+
+      - name: Tear down sandbox fixtures
+        if: always()
+        env:
+          A: ${{ steps.seed.outputs.A }}
+          B: ${{ steps.seed.outputs.B }}
+        run: bash scripts/e2e/cleanup.sh
+
+      - name: E2E summary
+        if: always()
+        env:
+          RUN_OUTCOME: ${{ steps.run.outcome }}
+          ASSERT_OUTCOME: ${{ steps.assert.outcome }}
+        run: |
+          {
+            echo "## fixowl real-call E2E (report-only)"
+            echo ""
+            echo "- Sandbox: \`${SANDBOX_REPO}\` (run tag \`${RUN_TAG}\`)"
+            echo "- Action run step: **${RUN_OUTCOME}**"
+            echo "- Loose assertions: **${ASSERT_OUTCOME}**"
+            echo ""
+            if [ "${ASSERT_OUTCOME}" = "success" ]; then
+              echo "PASS: real agent -> docker -> push -> PR -> CI-gate -> ready, with blocked_by stacking."
+            else
+              echo "NOT PASSING (report-only, does not block the release). Investigate above."
+            fi
+            echo ""
+            echo "### Coverage honesty"
+            echo "This validates only the **GitHub-hosted** action->docker->agent->push->PR->CI-gate path."
+            echo "It does **NOT** cover: self-hosted runner registration (\`fixowl provision\`/\`registerRunner\`),"
+            echo "the launchd local fallback trigger, or the once-a-day scheduled-slot budget guard"
+            echo "(inert on manual dispatch). Those remain covered only by unit tests."
+          } >> "${GITHUB_STEP_SUMMARY}"
