@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-09-05
 decision-makers: [captain (NachoPal)]
 ---
@@ -28,7 +28,27 @@ Chosen option: **C**. Add one `e2e` job to `release.yml`, gated to run only on a
 
 In addition, add a free, deterministic `script`-adapter E2E that exercises the whole pipeline plumbing (selection -> dependency ordering -> docker build -> container run -> local pre-check -> push -> CI-gate -> PR -> verify) with zero LLM spend, on a main-push / nightly cadence.
 
-Three items remain open for the captain and gate implementation (not this record): the gating policy (start report-only / `continue-on-error`, promote to a hard release gate once the flake rate is known - recommended), the provisioning approval (create the sandbox repo + secret - needs org admin), and the free-tier cadence (main-push + nightly vs every-PR).
+### Decisions ratified
+
+The captain ratified the following three points on 2026-09-05:
+
+1. **Gating - report-only to start.** The real-call sonnet E2E begins **report-only**
+   (`continue-on-error` with a loud step summary), **not** a hard release gate. A paid,
+   nondeterministic agent test must not be able to veto a release on its first flake. It may be
+   promoted to a hard gate later, once its flake rate is known over several releases.
+
+2. **Sandbox isolation - Option A (persistent dedicated repo).** Use a persistent, dedicated
+   `NachoPal/fixowl-e2e-sandbox` repo, provisioned once, with per-run fixtures torn down under
+   `if: always()`, and a sandbox-scoped `FIXOWL_E2E_SANDBOX_TOKEN` secret added to fixowl's Actions
+   secrets. This fully isolates the blast radius, keeps the token minimal (no repo-admin), and keeps
+   the docker image build fast. Rejected alternatives: a throwaway repo created and deleted per run
+   (needs a much riskier repo-admin token and a destructive `gh repo delete`), and reset-in-place on
+   the real fixowl repo behind a label filter (one config slip = fake PRs on the real repo).
+
+3. **Tiers and cadence - two-tier plan.** Adopt both tiers: a **free `script`-adapter E2E**
+   (deterministic, zero LLM spend, exercising the whole pipeline plumbing) plus the **paid real-call
+   `claude` sonnet release E2E**. Run the free tier on **main-push + nightly** (not every PR, which
+   would race concurrent runs on the one shared sandbox); keep the paid tier gated to release.
 
 ### Consequences
 
@@ -38,7 +58,8 @@ Three items remain open for the captain and gate implementation (not this record
 * Good, because cost is trivial (~$0.30-0.75, or a small slice of the subscription usage window, per release run).
 * Bad, because it adds infrastructure the project did not have: a dedicated sandbox repo and a sandbox-scoped secret, both requiring org-admin setup.
 * Bad, because a real agent is nondeterministic, forcing loose assertions and an initially report-only gate rather than an exact-diff, hard-blocking test.
-* Bad (constraint accepted), because the action must be invoked as the built binary with shell-`export`ed `GITHUB_*` vars, and the E2E validates the GitHub-hosted path rather than self-hosted-runner-specific behavior (registration, launchd).
+* Bad (constraint accepted), because the action must be invoked as the built binary with shell-`export`ed `GITHUB_*` vars.
+* Coverage boundary: this validates the action -> docker -> agent -> push -> PR -> CI-gate flow on GitHub-hosted runners, but does **not** cover self-hosted runner registration, the launchd fallback trigger, or the scheduled-slot budget guard (inert on manual/release dispatch). The job summary should say so, so a green run is not over-read.
 
 ## More Information
 
