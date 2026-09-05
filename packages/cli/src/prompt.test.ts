@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { maskSecret, secretConfirmation } from "./prompt.ts";
+import { maskSecret, secretConfirmation, selectionSummary } from "./prompt.ts";
 
 describe("secretConfirmation", () => {
   it("confirms a captured value with a masked preview, never the raw secret", () => {
@@ -15,5 +15,16 @@ describe("secretConfirmation", () => {
 
   it("says nothing for an empty answer with no existing value to keep", () => {
     expect(secretConfirmation("", false)).toBe("");
+  });
+});
+
+describe("selectionSummary", () => {
+  it("recaps what a selector block left behind, on one line", () => {
+    expect(selectionSummary("  Default model", ["opus"])).toBe("  Default model: opus\n");
+    expect(selectionSummary("  Labels", ["heavy", "quick"])).toBe("  Labels: heavy, quick\n");
+  });
+
+  it("says so when nothing was selected", () => {
+    expect(selectionSummary("  Labels", [])).toBe("  Labels: (none)\n");
   });
 });
