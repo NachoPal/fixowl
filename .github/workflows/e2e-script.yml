@@ -1,0 +1,144 @@
+# Free, deterministic end-to-end test: run the whole fixowl pipeline against the
+# real sandbox with the `script` adapter (issue bodies are bash edit scripts),
+# so there is ZERO LLM spend but the full real plumbing runs - selection,
+# Layer-1 dependency ordering + stacking, docker build, hardened container run,
+# local pre-check, real push, real PR, the CI gate, draft->ready, and cleanup.
+# The paid, release-gated real-call E2E (release.yml) validates the one thing
+# this tier cannot: a real agent, real auth, and the real --model/--effort flags.
+#
+# Cadence: on push to main and nightly (NOT every PR - the shared sandbox would
+# race concurrent runs). It shares the `fixowl-e2e-sandbox` concurrency group
+# with the release E2E so only one run ever touches the sandbox at a time, and
+# each run tags its fixtures with a unique RUN_TAG.
+name: e2e-script
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 4 * * *" # nightly, off-peak UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fixowl-e2e-sandbox
+  cancel-in-progress: false
+
+jobs:
+  e2e-script:
+    name: E2E (free script adapter against the sandbox)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      SANDBOX_REPO: NachoPal/fixowl-e2e-sandbox
+      E2E_MODE: free
+      RUN_TAG: free-${{ github.run_id }}-${{ github.run_attempt }}
+      GH_TOKEN: ${{ secrets.FIXOWL_E2E_SANDBOX_TOKEN }} # for the fixture gh calls
+    steps:
+      # Until the captain provisions the sandbox repo + FIXOWL_E2E_SANDBOX_TOKEN,
+      # skip cleanly (green) instead of failing every main-push.
+      - name: Check sandbox is provisioned
+        id: guard
+        run: |
+          if [ -z "${GH_TOKEN}" ]; then
+            echo "FIXOWL_E2E_SANDBOX_TOKEN not set - sandbox not provisioned yet; skipping." >> "${GITHUB_STEP_SUMMARY}"
+            echo "ready=false" >> "${GITHUB_OUTPUT}"
+          else
+            echo "ready=true" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        if: steps.guard.outputs.ready == 'true'
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@d9184bf108216479bc5a137cc391f4d7b14c870b # v6.1.0
+        if: steps.guard.outputs.ready == 'true'
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        if: steps.guard.outputs.ready == 'true'
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        if: steps.guard.outputs.ready == 'true'
+        run: pnpm install --frozen-lockfile
+
+      - name: Build the action bundle under test
+        if: steps.guard.outputs.ready == 'true'
+        run: pnpm build
+
+      - name: Checkout the sandbox repo
+        if: steps.guard.outputs.ready == 'true'
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: NachoPal/fixowl-e2e-sandbox
+          token: ${{ secrets.FIXOWL_E2E_SANDBOX_TOKEN }}
+          path: sandbox
+          fetch-depth: 0
+          persist-credentials: false # the action pushes with its own PAT
+
+      - name: Seed sandbox fixtures
+        id: seed
+        if: steps.guard.outputs.ready == 'true'
+        run: bash scripts/e2e/seed.sh
+
+      - name: Run fixowl against the sandbox (script adapter, no LLM spend)
+        id: run
+        if: steps.guard.outputs.ready == 'true'
+        env:
+          FIXOWL_GITHUB_TOKEN: ${{ secrets.FIXOWL_E2E_SANDBOX_TOKEN }}
+          FIXOWL_UNSAFE_SCRIPT_AGENT: "1" # the script adapter is refused without this
+          INPUT_LABELS-ANY: "for: agent"
+          INPUT_AGENT: script
+          INPUT_MAX-ISSUES-PER-RUN: "3"
+          INPUT_ISSUE-TIMEOUT-MINUTES: "15"
+          INPUT_MAX-CI-TRIES: "2"
+          INPUT_CI-TIMEOUT-MINUTES: "15"
+          INPUT_HEURISTIC-CONFLICT-ORDERING: "false"
+        run: |
+          set -euo pipefail
+          DIST="$PWD/dist/action/index.js"
+          # Retarget the built action at the sandbox: GITHUB_*/RUNNER_* env:
+          # overrides are ignored by the runner, so set them via shell export.
+          export GITHUB_REPOSITORY="$SANDBOX_REPO"
+          export GITHUB_WORKSPACE="$GITHUB_WORKSPACE/sandbox"
+          export GITHUB_EVENT_NAME=workflow_dispatch # keep the budget guard inert
+          node "$DIST"
+
+      - name: Assert delivery (loose)
+        id: assert
+        if: steps.guard.outputs.ready == 'true'
+        env:
+          A: ${{ steps.seed.outputs.A }}
+          B: ${{ steps.seed.outputs.B }}
+        run: bash scripts/e2e/assert.sh
+
+      - name: Tear down sandbox fixtures
+        if: always() && steps.guard.outputs.ready == 'true'
+        env:
+          A: ${{ steps.seed.outputs.A }}
+          B: ${{ steps.seed.outputs.B }}
+        run: bash scripts/e2e/cleanup.sh
+
+      - name: E2E summary
+        if: always() && steps.guard.outputs.ready == 'true'
+        env:
+          RUN_OUTCOME: ${{ steps.run.outcome }}
+          ASSERT_OUTCOME: ${{ steps.assert.outcome }}
+        run: |
+          {
+            echo "## fixowl free script-adapter E2E"
+            echo ""
+            echo "- Sandbox: \`${SANDBOX_REPO}\` (run tag \`${RUN_TAG}\`)"
+            echo "- Action run step: **${RUN_OUTCOME}**"
+            echo "- Loose assertions: **${ASSERT_OUTCOME}**"
+            echo ""
+            echo "### Coverage honesty"
+            echo "Deterministic, zero-LLM plumbing test. Does **NOT** cover the real agent /"
+            echo "auth / --model / --effort path (that is the release-gated E2E), nor self-hosted"
+            echo "runner registration, the launchd fallback, or the scheduled-slot budget guard."
+          } >> "${GITHUB_STEP_SUMMARY}"
