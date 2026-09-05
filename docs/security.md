@@ -51,12 +51,14 @@ issue body (untrusted)
 
 ## Tokens
 
-Two fine-grained PATs, both scoped to only the target repos:
+Two fine-grained PATs (plus one optional third), all scoped to only the target
+repos:
 
 | token | permissions | lives |
 | --- | --- | --- |
 | admin | Administration RW, Secrets RW, Contents RW, Workflows RW, Issues RW, Actions RW | CLI machine only (`~/.fixowl/secrets.env`, chmod 600) |
 | runtime | Contents RW, Pull requests RW, Issues RW | repo Actions secret `FIXOWL_GITHUB_TOKEN` |
+| fallback (optional) | Actions RW only | CLI/runner host only (`~/.fixowl/secrets.env`, chmod 600) as `FIXOWL_FALLBACK_TOKEN` |
 
 - **The admin token is setup-only.** It is spent by `fixowl provision` (labels,
   secrets, workflow) and by runner registration - registration is the only
@@ -81,6 +83,17 @@ Two fine-grained PATs, both scoped to only the target repos:
   by elevating it.
 - The runtime PAT (not `GITHUB_TOKEN`) authors PRs so the target repo's own CI
   triggers on them.
+- **The fallback token is optional and least-privilege.** The local fallback
+  trigger ([local-fallback.md](local-fallback.md)) needs **Actions: write** to
+  dispatch the workflow when the cron misses - which the admin token (setup-only,
+  meant to be revoked/downgraded) and the runtime token (in-repo, least
+  privilege) deliberately do not provide for an always-on host job. Rather than
+  keeping a full-admin token live or widening the runtime token, the fallback
+  uses its own dedicated PAT holding **only Actions RW** on the target repos,
+  stored on the host as `FIXOWL_FALLBACK_TOKEN`. This preserves the
+  admin-token-is-setup-only property: with the fallback enabled you can still
+  revoke or downgrade the admin token. The workflow's own once-a-day budget guard
+  lists runs with the ephemeral `GITHUB_TOKEN` (Actions: read), never this token.
 - On the runner, the runtime PAT is injected into git fetch/push commands as an
   env-based `http.extraheader` only. It never appears in argv (`ps`), in git
   error output, or in any file under the workspace or the git dir. The git dir
