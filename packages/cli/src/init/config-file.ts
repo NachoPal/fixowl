@@ -173,6 +173,11 @@ ${cronLine("  ", base)}
   agent: ${answers.agent}
   max_issues_per_run: ${base.maxIssuesPerRun}
   issue_timeout_minutes: ${FIXOWL_DEFAULTS.issueTimeoutMinutes}${defaultModelBlock}
+  # heuristic_conflict_ordering: true   # opt-in Layer 2: an LLM groups & stacks
+  #   non-dependent issues that touch the same files, to avoid merge conflicts.
+  #   Off by default: fixowl never merges (so never restacks what it stacks),
+  #   independent PRs review more robustly, and the classifier is a paid LLM guess.
+  #   Native blocked_by ordering (Layer 1) is always-on regardless.
 
 # Per-agent env allowlist: the ONLY env vars entering per-issue containers.
 agents:

@@ -82,6 +82,10 @@ async function setup(fixowlYml?: string): Promise<Setup> {
     agentName: "script",
     maxIssues: 4,
     issueTimeoutMinutes: 1,
+    // Existing behavior tests exercise Layer 2 (the heuristic classifier), which
+    // is opt-in and off by default; enable it here. The default-off path has its
+    // own dedicated tests below.
+    heuristicConflictOrdering: true,
     workspaceDir,
     tempDir,
     runUrl: "https://github.com/test/repo/actions/runs/1",
@@ -379,6 +383,73 @@ describe("runNight", () => {
     await runNight({ github, engine, exec: realExec, log: silentLog }, inputs);
     const classifyRun = engine.runs.find((spec) => spec.name.includes("-classify-"));
     expect(classifyRun?.workspaceReadOnly).toBe(true);
+  });
+
+  describe("Layer 2 opt-in (heuristicConflictOrdering, default off)", () => {
+    it("off (default): skips the classifier and treats every issue as independent", async () => {
+      const { originDir, workspaceDir, inputs } = await setup();
+      const github = new FakeGitHub(structuredClone(threeIssues));
+      // A classifier output that WOULD stack #1 and #2 - ignored when off, and the
+      // container must never run at all so its cost/latency is never spent.
+      const engine = makeEngine({ workspaceDir, classifyOutput: '{"chains": [[1, 2], [3]]}' });
+
+      const summary = await runNight(
+        { github, engine, exec: realExec, log: silentLog },
+        { ...inputs, heuristicConflictOrdering: false },
+      );
+
+      expect(engine.runs.some((spec) => spec.name.includes("-classify-"))).toBe(false);
+      expect(summary.results.map((r) => r.status)).toEqual(["pr-opened", "pr-opened", "pr-opened"]);
+      // Every PR bases off the default branch; no cross-issue stacking.
+      expect(github.pulls.map((pr) => [pr.head, pr.base])).toEqual([
+        ["issue/1-fix-header", "main"],
+        ["issue/2-fix-footer", "main"],
+        ["issue/3-fix-sidebar", "main"],
+      ]);
+      expect(github.pulls.some((pr) => pr.body.includes("Stacked on"))).toBe(false);
+      const branches = await remoteBranches(originDir);
+      expect(branches).toContain("issue/1-fix-header");
+      expect(branches).toContain("issue/2-fix-footer");
+      expect(branches).toContain("issue/3-fix-sidebar");
+    });
+
+    it("off: undefined flag behaves as off (classifier skipped)", async () => {
+      const { workspaceDir, inputs } = await setup();
+      const github = new FakeGitHub([issue(1, "Fix header", "x"), issue(2, "Fix footer", "y")]);
+      const engine = makeEngine({ workspaceDir, classifyOutput: '{"chains": [[1, 2]]}' });
+
+      const { heuristicConflictOrdering: _omit, ...noFlag } = inputs;
+      const summary = await runNight({ github, engine, exec: realExec, log: silentLog }, noFlag);
+
+      expect(engine.runs.some((spec) => spec.name.includes("-classify-"))).toBe(false);
+      expect(github.pulls.map((pr) => pr.base)).toEqual(["main", "main"]);
+      expect(summary.results.map((r) => r.status)).toEqual(["pr-opened", "pr-opened"]);
+    });
+
+    it("off: native blocked_by (Layer 1) still stacks a same-night dependent", async () => {
+      const { workspaceDir, inputs } = await setup();
+      const github = new FakeGitHub([issue(1, "Fix header", "x"), issue(2, "Fix footer", "y")]);
+      // #2 is natively blocked by #1; both ship tonight.
+      github.dependencies.set(2, {
+        number: 2,
+        blockedBy: [{ number: 1, repo: "test/repo", state: "OPEN" }],
+      });
+      const engine = makeEngine({ workspaceDir, classifyOutput: '{"chains": [[1], [2]]}' });
+
+      const summary = await runNight(
+        { github, engine, exec: realExec, log: silentLog },
+        { ...inputs, heuristicConflictOrdering: false },
+      );
+
+      // Classifier never runs, yet the native edge still stacks #2 on #1.
+      expect(engine.runs.some((spec) => spec.name.includes("-classify-"))).toBe(false);
+      expect(summary.deferred).toEqual([]);
+      expect(github.pulls.map((pr) => [pr.head, pr.base])).toEqual([
+        ["issue/1-fix-header", "main"],
+        ["issue/2-fix-footer", "issue/1-fix-header"],
+      ]);
+      expect(github.pulls[1]?.body).toContain("Stacked on #101");
+    });
   });
 
   it("respects max_issues_per_run", async () => {

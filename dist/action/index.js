@@ -49687,7 +49687,13 @@ var repoEntrySchema = external_exports.object({
   /** Default reasoning effort for this repo when an issue carries no selector label. */
   effort: external_exports.string().min(1).optional(),
   /** Model-selector labels for this repo (see labelModelsSchema). */
-  label_models: labelModelsSchema.optional()
+  label_models: labelModelsSchema.optional(),
+  /**
+   * Opt-in Layer 2: the LLM same-files classifier that groups and stacks
+   * non-dependent issues to reduce merge conflicts. Default off; native
+   * `blocked_by` ordering (Layer 1) is always-on and unaffected.
+   */
+  heuristic_conflict_ordering: external_exports.boolean().optional()
 });
 var globalConfigSchema = external_exports.object({
   version: external_exports.literal(1),
@@ -49718,7 +49724,9 @@ var globalConfigSchema = external_exports.object({
     /** Fallback model used by any repo that does not set its own. */
     model: external_exports.string().min(1).optional(),
     /** Fallback reasoning effort used by any repo that does not set its own. */
-    effort: external_exports.string().min(1).optional()
+    effort: external_exports.string().min(1).optional(),
+    /** Default Layer 2 (heuristic conflict-ordering) toggle for every repo. */
+    heuristic_conflict_ordering: external_exports.boolean().optional()
   }).optional(),
   agents: external_exports.record(external_exports.string(), agentSettingsSchema).optional(),
   repos: external_exports.array(repoEntrySchema).min(1)
@@ -49742,6 +49750,13 @@ var FIXOWL_DEFAULTS = {
   agent: "claude",
   maxIssuesPerRun: 4,
   issueTimeoutMinutes: 45,
+  /**
+   * Layer 2 (heuristic same-files conflict-ordering) is off by default: fixowl
+   * never merges, so it never restacks what it stacks; independent PRs are more
+   * robust for piecemeal review; and the classifier is a paid LLM guess. Layer 1
+   * native `blocked_by` ordering is always-on and unaffected. See docs/stacked-prs.md.
+   */
+  heuristicConflictOrdering: false,
   runnerDir: "~/.fixowl/runners",
   /**
    * Minutes after the cron the local fallback fires. Generous on purpose:
@@ -49771,7 +49786,8 @@ function resolveRepoSettings(config2, repoName) {
     defaultModel: entry.model ?? defaults.model,
     defaultEffort: entry.effort ?? defaults.effort,
     // Selector labels are per-repo by design; they are not merged from defaults.
-    labelModels: entry.label_models ?? {}
+    labelModels: entry.label_models ?? {},
+    heuristicConflictOrdering: entry.heuristic_conflict_ordering ?? defaults.heuristic_conflict_ordering ?? FIXOWL_DEFAULTS.heuristicConflictOrdering
   };
 }
 function resolvedModelSelectionErrors(settings) {
@@ -50879,7 +50895,7 @@ async function runNightWithGit(deps, inputs, git) {
     model: inputs.defaultModel,
     effort: inputs.defaultEffort
   };
-  const conflictChains = await classifyIssues({
+  const conflictChains = inputs.heuristicConflictOrdering === true ? await classifyIssues({
     engine,
     log: log2,
     warnings,
@@ -50888,10 +50904,10 @@ async function runNightWithGit(deps, inputs, git) {
     agentEnv,
     image,
     inputs,
-    // Classification spans all issues at once, so it uses the repo default, not
-    // any single issue's selector label.
+    // Classification spans all issues at once, so it uses the repo default,
+    // not any single issue's selector label.
     selection: defaultSelection
-  });
+  }) : allIndependent(shippable.map((issue3) => issue3.number));
   const chainNumbers = mergeGraphs(conflictChains, prereqPlan.prereqs);
   const chains = planChains(shippable, chainNumbers);
   const shipped = /* @__PURE__ */ new Set();
@@ -51310,6 +51326,13 @@ function parseLabelModelsInput(raw) {
   }
   return labelModelsSchema.parse(parsed);
 }
+function booleanInput(name, fallback) {
+  const raw = getInput(name);
+  if (raw === "") return fallback;
+  if (raw === "true") return true;
+  if (raw === "false") return false;
+  throw new Error(`input ${name} must be "true" or "false", got "${raw}"`);
+}
 function positiveIntInput(name, fallback) {
   const raw = getInput(name);
   if (raw === "") return fallback;
@@ -51369,6 +51392,7 @@ async function run() {
       defaultModel: getInput("default-model") || void 0,
       defaultEffort: getInput("default-effort") || void 0,
       labelModels: parseLabelModelsInput(getInput("label-models")),
+      heuristicConflictOrdering: booleanInput("heuristic-conflict-ordering", false),
       workspaceDir,
       tempDir,
       runUrl,

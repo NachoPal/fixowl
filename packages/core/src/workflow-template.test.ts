@@ -60,6 +60,16 @@ describe("renderFixowlWorkflow", () => {
     expect(rendered).not.toContain("label-models:");
   });
 
+  it("omits heuristic-conflict-ordering when off (default), renders it when on", () => {
+    expect(renderFixowlWorkflow(baseOptions)).not.toContain("heuristic-conflict-ordering:");
+    expect(
+      renderFixowlWorkflow({ ...baseOptions, heuristicConflictOrdering: false }),
+    ).not.toContain("heuristic-conflict-ordering:");
+    expect(renderFixowlWorkflow({ ...baseOptions, heuristicConflictOrdering: true })).toContain(
+      'heuristic-conflict-ordering: "true"',
+    );
+  });
+
   it("renders default model/effort and a JSON label-models input when set", () => {
     const rendered = renderFixowlWorkflow({
       ...baseOptions,

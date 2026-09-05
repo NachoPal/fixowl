@@ -97,11 +97,17 @@ See [docs/releasing.md](docs/releasing.md).
   read-only `GitHubApi.getPullRequestForBranch`; the dependent's PR then stacks on
   that already-pushed branch. Liveness, not branch existence: a merged PR is
   satisfied (base from default), a closed-unmerged/PR-less branch defers. This is
-  native-edge-only. Layer 2 (`classify.ts`, unchanged same-code heuristic) runs
-  over the non-deferred set; `merge-graph.ts` overlays its groups on the Layer-1
-  order under "prerequisites always win", and never stacks on a skipped branch
-  across nights. Empty edges == the pre-dep-graph behavior (the regression guard
-  in `main.test.ts`).
+  native-edge-only. Layer 2 (`classify.ts`, the same-code heuristic) is
+  **opt-in and off by default** (issue #49): the `heuristic_conflict_ordering`
+  config flag (`config-schema.ts` -> `action.yml` input -> `main.ts`) gates it.
+  When off, `main.ts` skips the classifier LLM call entirely and passes
+  `allIndependent` to `merge-graph.ts`; when on, it classifies as before. Either
+  way `merge-graph.ts` overlays the groups on the Layer-1 order under
+  "prerequisites always win", never stacks on a skipped branch across nights, and
+  Layer 1 is unaffected. Default-off rationale (fixowl never merges, so it never
+  restacks; independent PRs review more robustly; the classifier is a paid LLM
+  guess) lives in `docs/stacked-prs.md`. Empty edges + Layer 2 off == the
+  pre-dep-graph behavior (the regression guard in `main.test.ts`).
 
 ## Maintaining this file
 
