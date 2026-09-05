@@ -102,6 +102,9 @@ const github: GitHubApi = {
   async getIssueDependencies(numbers) {
     return new Map(numbers.map((n) => [n, { number: n, blockedBy: [] }]));
   },
+  async listRecentWorkflowRuns() {
+    return [];
+  },
 };
 
 const summary = await runNight(

@@ -70,9 +70,15 @@ export {
 } from "./workflow-template.ts";
 export {
   decideFallbackDispatch,
+  guardScheduledSlot,
   isSameUtcDay,
+  isScheduledSlotRun,
   scheduledRunToday,
+  SCHEDULED_FALLBACK_MARKER,
+  SCHEDULED_FALLBACK_SOURCE,
   type FallbackDecision,
+  type SlotGuardParams,
+  type SlotGuardResult,
   type WorkflowRunLite,
 } from "./fallback-dispatch.ts";
 export {

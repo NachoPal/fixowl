@@ -557,4 +557,75 @@ describe("runNight", () => {
     expect(summary.deferred.map((d) => d.issue.number).toSorted()).toEqual([1, 2]);
     expect(summary.warnings.some((w) => w.includes("cycle"))).toBe(true);
   });
+
+  describe("scheduled-slot budget guard", () => {
+    it("stands a scheduled-slot run down when an earlier slot run already covered today", async () => {
+      const { workspaceDir, inputs } = await setup();
+      const github = new FakeGitHub([issue(1, "Fix header", "x")]);
+      github.workflowRuns = [
+        {
+          id: 100,
+          event: "schedule",
+          status: "in_progress",
+          createdAt: new Date().toISOString(),
+          displayTitle: "fixowl night run",
+        },
+      ];
+      const engine = makeEngine({ workspaceDir });
+
+      const summary = await runNight(
+        { github, engine, exec: realExec, log: silentLog },
+        { ...inputs, scheduledSlot: true, currentRunId: 200 },
+      );
+
+      // No work happened: no PRs, no agent containers, a clean no-op.
+      expect(github.pulls).toEqual([]);
+      expect(engine.runs).toEqual([]);
+      expect(summary.results).toEqual([]);
+      expect(summary.warnings.some((w) => w.includes("already covered"))).toBe(true);
+    });
+
+    it("proceeds for the first scheduled-slot run of the day", async () => {
+      const { workspaceDir, inputs } = await setup();
+      const github = new FakeGitHub([issue(1, "Fix header", "x")]);
+      // Only this run exists today; it is the earliest slot run.
+      github.workflowRuns = [
+        {
+          id: 200,
+          event: "schedule",
+          status: "in_progress",
+          createdAt: new Date().toISOString(),
+          displayTitle: "fixowl night run",
+        },
+      ];
+      const engine = makeEngine({ workspaceDir });
+
+      const summary = await runNight(
+        { github, engine, exec: realExec, log: silentLog },
+        { ...inputs, scheduledSlot: true, currentRunId: 200 },
+      );
+      expect(summary.results[0]?.status).toBe("pr-opened");
+    });
+
+    it("never guards a plain manual dispatch, even when a slot run already ran today", async () => {
+      const { workspaceDir, inputs } = await setup();
+      const github = new FakeGitHub([issue(1, "Fix header", "x")]);
+      github.workflowRuns = [
+        {
+          id: 100,
+          event: "schedule",
+          status: "completed",
+          createdAt: new Date().toISOString(),
+          displayTitle: "fixowl night run",
+        },
+      ];
+      const engine = makeEngine({ workspaceDir });
+
+      const summary = await runNight(
+        { github, engine, exec: realExec, log: silentLog },
+        { ...inputs, scheduledSlot: false, currentRunId: 300 },
+      );
+      expect(summary.results[0]?.status).toBe("pr-opened");
+    });
+  });
 });

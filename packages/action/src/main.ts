@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   getAgentAdapter,
+  guardScheduledSlot,
   issueBranchName,
   PROMPT_MOUNT_PATH,
   REPO_CONFIG_PATH,
@@ -57,6 +58,14 @@ export interface NightInputs {
    * tests that push to a local remote.
    */
   pushToken?: string;
+  /**
+   * Whether this run is a scheduled-slot run (the cron, or a fallback-tagged
+   * dispatch) - as opposed to a plain manual dispatch. Only scheduled-slot runs
+   * are subject to the once-a-day budget guard; manual runs are never limited.
+   */
+  scheduledSlot?: boolean;
+  /** This run's id (GITHUB_RUN_ID), used by the scheduled-slot guard. */
+  currentRunId?: number;
   /** Source of agent env values (normally process.env). */
   env: Record<string, string | undefined>;
 }
@@ -77,6 +86,15 @@ export interface NightSummary {
 }
 
 export async function runNight(deps: NightDeps, inputs: NightInputs): Promise<NightSummary> {
+  // Budget guard: the scheduled nightly slot (cron or fallback-tagged dispatch)
+  // must execute at most once a day. A late cron arriving after the fallback
+  // already ran (or vice-versa) would otherwise spend usage on a second run;
+  // this stands the later scheduled-slot run down before any git or container
+  // work. A plain manual dispatch is never a scheduled-slot run, so it is never
+  // limited. Runs before extractGitDir so a no-op costs nothing.
+  const standDown = await checkScheduledSlotBudget(deps, inputs);
+  if (standDown !== undefined) return standDown;
+
   // Structural backstop: move the git dir out of the workspace for the whole
   // night, so no container mount ever includes it and a `.git` a hostile
   // agent plants in the workspace is inert on the host (see git-ops.ts).
@@ -93,6 +111,39 @@ export async function runNight(deps: NightDeps, inputs: NightInputs): Promise<Ni
       );
     }
   }
+}
+
+/**
+ * Enforces "the scheduled slot runs at most once a day". Returns an early no-op
+ * summary when this run should stand down, or undefined to proceed. Only
+ * scheduled-slot runs (cron or fallback-tagged dispatch) are considered; a plain
+ * manual dispatch always proceeds. Listing runs needs Actions: read, provided by
+ * the ephemeral `GITHUB_TOKEN` and not the runtime PAT; when that token (or the
+ * run id) is unavailable - e.g. a workflow provisioned before this feature - the
+ * guard fails open with a warning rather than skipping the night.
+ */
+async function checkScheduledSlotBudget(
+  deps: NightDeps,
+  inputs: NightInputs,
+): Promise<NightSummary | undefined> {
+  if (inputs.scheduledSlot !== true) return undefined;
+  if (inputs.currentRunId === undefined) {
+    deps.log.warn(
+      "scheduled-slot budget guard disabled: this run's id is unavailable; " +
+        "re-run `fixowl provision` to update the workflow",
+    );
+    return undefined;
+  }
+  const runs = await deps.github.listRecentWorkflowRuns();
+  const guard = guardScheduledSlot({
+    runs,
+    now: new Date(),
+    currentRunId: inputs.currentRunId,
+    selfIsScheduledSlot: true,
+  });
+  if (guard.proceed) return undefined;
+  deps.log.info(`🦉 fixowl: ${guard.reason}`);
+  return { results: [], skipped: [], deferred: [], warnings: [guard.reason] };
 }
 
 async function runNightWithGit(

@@ -49793,6 +49793,40 @@ var REPO_CONFIG_PATH = ".fixowl.yml";
 // packages/core/src/workflow-template.ts
 var RUNTIME_TOKEN_SECRET = "FIXOWL_GITHUB_TOKEN";
 
+// packages/core/src/fallback-dispatch.ts
+var SCHEDULED_FALLBACK_SOURCE = "scheduled-fallback";
+var SCHEDULED_FALLBACK_MARKER = "[scheduled-fallback]";
+function isSameUtcDay(a, b) {
+  return a.getUTCFullYear() === b.getUTCFullYear() && a.getUTCMonth() === b.getUTCMonth() && a.getUTCDate() === b.getUTCDate();
+}
+function isScheduledSlotRun(run2, marker = SCHEDULED_FALLBACK_MARKER) {
+  if (run2.event === "schedule") return true;
+  return run2.event === "workflow_dispatch" && run2.displayTitle.includes(marker);
+}
+function guardScheduledSlot(params) {
+  if (!params.selfIsScheduledSlot) {
+    return {
+      proceed: true,
+      reason: "not a scheduled-slot run (manual dispatch); never budget-limited"
+    };
+  }
+  const marker = params.marker ?? SCHEDULED_FALLBACK_MARKER;
+  const earlier = params.runs.find(
+    (run2) => run2.id !== params.currentRunId && run2.id < params.currentRunId && isSameUtcDay(new Date(run2.createdAt), params.now) && isScheduledSlotRun(run2, marker)
+  );
+  if (earlier !== void 0) {
+    return {
+      proceed: false,
+      reason: `today's scheduled slot is already covered by run #${earlier.id} (${earlier.event}, status ${earlier.status ?? "unknown"}); standing down to keep the nightly run to one execution per day`,
+      supersededBy: earlier
+    };
+  }
+  return {
+    proceed: true,
+    reason: "first scheduled-slot run today; proceeding"
+  };
+}
+
 // packages/action/src/container-exec.ts
 var WORKSPACE_MOUNT_PATH = "/workspace";
 var CONTAINER_HOME = "/tmp";
@@ -50666,6 +50700,8 @@ ${agentResult.stderr}
 // packages/action/src/main.ts
 var CLASSIFY_TIMEOUT_MS = 10 * 60 * 1e3;
 async function runNight(deps, inputs) {
+  const standDown = await checkScheduledSlotBudget(deps, inputs);
+  if (standDown !== void 0) return standDown;
   const gitDir = extractGitDir(inputs.workspaceDir);
   const git = new GitWorkspace(deps.exec, inputs.workspaceDir, gitDir, inputs.pushToken);
   try {
@@ -50679,6 +50715,25 @@ async function runNight(deps, inputs) {
       );
     }
   }
+}
+async function checkScheduledSlotBudget(deps, inputs) {
+  if (inputs.scheduledSlot !== true) return void 0;
+  if (inputs.currentRunId === void 0) {
+    deps.log.warn(
+      "scheduled-slot budget guard disabled: this run's id is unavailable; re-run `fixowl provision` to update the workflow"
+    );
+    return void 0;
+  }
+  const runs = await deps.github.listRecentWorkflowRuns();
+  const guard = guardScheduledSlot({
+    runs,
+    now: /* @__PURE__ */ new Date(),
+    currentRunId: inputs.currentRunId,
+    selfIsScheduledSlot: true
+  });
+  if (guard.proceed) return void 0;
+  deps.log.info(`\u{1F989} fixowl: ${guard.reason}`);
+  return { results: [], skipped: [], deferred: [], warnings: [guard.reason] };
 }
 async function runNightWithGit(deps, inputs, git) {
   const { github, engine, log: log2 } = deps;
@@ -51013,7 +51068,7 @@ var log = {
   warn: (message) => warning(message),
   error: (message) => error(message)
 };
-function makeGitHubApi(octokit, owner, repo) {
+function makeGitHubApi(octokit, owner, repo, runsOctokit) {
   return {
     async listOpenIssuesWithLabels(labelsQuery) {
       const issues = await octokit.paginate(octokit.issues.listForRepo, {
@@ -51046,6 +51101,22 @@ function makeGitHubApi(octokit, owner, repo) {
     },
     async createIssueComment(issueNumber, body) {
       await octokit.issues.createComment({ owner, repo, issue_number: issueNumber, body });
+    },
+    async listRecentWorkflowRuns() {
+      if (runsOctokit === void 0) return [];
+      const { data } = await runsOctokit.actions.listWorkflowRuns({
+        owner,
+        repo,
+        workflow_id: "fixowl.yml",
+        per_page: 50
+      });
+      return data.workflow_runs.map((workflowRun) => ({
+        id: workflowRun.id,
+        event: workflowRun.event,
+        status: workflowRun.status ?? null,
+        createdAt: workflowRun.created_at,
+        displayTitle: workflowRun.display_title ?? workflowRun.name ?? ""
+      }));
     },
     async getIssueDependencies(numbers) {
       const result = /* @__PURE__ */ new Map();
@@ -51131,10 +51202,14 @@ async function run() {
   }
   const octokit = new Octokit2({ auth: token });
   const { data: repoData } = await octokit.repos.get({ owner, repo });
+  const guardToken = process.env.GITHUB_TOKEN;
+  const runsOctokit = guardToken !== void 0 && guardToken !== "" ? new Octokit2({ auth: guardToken }) : void 0;
+  const scheduledSlot = process.env.GITHUB_EVENT_NAME === "schedule" || getInput("source") === SCHEDULED_FALLBACK_SOURCE;
+  const currentRunId = process.env.GITHUB_RUN_ID !== void 0 && process.env.GITHUB_RUN_ID !== "" ? Number(process.env.GITHUB_RUN_ID) : void 0;
   const runUrl = process.env.GITHUB_SERVER_URL !== void 0 && process.env.GITHUB_RUN_ID !== void 0 ? `${process.env.GITHUB_SERVER_URL}/${repoFullName}/actions/runs/${process.env.GITHUB_RUN_ID}` : void 0;
   const summary2 = await runNight(
     {
-      github: makeGitHubApi(octokit, owner, repo),
+      github: makeGitHubApi(octokit, owner, repo, runsOctokit),
       engine: new DockerEngine(realExec, log),
       exec: realExec,
       log
@@ -51142,6 +51217,8 @@ async function run() {
     {
       repoFullName,
       defaultBranch: repoData.default_branch,
+      scheduledSlot,
+      currentRunId,
       labels,
       agentName,
       agentEnvNames: parseLabelInput(getInput("agent-env")),

@@ -56,6 +56,13 @@ inputs:
       fails that issue loudly. Empty means no per-label selection.
     required: false
     default: ""
+  source:
+    description: >-
+      Internal. Set to "scheduled-fallback" by fixowl's local fallback trigger so
+      the run counts as the scheduled slot for the once-a-day budget guard. Left
+      blank for the cron and for manual runs.
+    required: false
+    default: ""
 
 runs:
   using: node24

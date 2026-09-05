@@ -1,3 +1,4 @@
+import type { WorkflowRunLite } from "@fixowl/core";
 import type {
   ContainerEngine,
   ContainerRunSpec,
@@ -36,6 +37,8 @@ export class FakeGitHub implements GitHubApi {
   comments: Array<{ issueNumber: number; body: string }> = [];
   /** Native dependency edges keyed by issue number; empty means no edges (today's behavior). */
   dependencies: Map<number, IssueDeps> = new Map();
+  /** Recent workflow runs the scheduled-slot guard sees; empty by default. */
+  workflowRuns: WorkflowRunLite[] = [];
   private nextPrNumber = 100;
 
   constructor(public issues: IssueLite[]) {}
@@ -69,6 +72,10 @@ export class FakeGitHub implements GitHubApi {
 
   async createIssueComment(issueNumber: number, body: string): Promise<void> {
     this.comments.push({ issueNumber, body });
+  }
+
+  async listRecentWorkflowRuns(): Promise<WorkflowRunLite[]> {
+    return this.workflowRuns;
   }
 }
 
