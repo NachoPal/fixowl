@@ -25,17 +25,19 @@ interface GraphqlIssueNode {
 }
 
 /**
- * True when a GitHub read failed because the token is not allowed to make it -
- * the check-runs API needs a "Checks" permission GitHub does not expose to
- * fine-grained PATs, so a fine-grained runtime token 403s ("Resource not
- * accessible by personal access token"). We degrade the CI gate on this class
- * only; any other failure (network, 5xx) still propagates.
+ * True when a GitHub read failed because the token is genuinely not permitted to
+ * make it - the check-runs API needs a "Checks" permission GitHub does not
+ * expose to fine-grained PATs, so a fine-grained runtime token 403s with
+ * "Resource not accessible by personal access token" (or the App-token variant
+ * "Resource not accessible by integration"). We degrade the CI gate on this
+ * permission-denial class only. A transient 403 (primary/secondary rate limit,
+ * abuse detection), a 404 (wrong/nonexistent ref), and any other failure
+ * (network, 5xx) still propagate so they surface and retry instead of silently
+ * settling the gate to green.
  */
 export function isNotAccessibleError(error: unknown): boolean {
-  const status = (error as { status?: number }).status;
-  if (status === 403 || status === 404) return true;
   const message = error instanceof Error ? error.message : String(error);
-  return /not accessible/i.test(message);
+  return /resource not accessible by (?:personal access token|integration)/i.test(message);
 }
 
 /**

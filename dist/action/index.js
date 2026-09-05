@@ -124957,10 +124957,8 @@ var DockerEngine = class {
 // packages/action/src/github-api.ts
 var CHECK_LOG_MAX = 6e3;
 function isNotAccessibleError(error62) {
-  const status = error62.status;
-  if (status === 403 || status === 404) return true;
   const message = error62 instanceof Error ? error62.message : String(error62);
-  return /not accessible/i.test(message);
+  return /resource not accessible by (?:personal access token|integration)/i.test(message);
 }
 function makeGitHubApi(octokit, owner, repo, runsOctokit) {
   return {
