@@ -83,6 +83,44 @@ describe("buildPrBody", () => {
     expect(body).toContain("did not complete within fixowl's time budget");
   });
 
+  it("escapes a detailsUrl so it cannot break out of the logs link", () => {
+    const body = buildPrBody({
+      issueNumber: 7,
+      verification: [],
+      ci: {
+        state: "failed",
+        reason: "red",
+        failures: [
+          { name: "build", summary: "boom", detailsUrl: "https://ci.test/run(1) [x](javascript:1)" },
+        ],
+      },
+    });
+    // The raw ')' and '(' must be percent-escaped, so the link target ends at
+    // the encoded URL and nothing after it leaks out as markdown.
+    expect(body).toContain(
+      "[logs](https://ci.test/run%281%29%20%5Bx%5D%28javascript:1%29)",
+    );
+    expect(body).not.toContain("run(1) [x]");
+  });
+
+  it("drops a non-http or malformed detailsUrl rather than rendering it raw", () => {
+    const body = buildPrBody({
+      issueNumber: 7,
+      verification: [],
+      ci: {
+        state: "failed",
+        reason: "red",
+        failures: [
+          { name: "build", summary: "boom", detailsUrl: "javascript:alert(1)" },
+          { name: "lint", summary: "nope", detailsUrl: "not a url" },
+        ],
+      },
+    });
+    expect(body).not.toContain("[logs]");
+    expect(body).toContain("| build | boom |");
+    expect(body).toContain("| lint | nope |");
+  });
+
   it("sanitizes untrusted check names and summaries in the CI table", () => {
     const body = buildPrBody({
       issueNumber: 7,

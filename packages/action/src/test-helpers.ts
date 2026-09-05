@@ -1,4 +1,5 @@
 import type { CheckStatusLite, RequiredChecks, WorkflowRunLite } from "@fixowl/core";
+import type { Clock } from "./ci-poll.ts";
 import type {
   ContainerEngine,
   ContainerRunSpec,
@@ -15,6 +16,21 @@ export const silentLog: Logger = {
   warn: () => {},
   error: () => {},
 };
+
+/**
+ * Instant clock for the CI wait: advances by whatever it is asked to sleep, so
+ * the poll loop (and its fallback settle window) resolves in logical time with
+ * no real delay. Inject as `NightDeps.clock` / `IssuePipelineDeps.clock`.
+ */
+export function instantClock(): Clock {
+  let t = 0;
+  return {
+    now: () => t,
+    sleep: async (ms) => {
+      t += ms;
+    },
+  };
+}
 
 export function ok(stdout = ""): ExecResult {
   return { code: 0, stdout, stderr: "", timedOut: false };

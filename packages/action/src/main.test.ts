@@ -6,7 +6,7 @@ import type { ContainerRunSpec, Exec, ExecResult, IssueLite } from "./deps.ts";
 import { renderSummary, runNight, wipeoutFailure, type NightInputs } from "./main.ts";
 import type { IssueResult } from "./issue-pipeline.ts";
 import { realExec } from "./real-exec.ts";
-import { FakeEngine, FakeGitHub, issue, ok, silentLog } from "./test-helpers.ts";
+import { FakeEngine, FakeGitHub, instantClock, issue, ok, silentLog } from "./test-helpers.ts";
 
 /**
  * In-process integration of the whole night: real git (temp bare origin +
@@ -167,7 +167,7 @@ describe("runNight", () => {
       classifyOutput: '{"chains": [[1], [2], [3]]}',
     });
 
-    const summary = await runNight({ github, engine, exec: realExec, log: silentLog }, inputs);
+    const summary = await runNight({ github, engine, exec: realExec, log: silentLog, clock: instantClock() }, inputs);
 
     expect(summary.results.map((r) => r.status)).toEqual(["pr-opened", "pr-opened", "pr-opened"]);
     expect(github.pulls.map((pr) => [pr.head, pr.base, pr.draft])).toEqual([
@@ -197,10 +197,10 @@ describe("runNight", () => {
     const { originDir, workspaceDir, inputs } = await setup();
     const github = new FakeGitHub(structuredClone(threeIssues));
     const engine = makeEngine({ workspaceDir, classifyOutput: '{"chains": [[1], [2], [3]]}' });
-    await runNight({ github, engine, exec: realExec, log: silentLog }, inputs);
+    await runNight({ github, engine, exec: realExec, log: silentLog, clock: instantClock() }, inputs);
     expect(github.pulls).toHaveLength(3);
 
-    const secondRun = await runNight({ github, engine, exec: realExec, log: silentLog }, inputs);
+    const secondRun = await runNight({ github, engine, exec: realExec, log: silentLog, clock: instantClock() }, inputs);
     expect(secondRun.results).toHaveLength(0);
     expect(secondRun.skipped.map((s) => s.issue.number)).toEqual([1, 2, 3]);
     expect(github.pulls).toHaveLength(3);
@@ -216,7 +216,7 @@ describe("runNight", () => {
       classifyOutput: '{"chains": [[1], [2], [3]]}',
     });
 
-    const summary = await runNight({ github, engine, exec: realExec, log: silentLog }, inputs);
+    const summary = await runNight({ github, engine, exec: realExec, log: silentLog, clock: instantClock() }, inputs);
     expect(summary.results.map((r) => [r.issue.number, r.status])).toEqual([
       [1, "pr-opened"],
       [2, "agent-failed"],
@@ -239,7 +239,7 @@ describe("runNight", () => {
       return ok();
     });
 
-    const summary = await runNight({ github, engine, exec: realExec, log: silentLog }, inputs);
+    const summary = await runNight({ github, engine, exec: realExec, log: silentLog, clock: instantClock() }, inputs);
     const result = summary.results[0];
     expect(result?.status).toBe("agent-failed");
     expect(result?.error).toContain("agent exited with code 1");
@@ -263,7 +263,7 @@ describe("runNight", () => {
       return ok();
     });
 
-    const summary = await runNight({ github, engine, exec: realExec, log: silentLog }, inputs);
+    const summary = await runNight({ github, engine, exec: realExec, log: silentLog, clock: instantClock() }, inputs);
     const result = summary.results[0];
     expect(result?.status).toBe("agent-failed");
     expect(result?.error).toMatch(/^agent timed out after \d+ms - /);
@@ -275,7 +275,7 @@ describe("runNight", () => {
     const github = new FakeGitHub([issue(1, "Fix header", "x")]);
     const engine = makeEngine({ workspaceDir, failCheck: true });
 
-    const summary = await runNight({ github, engine, exec: realExec, log: silentLog }, inputs);
+    const summary = await runNight({ github, engine, exec: realExec, log: silentLog, clock: instantClock() }, inputs);
     expect(summary.results[0]?.status).toBe("pr-opened");
     expect(summary.results[0]?.draft).toBe(true);
     expect(github.pulls[0]?.draft).toBe(true);
@@ -293,7 +293,7 @@ describe("runNight", () => {
     const engine = makeEngine({ workspaceDir, classifyOutput: '{"chains": [[1], [2], [3]]}' });
 
     const summary = await runNight(
-      { github, engine, exec: realExec, log: silentLog },
+      { github, engine, exec: realExec, log: silentLog, clock: instantClock() },
       {
         ...inputs,
         agentName: "claude",
@@ -329,7 +329,7 @@ describe("runNight", () => {
     const github = new FakeGitHub([issue(1, "Fix header", "x")]);
     const engine = makeEngine({ workspaceDir, silentAgentFor: [1] });
 
-    const summary = await runNight({ github, engine, exec: realExec, log: silentLog }, inputs);
+    const summary = await runNight({ github, engine, exec: realExec, log: silentLog, clock: instantClock() }, inputs);
     expect(summary.results[0]?.status).toBe("no-changes");
     expect(github.pulls).toHaveLength(0);
     expect(await remoteBranches(originDir)).toEqual(["main"]);
@@ -340,7 +340,7 @@ describe("runNight", () => {
     const github = new FakeGitHub([issue(1, "Fix header", "x"), issue(2, "Fix footer", "y")]);
     const engine = makeEngine({ workspaceDir, classifyOutput: '{"chains": [[1, 2]]}' });
 
-    await runNight({ github, engine, exec: realExec, log: silentLog }, inputs);
+    await runNight({ github, engine, exec: realExec, log: silentLog, clock: instantClock() }, inputs);
     expect(github.pulls.map((pr) => [pr.head, pr.base])).toEqual([
       ["issue/1-fix-header", "main"],
       ["issue/2-fix-footer", "issue/1-fix-header"],
@@ -362,7 +362,7 @@ describe("runNight", () => {
       classifyOutput: '{"chains": [[1, 2]]}',
     });
 
-    await runNight({ github, engine, exec: realExec, log: silentLog }, inputs);
+    await runNight({ github, engine, exec: realExec, log: silentLog, clock: instantClock() }, inputs);
     expect(github.pulls.map((pr) => [pr.head, pr.base])).toEqual([["issue/2-fix-footer", "main"]]);
     expect(github.pulls[0]?.body).not.toContain("Stacked on");
   });
@@ -372,7 +372,7 @@ describe("runNight", () => {
     const github = new FakeGitHub([issue(1, "Fix header", "x"), issue(2, "Fix footer", "y")]);
     const engine = makeEngine({ workspaceDir, classifyOutput: "no json here" });
 
-    const summary = await runNight({ github, engine, exec: realExec, log: silentLog }, inputs);
+    const summary = await runNight({ github, engine, exec: realExec, log: silentLog, clock: instantClock() }, inputs);
     expect(summary.warnings.some((w) => w.includes("classification"))).toBe(true);
     expect(github.pulls.map((pr) => pr.base)).toEqual(["main", "main"]);
   });
@@ -382,7 +382,7 @@ describe("runNight", () => {
     const github = new FakeGitHub([issue(1, "Fix header", "x"), issue(2, "Fix footer", "y")]);
     const engine = makeEngine({ workspaceDir, classifyOutput: '{"chains": [[1], [2]]}' });
 
-    await runNight({ github, engine, exec: realExec, log: silentLog }, inputs);
+    await runNight({ github, engine, exec: realExec, log: silentLog, clock: instantClock() }, inputs);
     const classifyRun = engine.runs.find((spec) => spec.name.includes("-classify-"));
     expect(classifyRun?.workspaceReadOnly).toBe(true);
   });
@@ -460,7 +460,7 @@ describe("runNight", () => {
     const engine = makeEngine({ workspaceDir, classifyOutput: '{"chains": [[1], [2]]}' });
 
     const summary = await runNight(
-      { github, engine, exec: realExec, log: silentLog },
+      { github, engine, exec: realExec, log: silentLog, clock: instantClock() },
       { ...inputs, maxIssues: 2 },
     );
     expect(summary.results.map((r) => r.issue.number)).toEqual([1, 2]);
@@ -473,7 +473,7 @@ describe("runNight", () => {
     const engine = makeEngine({ workspaceDir });
 
     await runNight(
-      { github, engine, exec: realExec, log: silentLog },
+      { github, engine, exec: realExec, log: silentLog, clock: instantClock() },
       { ...inputs, env: { CLAUDE_CODE_OAUTH_TOKEN: "sk-x", FAL_KEY: "paid", GITHUB_TOKEN: "gh" } },
     );
     const agentRun = engine.runs.find((spec) => issueNumberOfAgentRun(spec) === 1);
@@ -515,7 +515,7 @@ describe("runNight", () => {
       return ok("done");
     });
 
-    const summary = await runNight({ github, engine, exec: realExec, log: silentLog }, inputs);
+    const summary = await runNight({ github, engine, exec: realExec, log: silentLog, clock: instantClock() }, inputs);
 
     expect(summary.results.map((r) => r.status)).toEqual(["pr-opened", "pr-opened"]);
     // Neither the planted hook nor fsmonitor ever executed on the host.
@@ -544,7 +544,7 @@ describe("runNight", () => {
     const token = "ghp_FAKE_sekret_token";
 
     const summary = await runNight(
-      { github, engine, exec: spyExec, log: silentLog },
+      { github, engine, exec: spyExec, log: silentLog, clock: instantClock() },
       { ...inputs, pushToken: token },
     );
     expect(summary.results[0]?.status).toBe("pr-opened");
@@ -571,7 +571,7 @@ describe("runNight", () => {
 
     await expect(
       runNight(
-        { github, engine, exec: realExec, log: silentLog },
+        { github, engine, exec: realExec, log: silentLog, clock: instantClock() },
         { ...inputs, agentName: "claude", env: {} },
       ),
     ).rejects.toThrow(/CLAUDE_CODE_OAUTH_TOKEN/);
@@ -600,7 +600,7 @@ describe("runNight", () => {
       failAgentFor: [2],
       classifyOutput: '{"chains": [[1], [2], [3]]}',
     });
-    const summary = await runNight({ github, engine, exec: realExec, log: silentLog }, inputs);
+    const summary = await runNight({ github, engine, exec: realExec, log: silentLog, clock: instantClock() }, inputs);
     const markdown = renderSummary("test/repo", summary);
     expect(markdown).toContain("# 🦉 fixowl night run: test/repo");
     expect(markdown).toContain("#1 Fix header");
@@ -618,7 +618,7 @@ describe("runNight", () => {
     });
     const engine = makeEngine({ workspaceDir, classifyOutput: '{"chains": [[1], [2]]}' });
 
-    const summary = await runNight({ github, engine, exec: realExec, log: silentLog }, inputs);
+    const summary = await runNight({ github, engine, exec: realExec, log: silentLog, clock: instantClock() }, inputs);
     expect(summary.deferred).toEqual([]);
     expect(github.pulls.map((pr) => [pr.head, pr.base])).toEqual([
       ["issue/1-fix-header", "main"],
@@ -637,7 +637,7 @@ describe("runNight", () => {
     });
     const engine = makeEngine({ workspaceDir });
 
-    const summary = await runNight({ github, engine, exec: realExec, log: silentLog }, inputs);
+    const summary = await runNight({ github, engine, exec: realExec, log: silentLog, clock: instantClock() }, inputs);
     expect(summary.results).toEqual([]);
     expect(github.pulls).toHaveLength(0);
     expect(engine.runs.some((spec) => spec.name.endsWith("-2-agent"))).toBe(false);
@@ -659,7 +659,7 @@ describe("runNight", () => {
       classifyOutput: '{"chains": [[1], [2]]}',
     });
 
-    const summary = await runNight({ github, engine, exec: realExec, log: silentLog }, inputs);
+    const summary = await runNight({ github, engine, exec: realExec, log: silentLog, clock: instantClock() }, inputs);
     // #1 was attempted and failed; #2 is deferred, never attempted, no PR (contrast
     // the conflict-chain case where the downstream member rebases onto main).
     expect(summary.results.map((r) => [r.issue.number, r.status])).toEqual([[1, "agent-failed"]]);
@@ -682,7 +682,7 @@ describe("runNight", () => {
     });
     const engine = makeEngine({ workspaceDir, classifyOutput: '{"chains": [[3]]}' });
 
-    const summary = await runNight({ github, engine, exec: realExec, log: silentLog }, inputs);
+    const summary = await runNight({ github, engine, exec: realExec, log: silentLog, clock: instantClock() }, inputs);
     expect(summary.results.map((r) => r.issue.number)).toEqual([3]);
     expect(github.pulls.map((pr) => pr.head)).toEqual(["issue/3-fix-sidebar"]);
     expect(summary.deferred.map((d) => d.issue.number).toSorted()).toEqual([1, 2]);
@@ -703,7 +703,7 @@ describe("runNight", () => {
       github.pullsByBranch.set("issue/1-fix-header", { number: 101, state: "OPEN" });
       const engine = makeEngine({ workspaceDir });
 
-      const summary = await runNight({ github, engine, exec: realExec, log: silentLog }, inputs);
+      const summary = await runNight({ github, engine, exec: realExec, log: silentLog, clock: instantClock() }, inputs);
 
       // #1 stays skipped (in flight, not re-run); #2 ships stacked on #1's branch.
       expect(summary.skipped.map((s) => s.issue.number)).toEqual([1]);
@@ -730,7 +730,7 @@ describe("runNight", () => {
       github.pullsByBranch.set("issue/1-fix-header", { number: 101, state: "MERGED" });
       const engine = makeEngine({ workspaceDir });
 
-      const summary = await runNight({ github, engine, exec: realExec, log: silentLog }, inputs);
+      const summary = await runNight({ github, engine, exec: realExec, log: silentLog, clock: instantClock() }, inputs);
 
       expect(summary.deferred).toEqual([]);
       expect(github.pulls.map((pr) => [pr.head, pr.base])).toEqual([
@@ -750,7 +750,7 @@ describe("runNight", () => {
       github.pullsByBranch.set("issue/1-fix-header", { number: 101, state: "CLOSED" });
       const engine = makeEngine({ workspaceDir });
 
-      const summary = await runNight({ github, engine, exec: realExec, log: silentLog }, inputs);
+      const summary = await runNight({ github, engine, exec: realExec, log: silentLog, clock: instantClock() }, inputs);
 
       expect(summary.results).toEqual([]);
       expect(github.pulls).toHaveLength(0);
@@ -766,7 +766,7 @@ describe("runNight", () => {
       github.pullsByBranch.set("issue/1-fix-header", { number: 101, state: "OPEN" });
       const engine = makeEngine({ workspaceDir });
 
-      const summary = await runNight({ github, engine, exec: realExec, log: silentLog }, inputs);
+      const summary = await runNight({ github, engine, exec: realExec, log: silentLog, clock: instantClock() }, inputs);
 
       expect(summary.skipped.map((s) => s.issue.number)).toEqual([1]);
       expect(github.pulls.map((pr) => [pr.head, pr.base])).toEqual([
@@ -792,7 +792,7 @@ describe("runNight", () => {
       const engine = makeEngine({ workspaceDir });
 
       const summary = await runNight(
-        { github, engine, exec: realExec, log: silentLog },
+        { github, engine, exec: realExec, log: silentLog, clock: instantClock() },
         { ...inputs, scheduledSlot: true, currentRunId: 200 },
       );
 
@@ -819,7 +819,7 @@ describe("runNight", () => {
       const engine = makeEngine({ workspaceDir });
 
       const summary = await runNight(
-        { github, engine, exec: realExec, log: silentLog },
+        { github, engine, exec: realExec, log: silentLog, clock: instantClock() },
         { ...inputs, scheduledSlot: true, currentRunId: 200 },
       );
       expect(summary.results[0]?.status).toBe("pr-opened");
@@ -840,7 +840,7 @@ describe("runNight", () => {
       const engine = makeEngine({ workspaceDir });
 
       const summary = await runNight(
-        { github, engine, exec: realExec, log: silentLog },
+        { github, engine, exec: realExec, log: silentLog, clock: instantClock() },
         { ...inputs, scheduledSlot: false, currentRunId: 300 },
       );
       expect(summary.results[0]?.status).toBe("pr-opened");
@@ -868,7 +868,7 @@ describe("runNight", () => {
       github.failedLogs = () => "dist/ is stale; run pnpm build";
       const engine = makeEngine({ workspaceDir });
 
-      const summary = await runNight({ github, engine, exec: realExec, log: silentLog }, inputs);
+      const summary = await runNight({ github, engine, exec: realExec, log: silentLog, clock: instantClock() }, inputs);
 
       expect(summary.results[0]?.status).toBe("pr-opened");
       expect(summary.results[0]?.draft).toBe(false);
@@ -895,7 +895,7 @@ describe("runNight", () => {
       const engine = makeEngine({ workspaceDir });
 
       const summary = await runNight(
-        { github, engine, exec: realExec, log: silentLog },
+        { github, engine, exec: realExec, log: silentLog, clock: instantClock() },
         { ...inputs, ciMaxTries: 2 },
       );
 
@@ -920,7 +920,7 @@ describe("runNight", () => {
       const engine = makeEngine({ workspaceDir, failCheck: true });
 
       const summary = await runNight(
-        { github, engine, exec: realExec, log: silentLog },
+        { github, engine, exec: realExec, log: silentLog, clock: instantClock() },
         { ...inputs, ciMaxTries: 2 },
       );
 
@@ -945,7 +945,7 @@ describe("runNight", () => {
       ];
       const engine = makeEngine({ workspaceDir });
 
-      const summary = await runNight({ github, engine, exec: realExec, log: silentLog }, inputs);
+      const summary = await runNight({ github, engine, exec: realExec, log: silentLog, clock: instantClock() }, inputs);
       expect(summary.results[0]?.status).toBe("pr-opened");
       expect(summary.results[0]?.draft).toBe(false);
       expect(github.pulls[0]?.draft).toBe(false);

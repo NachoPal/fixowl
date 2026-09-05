@@ -92,9 +92,12 @@ export type GateDecision = "green" | "failed" | "pending";
  * check is never mistaken for "no CI".
  *
  * Fallback set: settled when no check is still running. With zero checks this
- * is green on the first look - "gate on all completed checks" is vacuously
- * satisfied when there are none, which is the correct best-effort answer for a
- * repo with no branch protection and no CI.
+ * is "green" here - "gate on all completed checks" is vacuously satisfied when
+ * there are none - but that reading is ambiguous: it cannot tell "no CI
+ * configured" from "CI has not registered its checks yet" in the seconds after a
+ * push. The poll loop (ci-poll.ts) resolves that ambiguity with a settle window,
+ * holding a zero-check fallback green until it elapses; this pure decision only
+ * reports the vacuous result.
  */
 export function evaluateGate(gating: GatingChecks, required: RequiredChecks): GateDecision {
   if (required.readable) {

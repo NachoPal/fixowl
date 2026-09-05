@@ -41,9 +41,14 @@ fixowl gates only on the checks GitHub marks **required** for the PR's base
 branch (branch-protection or ruleset required status checks), read via the
 branch-rules endpoint. When that is unreadable - no branch protection, or the
 runtime token lacks the read scope - fixowl **falls back to gating on all
-completed checks** and logs a warning; it never fails loud. A repo with no
-branch protection and no CI therefore opens ready-for-review PRs (there is
-nothing to gate on).
+completed checks** and logs a warning; it never fails loud. Because an empty
+fallback poll cannot by itself distinguish "CI has not registered its checks
+yet" (common in the seconds right after a push) from "no CI configured", the
+loop applies a short **settle window**: a zero-check fallback poll is not
+accepted as green until that window elapses with still no checks. Once any check
+appears the normal fallback decision applies at once. A repo with no branch
+protection and no CI therefore still opens ready-for-review PRs after the settle
+window (there is nothing to gate on).
 
 ## Configuration
 

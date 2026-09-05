@@ -36,6 +36,26 @@ function ciCell(text: string): string {
   return text.replaceAll(/\s+/g, " ").replaceAll("|", "\\|").trim();
 }
 
+/**
+ * A check's detailsUrl is semi-untrusted CI output (check-run details_url /
+ * legacy commit-status target_url). Render it as a `[logs](...)` target only
+ * when it is a well-formed http(s) URL, percent-escaping the characters that
+ * would break out of the markdown link (spaces via encodeURI, then parens);
+ * anything else (non-http scheme, unparseable) is dropped rather than rendered.
+ */
+function ciLink(detailsUrl: string | undefined): string {
+  if (detailsUrl === undefined || detailsUrl === "") return "";
+  let parsed: URL;
+  try {
+    parsed = new URL(detailsUrl);
+  } catch {
+    return "";
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";
+  const safe = encodeURI(detailsUrl).replaceAll("(", "%28").replaceAll(")", "%29");
+  return `[logs](${safe})`;
+}
+
 const CI_SUMMARY_MAX = 300;
 
 function renderCiSection(ci: CiGateSummary): string[] {
@@ -60,7 +80,7 @@ function renderCiSection(ci: CiGateSummary): string[] {
     lines.push(`| check | detail |`, `| --- | --- |`);
     for (const failure of ci.failures) {
       const summary = failure.summary ? ciCell(failure.summary).slice(0, CI_SUMMARY_MAX) : "";
-      const link = failure.detailsUrl ? `[logs](${failure.detailsUrl})` : "";
+      const link = ciLink(failure.detailsUrl);
       const detail = [summary, link].filter((part) => part !== "").join(" - ") || "-";
       lines.push(`| ${ciCell(failure.name)} | ${detail} |`);
     }

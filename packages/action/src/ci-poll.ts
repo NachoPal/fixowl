@@ -10,6 +10,16 @@ import type { GitHubApi, Logger } from "./deps.ts";
 /** Default gap between polls of a pushed head's checks. */
 export const CI_POLL_INTERVAL_MS = 15_000;
 
+/**
+ * In fallback mode (required set unreadable) an empty poll is ambiguous: CI may
+ * genuinely not exist, or its check runs may just not have registered yet in the
+ * seconds after a push. So a zero-check fallback poll is not accepted as green
+ * until this settle window has elapsed with still no checks; once any check
+ * appears the normal fallback decision applies immediately. Defaults to two poll
+ * intervals and is bounded by the overall timeout at the call site.
+ */
+export const CI_FALLBACK_SETTLE_MS = 2 * CI_POLL_INTERVAL_MS;
+
 /** Injectable clock so the wait is deterministic and instant in tests. */
 export interface Clock {
   now(): number;
@@ -54,6 +64,7 @@ export async function waitForRequiredChecks(
   const { github, log, clock } = deps;
   const pollMs = params.pollMs ?? CI_POLL_INTERVAL_MS;
   const start = clock.now();
+  const settleMs = Math.min(2 * pollMs, params.timeoutMs);
   let warnedFallback = false;
 
   for (;;) {
@@ -67,7 +78,12 @@ export async function waitForRequiredChecks(
       );
     }
     const decision = evaluateGate(gating, params.required);
-    if (decision !== "pending") {
+    // A zero-check fallback green is only vacuous CI not registering yet vs. no
+    // CI configured; hold it until the settle window elapses, but accept a
+    // non-empty fallback set (or any readable-required decision) immediately.
+    const withinSettleWindow =
+      gating.usedFallback && gating.checks.length === 0 && clock.now() - start < settleMs;
+    if (decision !== "pending" && !withinSettleWindow) {
       return {
         outcome: decision,
         timedOut: false,

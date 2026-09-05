@@ -50583,6 +50583,7 @@ import { join as join3 } from "node:path";
 
 // packages/action/src/ci-poll.ts
 var CI_POLL_INTERVAL_MS = 15e3;
+var CI_FALLBACK_SETTLE_MS = 2 * CI_POLL_INTERVAL_MS;
 var realClock = {
   now: () => Date.now(),
   sleep: (ms) => new Promise((resolve2) => setTimeout(resolve2, ms))
@@ -50591,6 +50592,7 @@ async function waitForRequiredChecks(deps, params) {
   const { github, log: log2, clock } = deps;
   const pollMs = params.pollMs ?? CI_POLL_INTERVAL_MS;
   const start = clock.now();
+  const settleMs = Math.min(2 * pollMs, params.timeoutMs);
   let warnedFallback = false;
   for (; ; ) {
     const all = await github.getChecksForRef(params.sha);
@@ -50602,7 +50604,8 @@ async function waitForRequiredChecks(deps, params) {
       );
     }
     const decision = evaluateGate(gating, params.required);
-    if (decision !== "pending") {
+    const withinSettleWindow = gating.usedFallback && gating.checks.length === 0 && clock.now() - start < settleMs;
+    if (decision !== "pending" && !withinSettleWindow) {
       return {
         outcome: decision,
         timedOut: false,
@@ -50628,6 +50631,18 @@ async function waitForRequiredChecks(deps, params) {
 function ciCell(text) {
   return text.replaceAll(/\s+/g, " ").replaceAll("|", "\\|").trim();
 }
+function ciLink(detailsUrl) {
+  if (detailsUrl === void 0 || detailsUrl === "") return "";
+  let parsed;
+  try {
+    parsed = new URL(detailsUrl);
+  } catch {
+    return "";
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";
+  const safe = encodeURI(detailsUrl).replaceAll("(", "%28").replaceAll(")", "%29");
+  return `[logs](${safe})`;
+}
 var CI_SUMMARY_MAX = 300;
 function renderCiSection(ci) {
   const lines = [`## CI`, ``];
@@ -50647,7 +50662,7 @@ function renderCiSection(ci) {
     lines.push(`| check | detail |`, `| --- | --- |`);
     for (const failure of ci.failures) {
       const summary2 = failure.summary ? ciCell(failure.summary).slice(0, CI_SUMMARY_MAX) : "";
-      const link = failure.detailsUrl ? `[logs](${failure.detailsUrl})` : "";
+      const link = ciLink(failure.detailsUrl);
       const detail = [summary2, link].filter((part) => part !== "").join(" - ") || "-";
       lines.push(`| ${ciCell(failure.name)} | ${detail} |`);
     }

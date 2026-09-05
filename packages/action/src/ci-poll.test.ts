@@ -106,13 +106,44 @@ describe("waitForRequiredChecks", () => {
     expect(warnings.some((w) => w.includes("unreadable"))).toBe(true);
   });
 
-  it("is green immediately when there is no CI at all (unreadable + no checks)", async () => {
+  it("does not vacuously green a fallback poll before a late check registers", async () => {
     const github = new FakeGitHub([issue(1, "t")]);
-    github.checksForRef = () => [];
+    let calls = 0;
+    github.checksForRef = () => {
+      calls++;
+      // Checks have not registered yet on the first poll (common right after a
+      // push); a failing check appears on a later poll and must decide the gate.
+      return calls < 2 ? [] : [completed("ci", "failure")];
+    };
     const result = await waitForRequiredChecks(
       { github, log: silentLog, clock: fakeClock() },
       { sha: "sha", base: "main", required: { readable: false, contexts: [] }, timeoutMs: 600_000 },
     );
+    expect(result.outcome).toBe("failed");
+    expect(result.usedFallback).toBe(true);
+    expect(result.failed.map((c) => c.name)).toEqual(["ci"]);
+  });
+
+  it("greens only after the settle window when there is no CI at all (unreadable + no checks)", async () => {
+    const github = new FakeGitHub([issue(1, "t")]);
+    let calls = 0;
+    github.checksForRef = () => {
+      calls++;
+      return [];
+    };
+    const result = await waitForRequiredChecks(
+      { github, log: silentLog, clock: fakeClock() },
+      {
+        sha: "sha",
+        base: "main",
+        required: { readable: false, contexts: [] },
+        timeoutMs: 600_000,
+        pollMs: 15_000,
+      },
+    );
     expect(result.outcome).toBe("green");
+    expect(result.timedOut).toBe(false);
+    // settle window is 2 * pollMs; polls at t=0, 15000, 30000 (>= window) -> 3 looks
+    expect(calls).toBe(3);
   });
 });
