@@ -95,9 +95,14 @@ Runbook:
 
 ## Retry semantics (applies to all fixowl PRs)
 
-The remote branch `issue/<n>-*` is the single source of truth:
+A branch's associated **PR** is the source of truth for "already attempted"; the
+remote branch `issue/<n>-*` only marks an issue as touched:
 
 - branch exists + open PR: in review, fixowl skips the issue
 - branch merged: done (`fix #<n>:` in the commit closes the issue)
 - branch exists + PR closed unmerged: deliberately abandoned, never retried
-- to retry an issue: delete its branch; next run picks it up again
+- branch exists + **no PR at all**: orphaned interrupted work - a prior night
+  pushed the branch but was interrupted before opening the PR (the host slept, or
+  PR creation failed after the push). fixowl re-selects the issue, resets the
+  stale branch (delete-and-recreate), and retries it (issue #57)
+- to retry an issue manually: delete its branch; next run picks it up again
