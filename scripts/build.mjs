@@ -12,7 +12,7 @@ await build({
   format: "esm",
   outfile: "dist/action/index.js",
   banner: { js: createRequireShim },
-  logLevel: "info",
+  logLevel: "warning",
 });
 
 await build({
@@ -23,5 +23,5 @@ await build({
   format: "esm",
   outfile: "packages/cli/dist/index.js",
   banner: { js: `#!/usr/bin/env node\n${createRequireShim}` },
-  logLevel: "info",
+  logLevel: "warning",
 });
