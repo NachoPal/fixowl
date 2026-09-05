@@ -1,12 +1,18 @@
 import { describe, expect, it } from "vitest";
-import type { EdgeRef, IssueDeps } from "./deps.ts";
-import { planPrereqs } from "./prereq-planner.ts";
+import type { EdgeRef, IssueDeps, PullRequestLite } from "./deps.ts";
+import { planPrereqs, type InFlightPrereq } from "./prereq-planner.ts";
 import { issue } from "./test-helpers.ts";
 
 const REPO = "test/repo";
 
 function edge(number: number, state: "OPEN" | "CLOSED" = "OPEN", repo = REPO): EdgeRef {
   return { number, repo, state };
+}
+
+function inFlight(
+  entries: Record<number, { branch: string; pr?: PullRequestLite }>,
+): Map<number, InFlightPrereq> {
+  return new Map(Object.entries(entries).map(([number, value]) => [Number(number), value]));
 }
 
 function deps(entries: Record<number, Partial<IssueDeps>>): Map<number, IssueDeps> {
@@ -107,5 +113,117 @@ describe("planPrereqs", () => {
 
     expect(plan.shippable).toEqual([]);
     expect(plan.deferred[0]?.reason).toContain("50");
+  });
+
+  describe("in-flight prerequisite (issue #48)", () => {
+    it("stacks a dependent on a skipped prerequisite whose PR is open and unmerged", () => {
+      // #1 is not selected (idempotency skipped its in-flight branch); #2 is fresh.
+      const selected = [issue(2, "dependent")];
+      const plan = planPrereqs(
+        selected,
+        deps({ 2: { blockedBy: [edge(1)] } }),
+        REPO,
+        inFlight({ 1: { branch: "issue/1-x", pr: { number: 101, state: "OPEN" } } }),
+      );
+
+      expect(plan.shippable.map((i) => i.number)).toEqual([2]);
+      expect(plan.deferred).toEqual([]);
+      expect(plan.stackBases.get(2)).toEqual({ branch: "issue/1-x", prNumber: 101 });
+      // The in-flight prerequisite is a base, never an in-set prerequisite.
+      expect(plan.prereqs.get(2)).toEqual([]);
+    });
+
+    it("treats a merged prerequisite PR as satisfied: base from default, no stack", () => {
+      const selected = [issue(2, "dependent")];
+      const plan = planPrereqs(
+        selected,
+        deps({ 2: { blockedBy: [edge(1)] } }),
+        REPO,
+        inFlight({ 1: { branch: "issue/1-x", pr: { number: 101, state: "MERGED" } } }),
+      );
+
+      expect(plan.shippable.map((i) => i.number)).toEqual([2]);
+      expect(plan.deferred).toEqual([]);
+      expect(plan.stackBases.has(2)).toBe(false);
+      expect(plan.prereqs.get(2)).toEqual([]);
+    });
+
+    it("defers a dependent whose prerequisite PR is closed-unmerged (abandoned)", () => {
+      const selected = [issue(2, "dependent")];
+      const plan = planPrereqs(
+        selected,
+        deps({ 2: { blockedBy: [edge(1)] } }),
+        REPO,
+        inFlight({ 1: { branch: "issue/1-x", pr: { number: 101, state: "CLOSED" } } }),
+      );
+
+      expect(plan.shippable).toEqual([]);
+      expect(plan.stackBases.has(2)).toBe(false);
+      expect(plan.deferred.map((d) => d.issue.number)).toEqual([2]);
+      expect(plan.deferred[0]?.reason).toContain("#1");
+    });
+
+    it("defers a dependent whose in-flight prerequisite branch has no PR", () => {
+      const selected = [issue(2, "dependent")];
+      const plan = planPrereqs(
+        selected,
+        deps({ 2: { blockedBy: [edge(1)] } }),
+        REPO,
+        inFlight({ 1: { branch: "issue/1-x" } }),
+      );
+
+      expect(plan.shippable).toEqual([]);
+      expect(plan.stackBases.has(2)).toBe(false);
+      expect(plan.deferred.map((d) => d.issue.number)).toEqual([2]);
+    });
+
+    it("defers rather than guessing when a dependent has two in-flight bases", () => {
+      const selected = [issue(3, "dependent")];
+      const plan = planPrereqs(
+        selected,
+        deps({ 3: { blockedBy: [edge(1), edge(2)] } }),
+        REPO,
+        inFlight({
+          1: { branch: "issue/1-x", pr: { number: 101, state: "OPEN" } },
+          2: { branch: "issue/2-y", pr: { number: 102, state: "OPEN" } },
+        }),
+      );
+
+      expect(plan.shippable).toEqual([]);
+      expect(plan.stackBases.has(3)).toBe(false);
+      expect(plan.deferred[0]?.reason).toContain("cannot be stacked linearly");
+    });
+
+    it("defers when an in-flight base is mixed with a same-night prerequisite", () => {
+      // #3 blocked by #1 (in-flight, open PR) and #2 (fresh-selected this night).
+      const selected = [issue(2, "same-night prereq"), issue(3, "dependent")];
+      const plan = planPrereqs(
+        selected,
+        deps({ 3: { blockedBy: [edge(1), edge(2)] } }),
+        REPO,
+        inFlight({ 1: { branch: "issue/1-x", pr: { number: 101, state: "OPEN" } } }),
+      );
+
+      // #2 still ships; #3 is deferred (cannot linearize an in-flight base under a
+      // same-night prerequisite).
+      expect(plan.shippable.map((i) => i.number)).toEqual([2]);
+      expect(plan.stackBases.has(3)).toBe(false);
+      expect(plan.deferred.map((d) => d.issue.number)).toEqual([3]);
+    });
+
+    it("ignores in-flight data for a blocker that is not actually a prerequisite", () => {
+      // No edges at all: an unrelated in-flight entry never invents a stack base.
+      const selected = [issue(2, "independent")];
+      const plan = planPrereqs(
+        selected,
+        deps({}),
+        REPO,
+        inFlight({ 1: { branch: "issue/1-x", pr: { number: 101, state: "OPEN" } } }),
+      );
+
+      expect(plan.shippable.map((i) => i.number)).toEqual([2]);
+      expect(plan.stackBases.has(2)).toBe(false);
+      expect(plan.deferred).toEqual([]);
+    });
   });
 });

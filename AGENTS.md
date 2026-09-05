@@ -91,10 +91,17 @@ See [docs/releasing.md](docs/releasing.md).
   loop in `main.ts`. Layer 1 (`packages/action/src/prereq-planner.ts`) enforces
   native `blocked-by` edges - fetched read-only via `GitHubApi.getIssueDependencies`
   (`entry.ts`, one aliased GraphQL query) - deferring a dependent whose
-  prerequisite is not shipping tonight. Layer 2 (`classify.ts`, unchanged same-code
-  heuristic) runs over the non-deferred set; `merge-graph.ts` overlays its groups
-  on the Layer-1 order under "prerequisites always win". Empty edges == the
-  pre-dep-graph behavior (the regression guard in `main.test.ts`).
+  prerequisite is not shipping tonight. Exception (issue #48): a native
+  prerequisite that idempotency skipped because its branch is in flight becomes a
+  `stackBase` instead of a defer, gated on PR liveness (open+unmerged) via the
+  read-only `GitHubApi.getPullRequestForBranch`; the dependent's PR then stacks on
+  that already-pushed branch. Liveness, not branch existence: a merged PR is
+  satisfied (base from default), a closed-unmerged/PR-less branch defers. This is
+  native-edge-only. Layer 2 (`classify.ts`, unchanged same-code heuristic) runs
+  over the non-deferred set; `merge-graph.ts` overlays its groups on the Layer-1
+  order under "prerequisites always win", and never stacks on a skipped branch
+  across nights. Empty edges == the pre-dep-graph behavior (the regression guard
+  in `main.test.ts`).
 
 ## Maintaining this file
 

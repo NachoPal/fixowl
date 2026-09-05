@@ -23,9 +23,11 @@ In the morning you review. **fixowl never merges.**
 - **Dependency-aware**: two layers decide branch topology. First, fixowl reads
   the night's issues' native GitHub `blocked-by` edges and enforces them: a
   dependent stacks on and ships after its prerequisite when that prerequisite is
-  also shipping tonight, and is otherwise **deferred** (the prerequisite isn't
-  selected, failed to ship, is cross-repo, or forms a cycle - deferrals are
-  logged and listed in the night summary). Then a heuristic pass classifies the
+  also shipping tonight (or, if the prerequisite was skipped because its branch
+  is already in flight with a live PR, stacks on that existing branch), and is
+  otherwise **deferred** (the prerequisite isn't selected, failed to ship, is
+  cross-repo, or forms a cycle - deferrals are logged and listed in the night
+  summary). Then a heuristic pass classifies the
   remaining issues by whether they touch the same code and stacks those too;
   prerequisites always win over that heuristic. Issues are fixed one at a time -
   topology, not concurrency. See [docs/stacked-prs.md](docs/stacked-prs.md).

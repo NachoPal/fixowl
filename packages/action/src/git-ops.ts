@@ -122,6 +122,17 @@ export class GitWorkspace {
     await this.git("checkout", "-B", branch, baseRef);
   }
 
+  /**
+   * Fetch one remote branch into its `origin/<branch>` tracking ref so it can be
+   * used as a base for stacking (issue #48). The initial `fetch-depth: 0`
+   * checkout already brings every branch, but an in-flight prerequisite branch
+   * pushed on a prior night is fetched explicitly here so the base always
+   * resolves regardless of how the workspace was set up.
+   */
+  async fetchRemoteBranch(branch: string): Promise<void> {
+    await this.git("fetch", "origin", `${branch}:refs/remotes/origin/${branch}`);
+  }
+
   async checkout(ref: string): Promise<void> {
     await this.git("checkout", ref);
   }

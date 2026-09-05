@@ -102,6 +102,9 @@ const github: GitHubApi = {
   async getIssueDependencies(numbers) {
     return new Map(numbers.map((n) => [n, { number: n, blockedBy: [] }]));
   },
+  async getPullRequestForBranch() {
+    return undefined;
+  },
   async listRecentWorkflowRuns() {
     return [];
   },
