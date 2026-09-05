@@ -55,7 +55,7 @@ Two fine-grained PATs, both scoped to only the target repos:
 
 | token | permissions | lives |
 | --- | --- | --- |
-| admin | Administration RW, Secrets RW, Contents RW, Workflows RW, Issues RW, Actions RW | CLI machine only (`~/.fixowl/secrets.env`, chmod 600) |
+| admin | Administration RW, Secrets RW, Contents RW, Workflows RW, Issues RW, Actions RW, Pull requests RW | CLI machine only (`~/.fixowl/secrets.env`, chmod 600) |
 | runtime | Contents RW, Pull requests RW, Issues RW | repo Actions secret `FIXOWL_GITHUB_TOKEN` |
 
 - **The admin token is setup-only.** It is spent by `fixowl provision` (labels,
