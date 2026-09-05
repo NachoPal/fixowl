@@ -89,6 +89,70 @@ describe("agent adapters", () => {
     expect(aider.promptVia).toBe("file");
   });
 
+  it("codex: exec argv, prompt on stdin, empty default env allowlist (opt-in spend)", () => {
+    const codex = getAgentAdapter("codex");
+    expect(codex.argv("fix")).toEqual([
+      "codex",
+      "exec",
+      "--skip-git-repo-check",
+      "--dangerously-bypass-approvals-and-sandbox",
+      "--ephemeral",
+      "-C",
+      "/workspace",
+    ]);
+    // classify reuses the same argv (the classifier prompt asks for JSON).
+    expect(codex.argv("classify")).toEqual(codex.argv("fix"));
+    expect(codex.promptVia).toBe("stdin");
+    expect(codex.env).toEqual([]);
+  });
+
+  it("codex: appends -m and maps effort to a -c config override when selected", () => {
+    const codex = getAgentAdapter("codex");
+    expect(codex.argv("fix", { model: "gpt-5-codex", effort: "high" })).toEqual([
+      "codex",
+      "exec",
+      "--skip-git-repo-check",
+      "--dangerously-bypass-approvals-and-sandbox",
+      "--ephemeral",
+      "-C",
+      "/workspace",
+      "-m",
+      "gpt-5-codex",
+      "-c",
+      "model_reasoning_effort=high",
+    ]);
+    // A partial selection omits the absent flag.
+    expect(codex.argv("fix", { model: "gpt-5.1-codex" })).toEqual([
+      "codex",
+      "exec",
+      "--skip-git-repo-check",
+      "--dangerously-bypass-approvals-and-sandbox",
+      "--ephemeral",
+      "-C",
+      "/workspace",
+      "-m",
+      "gpt-5.1-codex",
+    ]);
+    expect(codex.argv("fix", { effort: "minimal" })).toEqual([
+      "codex",
+      "exec",
+      "--skip-git-repo-check",
+      "--dangerously-bypass-approvals-and-sandbox",
+      "--ephemeral",
+      "-C",
+      "/workspace",
+      "-c",
+      "model_reasoning_effort=minimal",
+    ]);
+  });
+
+  it("codex: an operator opts OPENAI_API_KEY into the allowlist via config override", () => {
+    const codex = getAgentAdapter("codex", ["OPENAI_API_KEY"]);
+    expect(codex.env).toEqual(["OPENAI_API_KEY"]);
+    // The built-in default stays empty (no accidental spend).
+    expect(getAgentAdapter("codex").env).toEqual([]);
+  });
+
   it("script: extracts fenced bodies and runs them as bash for deterministic e2e", () => {
     const script = getAgentAdapter("script");
     const argv = script.argv("fix");
@@ -135,6 +199,6 @@ describe("agent adapters", () => {
 
   it("unknown adapter throws with the known list", () => {
     expect(() => getAgentAdapter("gpt")).toThrow(/unknown agent adapter "gpt"/);
-    expect(agentAdapterNames()).toEqual(["claude", "aider", "script"]);
+    expect(agentAdapterNames()).toEqual(["claude", "aider", "codex", "script"]);
   });
 });

@@ -12,6 +12,14 @@ export type AgentMode = "fix" | "classify";
 /** Path the prompt file is mounted at (read-only) for `promptVia: "file"` adapters. */
 export const PROMPT_MOUNT_PATH = "/fixowl/prompt.md";
 
+/**
+ * Where the working tree is mounted inside every container. Mirrors the action
+ * package's own `WORKSPACE_MOUNT_PATH` (container-exec.ts); codex is the only
+ * adapter that needs to name it (as its `--cd` root), and core cannot import
+ * from the action package, so it is restated here.
+ */
+export const WORKSPACE_MOUNT_PATH = "/workspace";
+
 export interface AgentAdapter {
   name: string;
   /** Env var allowlist. Default-deny: anything not listed never reaches the container. */
@@ -62,6 +70,36 @@ const aider: AgentAdapter = {
   ],
 };
 
+const codex: AgentAdapter = {
+  name: "codex",
+  // Deliberately empty, exactly like aider: codex needs a paid credential, so
+  // the operator opts one in explicitly via config, e.g.
+  // `agents: { codex: { env: [OPENAI_API_KEY] } }`. This is the API-key auth
+  // path; the ChatGPT/Codex subscription is a separate, file-based credential
+  // that does not ride the env allowlist and is not supported yet.
+  env: [],
+  promptVia: "stdin",
+  // `codex exec` is the non-interactive mode; with no positional prompt it reads
+  // instructions from stdin. The container is the sandbox, so we disable codex's
+  // own approval prompts and sandbox (which would fight `--cap-drop ALL`), and
+  // fixowl moves `.git` out of the tree, so codex must tolerate a git-less root.
+  // `--ephemeral` keeps codex from persisting session/rollout files. Reasoning
+  // effort has no dedicated flag; it is a config override (`-c`).
+  argv: (_mode, selection) => [
+    "codex",
+    "exec",
+    "--skip-git-repo-check",
+    "--dangerously-bypass-approvals-and-sandbox",
+    "--ephemeral",
+    "-C",
+    WORKSPACE_MOUNT_PATH,
+    ...(selection?.model !== undefined ? ["-m", selection.model] : []),
+    ...(selection?.effort !== undefined
+      ? ["-c", `model_reasoning_effort=${selection.effort}`]
+      : []),
+  ],
+};
+
 /**
  * Test-only adapter: extracts the fenced issue body (or bodies) from the
  * prompt file and executes it as bash inside the container. Lets the whole
@@ -80,7 +118,7 @@ const script: AgentAdapter = {
   argv: () => ["bash", "-c", SCRIPT_EXTRACT_AND_RUN],
 };
 
-const ADAPTERS: Record<string, AgentAdapter> = { claude, aider, script };
+const ADAPTERS: Record<string, AgentAdapter> = { claude, aider, codex, script };
 
 /**
  * Env var names that would hand the agent a GitHub credential. "The coding

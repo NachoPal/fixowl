@@ -50,6 +50,20 @@ export const AGENT_MODEL_CATALOG: Record<string, AgentCatalogEntry> = {
     ],
     efforts: ["low", "medium", "high"],
   },
+  // codex (`codex exec`): `-m` takes a model id and reasoning effort is set via
+  // `-c model_reasoning_effort=<level>`. The real model list is server-provided
+  // per account; the ids below are the publicly-known codex family and a safe
+  // starting point - extend it with any model your OPENAI_API_KEY can reach.
+  // Not every model accepts every effort level; codex rejects an unsupported
+  // combination at run time.
+  codex: {
+    models: [
+      { id: "gpt-5-codex", description: "Codex-optimized GPT-5; a good default." },
+      { id: "gpt-5.1-codex", description: "Newer codex model." },
+      { id: "gpt-5.1-codex-max", description: "Highest-capability codex model." },
+    ],
+    efforts: ["minimal", "low", "medium", "high", "xhigh"],
+  },
 };
 
 export function agentCatalogEntry(agent: string): AgentCatalogEntry | undefined {

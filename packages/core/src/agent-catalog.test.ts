@@ -13,6 +13,12 @@ describe("agent catalog", () => {
     expect(agentEfforts("claude")).toEqual(["low", "medium", "high", "xhigh", "max"]);
   });
 
+  it("exposes codex models and its effort ladder", () => {
+    expect(agentModelIds("codex")).toContain("gpt-5-codex");
+    expect(agentModelIds("codex")).toContain("gpt-5.1-codex-max");
+    expect(agentEfforts("codex")).toEqual(["minimal", "low", "medium", "high", "xhigh"]);
+  });
+
   it("returns undefined for an agent without a catalog", () => {
     expect(agentCatalogEntry("script")).toBeUndefined();
     expect(agentModelIds("script")).toEqual([]);
@@ -43,6 +49,18 @@ describe("validateModelEffort", () => {
   it("is agent-aware: aider does not accept the claude-only 'max' effort", () => {
     expect(validateModelEffort("aider", { effort: "max" })).toHaveLength(1);
     expect(validateModelEffort("aider", { effort: "high" })).toEqual([]);
+  });
+
+  it("validates codex model+effort and rejects unknown combinations", () => {
+    expect(validateModelEffort("codex", { model: "gpt-5-codex", effort: "xhigh" })).toEqual([]);
+    expect(validateModelEffort("codex", { effort: "minimal" })).toEqual([]);
+    const badModel = validateModelEffort("codex", { model: "opus" });
+    expect(badModel).toHaveLength(1);
+    expect(badModel[0]).toMatch(/model "opus" is not available for agent "codex"/);
+    // 'max' is a claude-only effort; codex tops out at xhigh.
+    const badEffort = validateModelEffort("codex", { effort: "max" });
+    expect(badEffort).toHaveLength(1);
+    expect(badEffort[0]).toMatch(/effort "max" is not available for agent "codex"/);
   });
 
   it("rejects model/effort for an agent with no catalog", () => {
