@@ -68,6 +68,19 @@ describe("renderFixowlWorkflow", () => {
     expect(rendered).not.toContain("label-models:");
   });
 
+  it("omits run-budget inputs when unset, and renders each when set", () => {
+    const bare = renderFixowlWorkflow(baseOptions);
+    expect(bare).not.toContain("usage-budget-percent:");
+    expect(bare).not.toContain("run-budget-minutes:");
+    const rendered = renderFixowlWorkflow({
+      ...baseOptions,
+      usageBudgetPercent: 85,
+      runBudgetMinutes: 240,
+    });
+    expect(rendered).toContain('usage-budget-percent: "85"');
+    expect(rendered).toContain('run-budget-minutes: "240"');
+  });
+
   it("omits heuristic-conflict-ordering when off (default), renders it when on", () => {
     expect(renderFixowlWorkflow(baseOptions)).not.toContain("heuristic-conflict-ordering:");
     expect(

@@ -76,6 +76,43 @@ describe("renderConfigYaml", () => {
     });
   });
 
+  it("renders run-budget defaults when set and per-repo overrides where they differ", () => {
+    const yaml = renderConfigYaml({
+      agent: "claude",
+      agentEnv: ["CLAUDE_CODE_OAUTH_TOKEN"],
+      repos: [
+        repo({ usageBudgetPercent: 85, runBudgetMinutes: 240, issueTimeoutMinutes: 45 }),
+        repo({ name: "NachoPal/other", usageBudgetPercent: 60, issueTimeoutMinutes: 30 }),
+      ],
+    });
+    const config = loadRendered(yaml);
+    expect(config.defaults).toMatchObject({
+      usage_budget_percent: 85,
+      run_budget_minutes: 240,
+      issue_timeout_minutes: 45,
+    });
+    // The second repo overrides only the fields that differ from the base.
+    expect(config.repos[1]).toEqual({
+      name: "NachoPal/other",
+      usage_budget_percent: 60,
+      issue_timeout_minutes: 30,
+    });
+  });
+
+  it("leaves the usage/wall-clock axes opted out (commented) when the base repo omits them", () => {
+    const yaml = renderConfigYaml({
+      agent: "claude",
+      agentEnv: ["CLAUDE_CODE_OAUTH_TOKEN"],
+      repos: [repo()],
+    });
+    const config = loadRendered(yaml);
+    expect(config.defaults?.usage_budget_percent).toBeUndefined();
+    expect(config.defaults?.run_budget_minutes).toBeUndefined();
+    // ...but the commented examples are present so the axes are discoverable.
+    expect(yaml).toContain("# usage_budget_percent:");
+    expect(yaml).toContain("# run_budget_minutes:");
+  });
+
   it("renders default model/effort into defaults and label_models per repo", () => {
     const config = loadRendered(
       renderConfigYaml({

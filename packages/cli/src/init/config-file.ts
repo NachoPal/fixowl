@@ -13,6 +13,12 @@ export interface RepoAnswers {
   scheduleNote?: string;
   labels: string[];
   maxIssuesPerRun: number;
+  /** Usage-budget stop % (issue #21); undefined opts the usage condition out. */
+  usageBudgetPercent?: number;
+  /** Graceful wall-clock stop in minutes (issue #21); undefined opts it out. */
+  runBudgetMinutes?: number;
+  /** Per-issue hard timeout in minutes; falls back to the built-in default when unset. */
+  issueTimeoutMinutes?: number;
   /** Default model for issues with no selector label. */
   defaultModel?: string;
   /** Default reasoning effort for issues with no selector label. */
@@ -50,6 +56,17 @@ function cronLine(indent: string, repo: RepoAnswers): string {
 
 function sameLabels(a: readonly string[], b: readonly string[]): boolean {
   return a.length === b.length && a.every((label, index) => label === b[index]);
+}
+
+/**
+ * A run-budget default line (issue #21): active when the operator set a value,
+ * otherwise a commented example carrying the starter value so the axis is easy
+ * to discover and opt into without silently forcing it on.
+ */
+function budgetLine(key: string, value: number | undefined, starter: number, note: string): string {
+  return value !== undefined
+    ? `  ${key}: ${value}   # ${note}`
+    : `  # ${key}: ${starter}   # ${note}`;
 }
 
 /** Renders the `label_models:` block for a repo (per-repo, never in defaults). */
@@ -109,6 +126,21 @@ function repoOverrideLines(
   if (!sameLabels(repo.labels, base.labels)) lines.push(`    labels: ${labelRule(repo.labels)}`);
   if (repo.maxIssuesPerRun !== base.maxIssuesPerRun) {
     lines.push(`    max_issues_per_run: ${repo.maxIssuesPerRun}`);
+  }
+  if (
+    repo.usageBudgetPercent !== base.usageBudgetPercent &&
+    repo.usageBudgetPercent !== undefined
+  ) {
+    lines.push(`    usage_budget_percent: ${repo.usageBudgetPercent}`);
+  }
+  if (repo.runBudgetMinutes !== base.runBudgetMinutes && repo.runBudgetMinutes !== undefined) {
+    lines.push(`    run_budget_minutes: ${repo.runBudgetMinutes}`);
+  }
+  if (
+    repo.issueTimeoutMinutes !== base.issueTimeoutMinutes &&
+    repo.issueTimeoutMinutes !== undefined
+  ) {
+    lines.push(`    issue_timeout_minutes: ${repo.issueTimeoutMinutes}`);
   }
   lines.push(...modelEffortLines("    ", repo, liftedModel, liftedEffort));
   lines.push(...labelModelsBlock("    ", repo.labelModels));
@@ -171,8 +203,12 @@ defaults:
 ${cronLine("  ", base)}
   labels: ${labelRule(base.labels)}
   agent: ${answers.agent}
-  max_issues_per_run: ${base.maxIssuesPerRun}
-  issue_timeout_minutes: ${FIXOWL_DEFAULTS.issueTimeoutMinutes}
+  # Layered run-budget (issue #21): the night stops on the first condition that
+  # trips. Each is optional; delete a line to opt that axis out.
+  max_issues_per_run: ${base.maxIssuesPerRun}   # secondary cap: at most this many PRs ship
+${budgetLine("usage_budget_percent", base.usageBudgetPercent, FIXOWL_DEFAULTS.usageBudgetPercent, "stop before a new issue once the agent usage window hits this %")}
+${budgetLine("run_budget_minutes", base.runBudgetMinutes, FIXOWL_DEFAULTS.runBudgetMinutes, "graceful wall-clock: don't start a new issue after this many minutes")}
+  issue_timeout_minutes: ${base.issueTimeoutMinutes ?? FIXOWL_DEFAULTS.issueTimeoutMinutes}   # per-issue hard timeout (a stuck agent is killed)
   ci_max_tries: ${FIXOWL_DEFAULTS.ciMaxTries}          # CI-gated fix loop: agent passes before a draft PR is left
   ci_timeout_minutes: ${FIXOWL_DEFAULTS.ciTimeoutMinutes}     # minutes each pass waits for the base branch's required checks${defaultModelBlock}
   # heuristic_conflict_ordering: true   # opt-in Layer 2: an LLM groups & stacks

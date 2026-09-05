@@ -13482,7 +13482,7 @@ var require_fetch = __commonJS({
     function handleFetchDone(response) {
       finalizeAndReportTiming(response, "fetch");
     }
-    function fetch(input2, init = void 0) {
+    function fetch2(input2, init = void 0) {
       webidl.argumentLengthCheck(arguments, 1, "globalThis.fetch");
       let p = createDeferredPromise();
       let requestObject;
@@ -14439,7 +14439,7 @@ var require_fetch = __commonJS({
       }
     }
     module.exports = {
-      fetch,
+      fetch: fetch2,
       Fetch,
       fetching,
       finalizeAndReportTiming
@@ -18788,7 +18788,7 @@ var require_undici = __commonJS({
     module.exports.setGlobalDispatcher = setGlobalDispatcher;
     module.exports.getGlobalDispatcher = getGlobalDispatcher;
     var fetchImpl = require_fetch().fetch;
-    module.exports.fetch = async function fetch(init, options = void 0) {
+    module.exports.fetch = async function fetch2(init, options = void 0) {
       try {
         return await fetchImpl(init, options);
       } catch (err) {
@@ -27549,8 +27549,8 @@ function isPlainObject2(value) {
 }
 var noop = () => "";
 async function fetchWrapper(requestOptions) {
-  const fetch = requestOptions.request?.fetch || globalThis.fetch;
-  if (!fetch) {
+  const fetch2 = requestOptions.request?.fetch || globalThis.fetch;
+  if (!fetch2) {
     throw new Error(
       "fetch is not set. Please pass a fetch implementation as new Octokit({ request: { fetch }}). Learn more at https://github.com/octokit/octokit.js/#fetch-missing"
     );
@@ -27566,7 +27566,7 @@ async function fetchWrapper(requestOptions) {
   );
   let fetchResponse;
   try {
-    fetchResponse = await fetch(requestOptions.url, {
+    fetchResponse = await fetch2(requestOptions.url, {
       method: requestOptions.method,
       body,
       redirect: requestOptions.request?.redirect,
@@ -49574,6 +49574,134 @@ function getAgentAdapter(name, envOverride) {
   return envOverride === void 0 ? adapter : { ...adapter, env };
 }
 
+// packages/core/src/agent-usage.ts
+var CLAUDE_USAGE_URL = "https://api.anthropic.com/api/oauth/usage?at_wall=1&skip_spend=1";
+var CLAUDE_TOKEN_ENV = "CLAUDE_CODE_OAUTH_TOKEN";
+function parseClaudeUsage(raw) {
+  if (raw === null || typeof raw !== "object") return void 0;
+  const root = raw;
+  const rateLimits = root.rate_limits !== null && typeof root.rate_limits === "object" ? root.rate_limits : void 0;
+  const windows = {};
+  for (const key of ["five_hour", "seven_day"]) {
+    const window = pickWindow(root[key]) ?? (rateLimits ? pickWindow(rateLimits[key]) : void 0);
+    if (window !== void 0) windows[key] = window;
+  }
+  const names = Object.keys(windows);
+  if (names.length === 0) return void 0;
+  let limiting = names[0];
+  for (const name of names) {
+    if ((windows[name]?.usedPercent ?? 0) > (windows[limiting]?.usedPercent ?? 0)) limiting = name;
+  }
+  return { usedPercent: windows[limiting]?.usedPercent ?? 0, windows, limiting };
+}
+function pickWindow(value) {
+  if (value === null || typeof value !== "object") return void 0;
+  const record2 = value;
+  const usedPercent = readPercent(record2);
+  if (usedPercent === void 0) return void 0;
+  return { usedPercent, resetsAt: readResetsAt(record2.resets_at) };
+}
+function readPercent(record2) {
+  if (typeof record2.used_percentage === "number" && Number.isFinite(record2.used_percentage)) {
+    return record2.used_percentage;
+  }
+  if (typeof record2.utilization === "number" && Number.isFinite(record2.utilization)) {
+    return record2.utilization * 100;
+  }
+  return void 0;
+}
+function readResetsAt(value) {
+  if (typeof value === "number" && Number.isFinite(value)) return Math.floor(value);
+  if (typeof value === "string") {
+    const parsed = Date.parse(value);
+    if (!Number.isNaN(parsed)) return Math.floor(parsed / 1e3);
+  }
+  return 0;
+}
+var claudeUsageReader = {
+  async read(probe) {
+    const token = probe.env[CLAUDE_TOKEN_ENV];
+    if (token === void 0 || token === "") return void 0;
+    try {
+      const raw = await probe.fetchJson(CLAUDE_USAGE_URL, {
+        Authorization: `Bearer ${token}`,
+        // The OAuth flow beta header Claude Code sends for this endpoint.
+        "anthropic-beta": "oauth-2025-04-20"
+      });
+      return parseClaudeUsage(raw);
+    } catch {
+      return void 0;
+    }
+  }
+};
+var noUsageReader = {
+  async read() {
+    return void 0;
+  }
+};
+var USAGE_READERS = { claude: claudeUsageReader };
+function getUsageReader(agentName) {
+  return USAGE_READERS[agentName] ?? noUsageReader;
+}
+
+// packages/core/src/run-budget.ts
+function buildStopConditions(limits) {
+  const conditions = [];
+  if (limits.maxIssues !== void 0) {
+    const cap = limits.maxIssues;
+    conditions.push({
+      name: "count",
+      evaluate: (state) => state.shipped >= cap ? {
+        stop: true,
+        condition: "count",
+        reason: `count budget reached: ${state.shipped} issue(s) shipped (cap ${cap})`
+      } : { stop: false }
+    });
+  }
+  if (limits.usagePercent !== void 0) {
+    const budget = limits.usagePercent;
+    conditions.push({
+      name: "usage",
+      evaluate: (state) => {
+        if (state.usage === void 0) return { stop: false };
+        if (state.usage.usedPercent < budget) return { stop: false };
+        return {
+          stop: true,
+          condition: "usage",
+          reason: `usage budget reached: ${state.usage.limiting} window at ${formatPercent(
+            state.usage.usedPercent
+          )}% (budget ${budget}%)`
+        };
+      }
+    });
+  }
+  if (limits.runMinutes !== void 0) {
+    const budgetMs = limits.runMinutes * 6e4;
+    const runMinutes = limits.runMinutes;
+    conditions.push({
+      name: "wallclock",
+      evaluate: (state) => state.elapsedMs >= budgetMs ? {
+        stop: true,
+        condition: "wallclock",
+        reason: `run budget reached: ${Math.floor(
+          state.elapsedMs / 6e4
+        )} min elapsed (budget ${runMinutes} min); not starting another issue`
+      } : { stop: false }
+    });
+  }
+  return conditions;
+}
+function evaluateBudget(conditions, state) {
+  for (const condition of conditions) {
+    const verdict = condition.evaluate(state);
+    if (verdict.stop) return verdict;
+  }
+  return { stop: false };
+}
+function formatPercent(value) {
+  return Number(value.toFixed(1)).toString();
+}
+
 // packages/core/src/agent-catalog.ts
 var AGENT_MODEL_CATALOG = {
   // Claude Code CLI: `--model` takes an alias for the latest model of a family
@@ -49680,7 +49808,16 @@ var repoEntrySchema = external_exports.object({
   schedule: cronSchema.optional(),
   labels: labelRuleSchema.optional(),
   agent: external_exports.string().optional(),
+  /**
+   * Run-budget stop conditions (issue #21), each optional. The night stops on
+   * the first that trips; leaving one unset opts that axis out.
+   * `max_issues_per_run` is the kept secondary count cap.
+   */
   max_issues_per_run: external_exports.number().int().positive().optional(),
+  /** Stop before starting a new issue once the agent's usage window hits this % (0..100). */
+  usage_budget_percent: external_exports.number().min(0).max(100).optional(),
+  /** Graceful wall-clock: don't start a new issue after this many minutes of the run. */
+  run_budget_minutes: external_exports.number().int().positive().optional(),
   issue_timeout_minutes: external_exports.number().int().positive().optional(),
   /** Max agent passes in the CI-gated fix loop before a draft PR is left. */
   ci_max_tries: external_exports.number().int().positive().optional(),
@@ -49724,6 +49861,10 @@ var globalConfigSchema = external_exports.object({
     labels: labelRuleSchema.optional(),
     agent: external_exports.string().optional(),
     max_issues_per_run: external_exports.number().int().positive().optional(),
+    /** Default usage-budget stop % for every repo (issue #21). */
+    usage_budget_percent: external_exports.number().min(0).max(100).optional(),
+    /** Default graceful wall-clock stop, in minutes, for every repo (issue #21). */
+    run_budget_minutes: external_exports.number().int().positive().optional(),
     issue_timeout_minutes: external_exports.number().int().positive().optional(),
     /** Default CI-gated-loop try budget for any repo that does not set its own. */
     ci_max_tries: external_exports.number().int().positive().optional(),
@@ -49757,6 +49898,16 @@ var FIXOWL_DEFAULTS = {
   labels: { any: ["overnight"] },
   agent: "claude",
   maxIssuesPerRun: 4,
+  /**
+   * Starter run-budget values (issue #21), written into a fresh config by
+   * `fixowl init` and offered as the wizard's prefilled defaults. They are NOT a
+   * resolution fallback: an operator who leaves `usage_budget_percent` /
+   * `run_budget_minutes` unset opts that axis out (undefined), so a config
+   * written before this feature behaves exactly as it did. 240 min sits
+   * comfortably under the workflow's blunt `timeout-minutes: 300` ceiling.
+   */
+  usageBudgetPercent: 85,
+  runBudgetMinutes: 240,
   issueTimeoutMinutes: 45,
   /**
    * Layer 2 (heuristic same-files conflict-ordering) is off by default: fixowl
@@ -49797,6 +49948,11 @@ function resolveRepoSettings(config2, repoName) {
     labels: entry.labels ?? defaults.labels ?? FIXOWL_DEFAULTS.labels,
     agent,
     maxIssuesPerRun: entry.max_issues_per_run ?? defaults.max_issues_per_run ?? FIXOWL_DEFAULTS.maxIssuesPerRun,
+    // Usage % and wall-clock have no built-in fallback: unset stays undefined
+    // (opted out), so a pre-#21 config is unchanged. The starter values live in
+    // FIXOWL_DEFAULTS only for `init` to write into a fresh config.
+    usageBudgetPercent: entry.usage_budget_percent ?? defaults.usage_budget_percent,
+    runBudgetMinutes: entry.run_budget_minutes ?? defaults.run_budget_minutes,
     issueTimeoutMinutes: entry.issue_timeout_minutes ?? defaults.issue_timeout_minutes ?? FIXOWL_DEFAULTS.issueTimeoutMinutes,
     ciMaxTries: entry.ci_max_tries ?? defaults.ci_max_tries ?? FIXOWL_DEFAULTS.ciMaxTries,
     ciTimeoutMinutes: entry.ci_timeout_minutes ?? defaults.ci_timeout_minutes ?? FIXOWL_DEFAULTS.ciTimeoutMinutes,
@@ -51196,6 +51352,28 @@ async function runNightWithGit(deps, inputs, git) {
     inputs.agentEnvNames !== void 0 && inputs.agentEnvNames.length > 0 ? inputs.agentEnvNames : void 0
   );
   const agentEnv = resolveAgentEnv(adapter.env, inputs.env, warnings);
+  const runStart = Date.now();
+  const budgetLimits = {
+    maxIssues: inputs.maxIssues,
+    usagePercent: inputs.usageBudgetPercent,
+    runMinutes: inputs.runBudgetMinutes
+  };
+  const stopConditions = buildStopConditions(budgetLimits);
+  const usageReader = getUsageReader(inputs.agentName);
+  let usageWarned = false;
+  const assembleBudgetState = async (shipped2) => {
+    let usage;
+    if (inputs.usageBudgetPercent !== void 0 && deps.httpJson !== void 0) {
+      usage = await usageReader.read({ env: agentEnv, fetchJson: deps.httpJson });
+      if (usage === void 0 && !usageWarned) {
+        usageWarned = true;
+        const warning2 = `usage budget set (${inputs.usageBudgetPercent}%) but ${inputs.agentName} usage is unobservable this run; falling through to count + wall-clock budgets`;
+        warnings.push(warning2);
+        log2.warn(warning2);
+      }
+    }
+    return { shipped: shipped2, elapsedMs: Date.now() - runStart, usage };
+  };
   const matching = await selectIssues(github, inputs.labels);
   log2.info(`${matching.length} open issue(s) match the label rule`);
   const { selected: fresh, skipped } = filterAlreadyAttempted(
@@ -51214,6 +51392,18 @@ async function runNightWithGit(deps, inputs, git) {
   if (selected.length === 0) {
     log2.info("nothing to do tonight");
     return { results: [], skipped, deferred: [], warnings };
+  }
+  const preRunVerdict = evaluateBudget(stopConditions, await assembleBudgetState(0));
+  if (preRunVerdict.stop) {
+    log2.info(`\u{1F989} fixowl: standing down before starting any issue - ${preRunVerdict.reason}`);
+    return {
+      results: [],
+      skipped,
+      deferred: [],
+      notStarted: selected,
+      budgetStop: { condition: preRunVerdict.condition, reason: preRunVerdict.reason },
+      warnings
+    };
   }
   const depsMap = await github.getIssueDependencies(selected.map((issue3) => issue3.number));
   const inFlight = await resolveInFlightPrereqs(github, depsMap, skipped, inputs.repoFullName);
@@ -51254,11 +51444,24 @@ async function runNightWithGit(deps, inputs, git) {
   const chains = planChains(shippable, chainNumbers);
   const shipped = /* @__PURE__ */ new Set();
   const results = [];
+  const notStarted = [];
+  let budgetStop;
   for (const chain of chains) {
     let baseRef = `origin/${inputs.defaultBranch}`;
     let prBase = inputs.defaultBranch;
     let stackedOn;
     for (const issue3 of chain) {
+      if (budgetStop === void 0) {
+        const verdict = evaluateBudget(stopConditions, await assembleBudgetState(shipped.size));
+        if (verdict.stop) {
+          budgetStop = { condition: verdict.condition, reason: verdict.reason };
+          log2.info(`\u{1F989} fixowl: stopping the run - ${verdict.reason}`);
+        }
+      }
+      if (budgetStop !== void 0) {
+        notStarted.push(issue3);
+        continue;
+      }
       const unshipped = (prereqPlan.prereqs.get(issue3.number) ?? []).filter(
         (prereq) => !shipped.has(prereq)
       );
@@ -51352,7 +51555,14 @@ async function runNightWithGit(deps, inputs, git) {
       }
     }
   }
-  return { results, skipped, deferred, warnings };
+  return {
+    results,
+    skipped,
+    deferred,
+    notStarted: notStarted.length > 0 ? notStarted : void 0,
+    budgetStop,
+    warnings
+  };
 }
 async function resolveInFlightPrereqs(github, depsMap, skipped, currentRepo) {
   const branchByNumber = new Map(skipped.map((skip) => [skip.issue.number, skip.branch]));
@@ -51475,7 +51685,7 @@ function wipeoutFailure(summary2) {
 }
 function renderSummary(repoFullName, summary2) {
   const lines = [`# \u{1F989} fixowl night run: ${repoFullName}`, ""];
-  if (summary2.results.length === 0 && summary2.skipped.length === 0 && summary2.deferred.length === 0) {
+  if (summary2.results.length === 0 && summary2.skipped.length === 0 && summary2.deferred.length === 0 && (summary2.notStarted?.length ?? 0) === 0 && summary2.budgetStop === void 0) {
     lines.push("No open issues matched the label rule. Sleep tight.");
   }
   if (summary2.results.length > 0) {
@@ -51489,6 +51699,21 @@ function renderSummary(repoFullName, summary2) {
       );
     }
     lines.push("");
+  }
+  if (summary2.budgetStop !== void 0) {
+    lines.push(
+      `## Run stopped early (${summary2.budgetStop.condition} budget)`,
+      "",
+      markdownCell(summary2.budgetStop.reason),
+      ""
+    );
+    if ((summary2.notStarted?.length ?? 0) > 0) {
+      lines.push("Not started tonight:", "");
+      for (const issue3 of summary2.notStarted ?? []) {
+        lines.push(`- #${issue3.number} ${markdownCell(issue3.title)}`);
+      }
+      lines.push("");
+    }
   }
   if (summary2.skipped.length > 0) {
     lines.push(`## Skipped (branch already exists)`, "");
@@ -51772,6 +51997,31 @@ function positiveIntInput(name, fallback) {
   }
   return value;
 }
+function optionalPositiveIntInput(name) {
+  const raw = getInput(name);
+  if (raw === "") return void 0;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error(`input ${name} must be a positive integer, got "${raw}"`);
+  }
+  return value;
+}
+function optionalPercentInput(name) {
+  const raw = getInput(name);
+  if (raw === "") return void 0;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < 0 || value > 100) {
+    throw new Error(`input ${name} must be a number between 0 and 100, got "${raw}"`);
+  }
+  return value;
+}
+async function fetchJson(url2, headers) {
+  const response = await fetch(url2, { headers });
+  if (!response.ok) {
+    throw new Error(`usage read failed: HTTP ${response.status}`);
+  }
+  return response.json();
+}
 async function run() {
   const token = requireEnv(RUNTIME_TOKEN_SECRET);
   const repoFullName = requireEnv("GITHUB_REPOSITORY");
@@ -51806,7 +52056,8 @@ async function run() {
       github: makeGitHubApi(octokit, owner, repo, runsOctokit),
       engine: new DockerEngine(realExec, log),
       exec: realExec,
-      log
+      log,
+      httpJson: fetchJson
     },
     {
       repoFullName,
@@ -51818,6 +52069,8 @@ async function run() {
       agentName,
       agentEnvNames: parseLabelInput(getInput("agent-env")),
       maxIssues: positiveIntInput("max-issues-per-run", 4),
+      usageBudgetPercent: optionalPercentInput("usage-budget-percent"),
+      runBudgetMinutes: optionalPositiveIntInput("run-budget-minutes"),
       issueTimeoutMinutes: positiveIntInput("issue-timeout-minutes", 45),
       ciMaxTries: positiveIntInput("max-ci-tries", 3),
       ciTimeoutMinutes: positiveIntInput("ci-timeout-minutes", 60),

@@ -2,17 +2,24 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   FIXOWL_DEFAULTS,
+  buildStopConditions,
+  evaluateBudget,
   getAgentAdapter,
+  getUsageReader,
   guardScheduledSlot,
   issueBranchName,
   PROMPT_MOUNT_PATH,
   REPO_CONFIG_PATH,
   repoFileConfigSchema,
   resolveModelSelection,
+  type BudgetConditionName,
+  type BudgetLimits,
+  type BudgetState,
   type LabelModelMap,
   type LabelRule,
   type ModelSelection,
   type RepoFileConfig,
+  type UsageSnapshot,
 } from "@fixowl/core";
 import { parse as parseYaml } from "yaml";
 import { allIndependent, buildClassifyPrompt, parseClassification } from "./classify.ts";
@@ -45,6 +52,13 @@ export interface NightInputs {
   /** Overrides the adapter's built-in env allowlist when non-empty. */
   agentEnvNames?: string[];
   maxIssues: number;
+  /**
+   * Run-budget stop conditions (issue #21), each optional. The run stops on the
+   * first that trips, at the pre-run and between-issues gates. `maxIssues` is the
+   * kept secondary count cap (and bounds how many issues are selected/classified).
+   */
+  usageBudgetPercent?: number;
+  runBudgetMinutes?: number;
   issueTimeoutMinutes: number;
   /** Max agent passes in the CI-gated loop; undefined uses the built-in default. */
   ciMaxTries?: number;
@@ -97,6 +111,12 @@ export interface NightDeps {
   log: Logger;
   /** Clock for the per-issue CI wait; defaults to the real one (see ci-poll.ts). */
   clock?: Clock;
+  /**
+   * The single network edge for out-of-band usage reads (issue #21). Undefined
+   * (as in the in-process tests) makes every usage read abstain, so the run is
+   * bounded only by count + wall-clock.
+   */
+  httpJson?: (url: string, headers: Record<string, string>) => Promise<unknown>;
 }
 
 export interface NightSummary {
@@ -104,6 +124,13 @@ export interface NightSummary {
   skipped: Array<{ issue: IssueLite; branch: string }>;
   /** Issues held back tonight because a native prerequisite has not shipped (Layer 1). */
   deferred: DeferredIssue[];
+  /**
+   * Issues never started because a run-budget condition tripped (issue #21) - at
+   * the pre-run gate (all of them) or a between-issues gate (the remainder).
+   */
+  notStarted?: IssueLite[];
+  /** The run-budget stop condition that ended the night early, if any. */
+  budgetStop?: { condition: BudgetConditionName; reason: string };
   warnings: string[];
 }
 
@@ -188,6 +215,37 @@ async function runNightWithGit(
   );
   const agentEnv = resolveAgentEnv(adapter.env, inputs.env, warnings);
 
+  // Layered run-budget (issue #21): a set of independent, each-optional stop
+  // conditions evaluated at two gates (pre-run, between-issues); the run stops on
+  // the first that trips. The conditions are pure (`run-budget.ts`); the I/O is
+  // here - assembling a consistent snapshot (shipped/elapsed/usage) at each gate.
+  const runStart = Date.now();
+  const budgetLimits: BudgetLimits = {
+    maxIssues: inputs.maxIssues,
+    usagePercent: inputs.usageBudgetPercent,
+    runMinutes: inputs.runBudgetMinutes,
+  };
+  const stopConditions = buildStopConditions(budgetLimits);
+  const usageReader = getUsageReader(inputs.agentName);
+  let usageWarned = false;
+  const assembleBudgetState = async (shipped: number): Promise<BudgetState> => {
+    let usage: UsageSnapshot | undefined;
+    // Only read usage when a usage budget is set AND a network edge is injected;
+    // the in-process tests inject none, so usage stays undefined (abstain).
+    if (inputs.usageBudgetPercent !== undefined && deps.httpJson !== undefined) {
+      usage = await usageReader.read({ env: agentEnv, fetchJson: deps.httpJson });
+      if (usage === undefined && !usageWarned) {
+        usageWarned = true;
+        const warning =
+          `usage budget set (${inputs.usageBudgetPercent}%) but ${inputs.agentName} usage is ` +
+          `unobservable this run; falling through to count + wall-clock budgets`;
+        warnings.push(warning);
+        log.warn(warning);
+      }
+    }
+    return { shipped, elapsedMs: Date.now() - runStart, usage };
+  };
+
   const matching = await selectIssues(github, inputs.labels);
   log.info(`${matching.length} open issue(s) match the label rule`);
   const { selected: fresh, skipped } = filterAlreadyAttempted(
@@ -206,6 +264,22 @@ async function runNightWithGit(
   if (selected.length === 0) {
     log.info("nothing to do tonight");
     return { results: [], skipped, deferred: [], warnings };
+  }
+
+  // Pre-run gate: if a budget already trips (e.g. the usage window is spent),
+  // stand the whole night down before any docker build / classify / agent work.
+  // shipped is 0 here, so the count condition never trips at this gate.
+  const preRunVerdict = evaluateBudget(stopConditions, await assembleBudgetState(0));
+  if (preRunVerdict.stop) {
+    log.info(`🦉 fixowl: standing down before starting any issue - ${preRunVerdict.reason}`);
+    return {
+      results: [],
+      skipped,
+      deferred: [],
+      notStarted: selected,
+      budgetStop: { condition: preRunVerdict.condition, reason: preRunVerdict.reason },
+      warnings,
+    };
   }
 
   // Layer 1 (authoritative): fetch native prerequisite edges and enforce them.
@@ -276,11 +350,28 @@ async function runNightWithGit(
   const shipped = new Set<number>();
 
   const results: IssueResult[] = [];
+  // Between-issues gate: before starting each issue, re-evaluate the budget with
+  // the running shipped count, elapsed wall-clock, and a refreshed usage read.
+  // The first trip stops the whole run (across all chains); every issue not yet
+  // started is recorded as not-started with the tripping reason.
+  const notStarted: IssueLite[] = [];
+  let budgetStop: { condition: BudgetConditionName; reason: string } | undefined;
   for (const chain of chains) {
     let baseRef = `origin/${inputs.defaultBranch}`;
     let prBase = inputs.defaultBranch;
     let stackedOn: { prNumber: number; branch: string } | undefined;
     for (const issue of chain) {
+      if (budgetStop === undefined) {
+        const verdict = evaluateBudget(stopConditions, await assembleBudgetState(shipped.size));
+        if (verdict.stop) {
+          budgetStop = { condition: verdict.condition, reason: verdict.reason };
+          log.info(`🦉 fixowl: stopping the run - ${verdict.reason}`);
+        }
+      }
+      if (budgetStop !== undefined) {
+        notStarted.push(issue);
+        continue;
+      }
       const unshipped = (prereqPlan.prereqs.get(issue.number) ?? []).filter(
         (prereq) => !shipped.has(prereq),
       );
@@ -387,7 +478,14 @@ async function runNightWithGit(
     }
   }
 
-  return { results, skipped, deferred, warnings };
+  return {
+    results,
+    skipped,
+    deferred,
+    notStarted: notStarted.length > 0 ? notStarted : undefined,
+    budgetStop,
+    warnings,
+  };
 }
 
 /**
@@ -570,7 +668,9 @@ export function renderSummary(repoFullName: string, summary: NightSummary): stri
   if (
     summary.results.length === 0 &&
     summary.skipped.length === 0 &&
-    summary.deferred.length === 0
+    summary.deferred.length === 0 &&
+    (summary.notStarted?.length ?? 0) === 0 &&
+    summary.budgetStop === undefined
   ) {
     lines.push("No open issues matched the label rule. Sleep tight.");
   }
@@ -594,6 +694,21 @@ export function renderSummary(repoFullName: string, summary: NightSummary): stri
       );
     }
     lines.push("");
+  }
+  if (summary.budgetStop !== undefined) {
+    lines.push(
+      `## Run stopped early (${summary.budgetStop.condition} budget)`,
+      "",
+      markdownCell(summary.budgetStop.reason),
+      "",
+    );
+    if ((summary.notStarted?.length ?? 0) > 0) {
+      lines.push("Not started tonight:", "");
+      for (const issue of summary.notStarted ?? []) {
+        lines.push(`- #${issue.number} ${markdownCell(issue.title)}`);
+      }
+      lines.push("");
+    }
   }
   if (summary.skipped.length > 0) {
     lines.push(`## Skipped (branch already exists)`, "");

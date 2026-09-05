@@ -31,9 +31,25 @@ inputs:
     required: false
     default: ""
   max-issues-per-run:
-    description: Maximum number of issues to process in one run.
+    description: >-
+      Optional secondary count cap: at most this many PRs ship in one run. One of
+      the layered run-budget stop conditions; the run stops on the first that trips.
     required: false
     default: "4"
+  usage-budget-percent:
+    description: >-
+      Run-budget stop condition: don't start a new issue once the agent's usage
+      window is at or above this percent (0-100). Empty opts this axis out. Read
+      out-of-band on the host; abstains when usage is unobservable for the agent.
+    required: false
+    default: ""
+  run-budget-minutes:
+    description: >-
+      Run-budget stop condition: graceful wall-clock cap - don't start a new issue
+      after this many minutes of the run. Empty opts this axis out. Distinct from
+      the workflow's blunt timeout-minutes hard-kill ceiling.
+    required: false
+    default: ""
   issue-timeout-minutes:
     description: Hard timeout for the agent container per issue.
     required: false

@@ -28,6 +28,23 @@ export {
   type AgentMode,
 } from "./agent-adapters.ts";
 export {
+  CLAUDE_USAGE_URL,
+  getUsageReader,
+  parseClaudeUsage,
+  type UsageProbe,
+  type UsageReader,
+  type UsageSnapshot,
+} from "./agent-usage.ts";
+export {
+  buildStopConditions,
+  evaluateBudget,
+  type BudgetConditionName,
+  type BudgetLimits,
+  type BudgetState,
+  type BudgetVerdict,
+  type StopCondition,
+} from "./run-budget.ts";
+export {
   AGENT_MODEL_CATALOG,
   agentCatalogEntry,
   agentEfforts,

@@ -158,6 +158,36 @@ const threeIssues: IssueLite[] = [
   issue(3, "Fix sidebar", "the sidebar is wrong"),
 ];
 
+// Usage reads go through the injected httpJson edge; this fake returns a chosen
+// utilization fraction (0..1) per call so the pure gate logic decides trip/no-trip.
+function usageFetcher(utilizationByCall: (call: number) => number): {
+  httpJson: (url: string, headers: Record<string, string>) => Promise<unknown>;
+  calls: () => number;
+} {
+  let call = 0;
+  return {
+    calls: () => call,
+    async httpJson() {
+      call += 1;
+      return { five_hour: { utilization: utilizationByCall(call), resets_at: 0 } };
+    },
+  };
+}
+
+/** A claude run whose issues stay independent, so the gate ordering is what's under test. */
+function claudeBudgetInputs(inputs: NightInputs): NightInputs {
+  return {
+    ...inputs,
+    agentName: "claude",
+    env: { CLAUDE_CODE_OAUTH_TOKEN: "tok" },
+    heuristicConflictOrdering: false,
+  };
+}
+
+async function throwingHttpJson(): Promise<unknown> {
+  throw new Error("usage endpoint down");
+}
+
 describe("runNight", () => {
   it("three independent issues become three PRs off main", async () => {
     const { originDir, workspaceDir, tempDir, inputs } = await setup();
@@ -490,6 +520,89 @@ describe("runNight", () => {
         ["issue/2-fix-footer", "issue/1-fix-header"],
       ]);
       expect(github.pulls[1]?.body).toContain("Stacked on #101");
+    });
+  });
+
+  describe("layered run budgets (issue #21)", () => {
+    it("pre-run gate: an over-budget usage window stands the whole night down", async () => {
+      const { workspaceDir, inputs } = await setup();
+      const github = new FakeGitHub(structuredClone(threeIssues));
+      const engine = makeEngine({ workspaceDir });
+      const { httpJson } = usageFetcher(() => 0.9); // 90% >= 50% budget
+
+      const summary = await runNight(
+        { github, engine, exec: realExec, log: silentLog, httpJson },
+        { ...claudeBudgetInputs(inputs), usageBudgetPercent: 50 },
+      );
+
+      expect(summary.results).toEqual([]);
+      expect(github.pulls).toHaveLength(0);
+      expect(engine.runs.some((spec) => spec.name.endsWith("-agent"))).toBe(false);
+      expect(summary.budgetStop?.condition).toBe("usage");
+      expect(summary.notStarted?.map((i) => i.number)).toEqual([1, 2, 3]);
+      expect(renderSummary("test/repo", summary)).toContain("## Run stopped early (usage budget)");
+    });
+
+    it("between-issues gate: stops the run once usage crosses the budget mid-night", async () => {
+      const { workspaceDir, inputs } = await setup();
+      const github = new FakeGitHub(structuredClone(threeIssues));
+      const engine = makeEngine({ workspaceDir });
+      // Pre-run read + the gate before issue #1 read low; the gate before #2 reads high.
+      const { httpJson } = usageFetcher((call) => (call >= 3 ? 0.9 : 0.1));
+
+      const summary = await runNight(
+        { github, engine, exec: realExec, log: silentLog, httpJson, clock: instantClock() },
+        { ...claudeBudgetInputs(inputs), usageBudgetPercent: 50 },
+      );
+
+      expect(summary.results.map((r) => [r.issue.number, r.status])).toEqual([[1, "pr-opened"]]);
+      expect(github.pulls.map((pr) => pr.head)).toEqual(["issue/1-fix-header"]);
+      expect(summary.budgetStop?.condition).toBe("usage");
+      expect(summary.notStarted?.map((i) => i.number)).toEqual([2, 3]);
+    });
+
+    it("usage read that abstains falls through to the other budgets, with one warning", async () => {
+      const { workspaceDir, inputs } = await setup();
+      const github = new FakeGitHub(structuredClone(threeIssues));
+      const engine = makeEngine({ workspaceDir });
+      // Every read fails: advisory, so the night proceeds (bounded by count).
+      const summary = await runNight(
+        {
+          github,
+          engine,
+          exec: realExec,
+          log: silentLog,
+          httpJson: throwingHttpJson,
+          clock: instantClock(),
+        },
+        { ...claudeBudgetInputs(inputs), usageBudgetPercent: 50 },
+      );
+
+      expect(summary.results.map((r) => r.status)).toEqual(["pr-opened", "pr-opened", "pr-opened"]);
+      expect(summary.budgetStop).toBeUndefined();
+      expect(summary.warnings.filter((w) => w.includes("unobservable"))).toHaveLength(1);
+    });
+
+    it("no usage budget set: the usage endpoint is never read", async () => {
+      const { workspaceDir, inputs } = await setup();
+      const github = new FakeGitHub(structuredClone(threeIssues));
+      const engine = makeEngine({ workspaceDir });
+      const fetcher = usageFetcher(() => 0.99);
+
+      const summary = await runNight(
+        {
+          github,
+          engine,
+          exec: realExec,
+          log: silentLog,
+          httpJson: fetcher.httpJson,
+          clock: instantClock(),
+        },
+        claudeBudgetInputs(inputs), // usageBudgetPercent left undefined
+      );
+
+      expect(fetcher.calls()).toBe(0);
+      expect(summary.results.map((r) => r.status)).toEqual(["pr-opened", "pr-opened", "pr-opened"]);
     });
   });
 

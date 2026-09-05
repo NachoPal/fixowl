@@ -25,6 +25,10 @@ export interface WorkflowTemplateOptions {
   /** Env var names the agent adapter needs; each is wired from a same-named repo secret. */
   agentEnv: readonly string[];
   maxIssuesPerRun: number;
+  /** Usage-budget stop % (issue #21); the input is rendered only when set. */
+  usageBudgetPercent?: number;
+  /** Graceful wall-clock stop in minutes (issue #21); rendered only when set. */
+  runBudgetMinutes?: number;
   issueTimeoutMinutes: number;
   /** Max agent passes in the CI-gated fix loop. */
   ciMaxTries: number;
@@ -93,6 +97,14 @@ ${dispatchBlock}`;
   // workflow, where the guard degrades to the calendar day harmlessly.
   if (options.schedule) {
     withLines.push(`          schedule: "${options.schedule}"`);
+  }
+  // Run-budget inputs are rendered only when set, so a workflow that leaves the
+  // usage / wall-clock axes opted out stays byte-for-byte as before.
+  if (options.usageBudgetPercent !== undefined) {
+    withLines.push(`          usage-budget-percent: "${options.usageBudgetPercent}"`);
+  }
+  if (options.runBudgetMinutes !== undefined) {
+    withLines.push(`          run-budget-minutes: "${options.runBudgetMinutes}"`);
   }
   if (options.defaultModel !== undefined) {
     withLines.push(`          default-model: "${options.defaultModel}"`);

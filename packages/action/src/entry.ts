@@ -311,6 +311,41 @@ function positiveIntInput(name: string, fallback: number): number {
   return value;
 }
 
+/** An optional positive-int input: blank opts the run-budget axis out (undefined). */
+function optionalPositiveIntInput(name: string): number | undefined {
+  const raw = core.getInput(name);
+  if (raw === "") return undefined;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error(`input ${name} must be a positive integer, got "${raw}"`);
+  }
+  return value;
+}
+
+/** An optional percent input (0..100); blank opts the usage axis out (undefined). */
+function optionalPercentInput(name: string): number | undefined {
+  const raw = core.getInput(name);
+  if (raw === "") return undefined;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < 0 || value > 100) {
+    throw new Error(`input ${name} must be a number between 0 and 100, got "${raw}"`);
+  }
+  return value;
+}
+
+/**
+ * The single network edge for out-of-band usage reads (issue #21). Rejects on a
+ * non-2xx so the reader treats it as unobservable and abstains. Kept here at the
+ * action boundary; the pure reader in @fixowl/core does no I/O of its own.
+ */
+async function fetchJson(url: string, headers: Record<string, string>): Promise<unknown> {
+  const response = await fetch(url, { headers });
+  if (!response.ok) {
+    throw new Error(`usage read failed: HTTP ${response.status}`);
+  }
+  return response.json();
+}
+
 async function run(): Promise<void> {
   const token = requireEnv(RUNTIME_TOKEN_SECRET);
   const repoFullName = requireEnv("GITHUB_REPOSITORY");
@@ -373,6 +408,7 @@ async function run(): Promise<void> {
       engine: new DockerEngine(realExec, log),
       exec: realExec,
       log,
+      httpJson: fetchJson,
     },
     {
       repoFullName,
@@ -384,6 +420,8 @@ async function run(): Promise<void> {
       agentName,
       agentEnvNames: parseLabelInput(core.getInput("agent-env")),
       maxIssues: positiveIntInput("max-issues-per-run", 4),
+      usageBudgetPercent: optionalPercentInput("usage-budget-percent"),
+      runBudgetMinutes: optionalPositiveIntInput("run-budget-minutes"),
       issueTimeoutMinutes: positiveIntInput("issue-timeout-minutes", 45),
       ciMaxTries: positiveIntInput("max-ci-tries", 3),
       ciTimeoutMinutes: positiveIntInput("ci-timeout-minutes", 60),

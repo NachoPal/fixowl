@@ -125,8 +125,10 @@ defaults:
   schedule: "37 1 * * *"                  # UTC
   labels: { any: [overnight] }            # any/all combinations supported
   agent: claude
-  max_issues_per_run: 4
-  issue_timeout_minutes: 45
+  max_issues_per_run: 4                   # run budget: at most this many PRs ship
+  # usage_budget_percent: 85              # run budget: stop before a new issue at this % of the usage window
+  # run_budget_minutes: 240               # run budget: don't start a new issue after this long
+  issue_timeout_minutes: 45               # per-issue safety net (a stuck agent is killed)
   model: sonnet                           # default model when no selector label
   effort: medium                          # default reasoning effort
 agents:
@@ -162,6 +164,32 @@ then each gets a model and an effort - and `fixowl validate` rejects any
 unknown value. For
 `claude`, models are aliases like `opus`/`sonnet`/`haiku`/`fable` and efforts
 are `low`/`medium`/`high`/`xhigh`/`max` (both passed as `--model`/`--effort`).
+
+### Run budgets
+
+A night is bounded by a small set of **independent, each-optional stop
+conditions**, evaluated at two gates - once before starting (pre-run) and again
+before each issue (between-issues). The run stops on the **first** condition
+that trips, and the night summary names which:
+
+- **`max_issues_per_run`** - a count cap: at most this many PRs ship in one run.
+  The secondary cap, and the only budget that works for agents whose usage is
+  not observable. Defaults to 4.
+- **`usage_budget_percent`** - stop before starting a new issue once the agent's
+  rolling usage window is at or above this percent. Read out-of-band on the host
+  from the provider (for `claude`, the non-billing OAuth usage endpoint, using
+  the token the host already holds - nothing new enters the agent container). A
+  read failure is *advisory*: it abstains and falls through to the other budgets
+  rather than aborting the night. Opted out when unset.
+- **`run_budget_minutes`** - a graceful wall-clock cap: don't *start* a new issue
+  after this many minutes. Distinct from the workflow's blunt `timeout-minutes`
+  hard-kill ceiling. Opted out when unset.
+
+Each is set in `defaults` and overridable per repo; leave one unset (or delete
+its line) to opt that axis out. `fixowl init` prompts for all three plus the
+per-issue timeout. The pure gate logic lives in
+`packages/core/src/run-budget.ts`; usage reading is behind the model-agnostic
+`UsageReader` in `packages/core/src/agent-usage.ts`.
 
 Each target repo carries a `.fixowl.yml` (proposed by `provision` when
 missing) declaring its Dockerfile, verify commands, optional web screenshot
