@@ -21,6 +21,7 @@ import {
 } from "../init/config-file.ts";
 import { log } from "../log.ts";
 import { createPrompter, maskSecret, type Prompter } from "../prompt.ts";
+import { fallbackInstallCommand } from "./fallback.ts";
 import { provisionCommand } from "./provision.ts";
 import { startCommand } from "./start.ts";
 import { validateCommand } from "./validate.ts";
@@ -127,14 +128,57 @@ the questions are answered, and every answer is stored in ${dirname(configPath)}
   const admin = await stepTokens(prompter, secrets);
   const { agent, agentEnv } = await stepAgent(prompter, secrets);
   const repos = await stepRepos(prompter, admin, agent);
+  const wantFallback = await stepFallback(prompter, secrets);
 
-  writeFileSync(configPath, renderConfigYaml({ agent, agentEnv, repos }));
+  writeFileSync(configPath, renderConfigYaml({ agent, agentEnv, repos, fallback: wantFallback }));
   log.ok(`wrote ${configPath}`);
   writeFileSync(secretsPath, renderSecretsEnv(secrets), { mode: 0o600 });
   chmodSync(secretsPath, 0o600);
   log.ok(`wrote ${secretsPath} (mode 600)`);
 
-  await validateAndProvision(prompter, configPath);
+  await validateAndProvision(prompter, configPath, { installFallback: wantFallback });
+}
+
+// ---------------------------------------------------------------------------
+// Optional step: the local fallback trigger and its scoped token
+// ---------------------------------------------------------------------------
+
+/**
+ * Opt-in setup of the local fallback trigger. Collects its own least-privilege
+ * token (Actions: write only), kept separate from the admin and runtime tokens
+ * so the admin token stays revocable. Returns whether the fallback was enabled.
+ */
+async function stepFallback(prompter: Prompter, secrets: Record<string, string>): Promise<boolean> {
+  log.info(`
+Local fallback trigger (optional)
+---------------------------------
+GitHub's scheduled cron is best-effort and can silently skip a night. The
+fallback is a small job on THIS host that runs shortly after the cron and
+dispatches the night run only if the cron did not fire - a self-healing backup.
+A fallback run is recorded as workflow_dispatch (a real cron run is schedule),
+so you can still tell whether the cron itself is working. It is opt-in, and
+macOS-only for now (launchd).`);
+  if (!(await prompter.confirm("\nSet up the local fallback trigger now?", false))) {
+    log.info("Skipped. You can enable it any time with: fixowl fallback install");
+    return false;
+  }
+
+  log.info(`
+Dispatching the workflow needs a token with Actions: write, which the admin and
+runtime tokens deliberately do not provide for routine use. Mint a THIRD
+fine-grained PAT, scoped to ONLY your target repos, granting exactly:
+
+  Actions: Read and write   (nothing else)
+
+Keeping it separate means the fallback holds only Actions: write, so you can
+still revoke or downgrade the admin token after provisioning.
+Mint it at ${PAT_URL}`);
+  await prompter.pause("\nPress Enter once you have the fallback token ready ");
+  secrets.FIXOWL_FALLBACK_TOKEN = await askToken(prompter, {
+    label: "  fallback token",
+    existing: secrets.FIXOWL_FALLBACK_TOKEN,
+  });
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -481,7 +525,11 @@ async function chooseEffort(
 // Step 4: validate, provision, and optionally start
 // ---------------------------------------------------------------------------
 
-async function validateAndProvision(prompter: Prompter, configPath: string): Promise<void> {
+async function validateAndProvision(
+  prompter: Prompter,
+  configPath: string,
+  options: { installFallback?: boolean } = {},
+): Promise<void> {
   log.info(`
 Step 4/4  Validate and provision
 --------------------------------`);
@@ -539,6 +587,31 @@ re-run:
     log.info("\nSkipped. Start it whenever you like with: fixowl start");
   }
 
+  if (options.installFallback === true) {
+    log.info("\n$ fixowl fallback install");
+    if (process.platform !== "darwin") {
+      log.warn(
+        "the local fallback is macOS-only for now; on Linux add a cron/systemd-timer\n" +
+          "  that runs `fixowl fallback check` shortly after your cron.",
+      );
+    } else {
+      try {
+        await fallbackInstallCommand(
+          ctx,
+          undefined,
+          configPath === CONFIG_PATH ? undefined : configPath,
+        );
+      } catch (error) {
+        log.error(describeError(error));
+        log.info(
+          "\nThe fallback did not install. Fix the problem above and re-run: fixowl fallback install",
+        );
+        process.exitCode = 1;
+        return;
+      }
+    }
+  }
+
   log.info(`
 🦉 fixowl is set up.
 
@@ -548,7 +621,11 @@ re-run:
   Then file an issue, add the label you chose, and check back tomorrow.
   fixowl status              # runner, last run, open fixowl PRs
   fixowl run owner/repo      # do not wait for the cron; run a night now
-  fixowl logs owner/repo     # what happened last night`);
+  fixowl logs owner/repo     # what happened last night${
+    options.installFallback === true
+      ? "\n  fixowl fallback status     # local cron-backup: installed? next fire?"
+      : ""
+  }`);
 }
 
 // ---------------------------------------------------------------------------
@@ -562,9 +639,13 @@ version: 1
 github:
   admin_token: \${FIXOWL_ADMIN_TOKEN}      # fine-grained PAT, CLI machine only; setup-only, revocable after provision
   runtime_token: \${FIXOWL_RUNTIME_TOKEN}  # fine-grained PAT, pushed to repos as an Actions secret
+  # fallback_token: \${FIXOWL_FALLBACK_TOKEN}  # optional; fine-grained PAT, Actions: write only, for the local fallback
 
 # runner:
 #   dir: ~/.fixowl/runners   # must live under $HOME (Colima shares $HOME with its VM)
+
+# fallback:
+#   gap_minutes: 30          # minutes after the cron the local fallback fires (default 30)
 
 defaults:
   schedule: "37 1 * * *"     # UTC; odd minute dodges GitHub's peak-time cron delays
@@ -593,6 +674,7 @@ const STARTER_SECRETS = `# chmod 600. Values referenced from config.yaml as \${V
 FIXOWL_ADMIN_TOKEN=
 FIXOWL_RUNTIME_TOKEN=
 CLAUDE_CODE_OAUTH_TOKEN=
+# FIXOWL_FALLBACK_TOKEN=   # optional; fine-grained PAT, Actions: write only (see docs/local-fallback.md)
 `;
 
 function scaffoldOnly(configPath: string, secretsPath: string): void {
@@ -622,7 +704,11 @@ Next steps (or re-run \`fixowl init\` on a terminal for the guided setup):
   2. If using the claude agent: run \`claude setup-token\` and put the resulting
      token in ${secretsPath} as CLAUDE_CODE_OAUTH_TOKEN.
   3. Edit ${configPath}: list your repos.
-  4. Run \`fixowl validate\`, then \`fixowl provision\` and \`fixowl start\`.`);
+  4. Run \`fixowl validate\`, then \`fixowl provision\` and \`fixowl start\`.
+  5. Optional: to back up GitHub's flaky cron, mint a THIRD fine-grained PAT with
+     ONLY Actions: write on your repos, put it in ${secretsPath} as
+     FIXOWL_FALLBACK_TOKEN, uncomment github.fallback_token in the config, then
+     run \`fixowl fallback install\` (macOS). See docs/local-fallback.md.`);
 }
 
 // ---------------------------------------------------------------------------

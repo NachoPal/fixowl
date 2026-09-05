@@ -4,6 +4,8 @@
  * real thing with the `script` adapter and zero LLM spend).
  */
 
+import type { WorkflowRunLite } from "@fixowl/core";
+
 export interface IssueLite {
   number: number;
   title: string;
@@ -38,6 +40,13 @@ export interface GitHubApi {
    * awareness. Never writes edges (see the propose-and-confirm decision, off).
    */
   getIssueDependencies(numbers: readonly number[]): Promise<Map<number, IssueDeps>>;
+  /**
+   * Recent runs of this workflow, newest first, for the scheduled-slot budget
+   * guard. Backed by a token with Actions: read (the ephemeral `GITHUB_TOKEN`,
+   * not the runtime PAT), so listing runs never widens the most-exposed
+   * credential. Returns an empty list when no read token is available.
+   */
+  listRecentWorkflowRuns(): Promise<WorkflowRunLite[]>;
   createPullRequest(params: {
     head: string;
     base: string;

@@ -3,6 +3,7 @@ import { Octokit } from "@octokit/rest";
 import {
   labelModelsSchema,
   RUNTIME_TOKEN_SECRET,
+  SCHEDULED_FALLBACK_SOURCE,
   type LabelModelMap,
   type LabelRule,
 } from "@fixowl/core";
@@ -19,7 +20,17 @@ const log: Logger = {
   error: (message) => core.error(message),
 };
 
-function makeGitHubApi(octokit: Octokit, owner: string, repo: string): GitHubApi {
+/**
+ * @param octokit runtime-PAT client for issues/PRs (the night's write path).
+ * @param runsOctokit client with Actions: read (the ephemeral GITHUB_TOKEN) for
+ *   the scheduled-slot guard's runs query; undefined disables the guard's fetch.
+ */
+function makeGitHubApi(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  runsOctokit: Octokit | undefined,
+): GitHubApi {
   return {
     async listOpenIssuesWithLabels(labelsQuery: string): Promise<IssueLite[]> {
       const issues = await octokit.paginate(octokit.issues.listForRepo, {
@@ -54,6 +65,22 @@ function makeGitHubApi(octokit: Octokit, owner: string, repo: string): GitHubApi
     },
     async createIssueComment(issueNumber, body) {
       await octokit.issues.createComment({ owner, repo, issue_number: issueNumber, body });
+    },
+    async listRecentWorkflowRuns() {
+      if (runsOctokit === undefined) return [];
+      const { data } = await runsOctokit.actions.listWorkflowRuns({
+        owner,
+        repo,
+        workflow_id: "fixowl.yml",
+        per_page: 50,
+      });
+      return data.workflow_runs.map((workflowRun) => ({
+        id: workflowRun.id,
+        event: workflowRun.event,
+        status: workflowRun.status ?? null,
+        createdAt: workflowRun.created_at,
+        displayTitle: workflowRun.display_title ?? workflowRun.name ?? "",
+      }));
     },
     async getIssueDependencies(numbers: readonly number[]): Promise<Map<number, IssueDeps>> {
       const result = new Map<number, IssueDeps>();
@@ -177,6 +204,25 @@ async function run(): Promise<void> {
   const octokit = new Octokit({ auth: token });
   const { data: repoData } = await octokit.repos.get({ owner, repo });
 
+  // The scheduled-slot budget guard lists workflow runs (Actions: read). That
+  // uses the ephemeral GITHUB_TOKEN the workflow injects, never the runtime PAT,
+  // so the most-exposed credential stays minimal. A workflow provisioned before
+  // this feature passes no GITHUB_TOKEN; the guard then fails open (see main.ts).
+  const guardToken = process.env.GITHUB_TOKEN;
+  const runsOctokit =
+    guardToken !== undefined && guardToken !== "" ? new Octokit({ auth: guardToken }) : undefined;
+
+  // A scheduled-slot run is the cron (event: schedule) or a fallback-tagged
+  // dispatch (source: scheduled-fallback). A plain manual dispatch is neither
+  // and is never budget-limited.
+  const scheduledSlot =
+    process.env.GITHUB_EVENT_NAME === "schedule" ||
+    core.getInput("source") === SCHEDULED_FALLBACK_SOURCE;
+  const currentRunId =
+    process.env.GITHUB_RUN_ID !== undefined && process.env.GITHUB_RUN_ID !== ""
+      ? Number(process.env.GITHUB_RUN_ID)
+      : undefined;
+
   const runUrl =
     process.env.GITHUB_SERVER_URL !== undefined && process.env.GITHUB_RUN_ID !== undefined
       ? `${process.env.GITHUB_SERVER_URL}/${repoFullName}/actions/runs/${process.env.GITHUB_RUN_ID}`
@@ -184,7 +230,7 @@ async function run(): Promise<void> {
 
   const summary = await runNight(
     {
-      github: makeGitHubApi(octokit, owner, repo),
+      github: makeGitHubApi(octokit, owner, repo, runsOctokit),
       engine: new DockerEngine(realExec, log),
       exec: realExec,
       log,
@@ -192,6 +238,9 @@ async function run(): Promise<void> {
     {
       repoFullName,
       defaultBranch: repoData.default_branch,
+      scheduledSlot,
+      currentRunId,
+      cronSchedule: core.getInput("schedule") || undefined,
       labels,
       agentName,
       agentEnvNames: parseLabelInput(core.getInput("agent-env")),

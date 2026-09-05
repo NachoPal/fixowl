@@ -155,6 +155,11 @@ Any Mac or Linux box with Docker. The reference setup is a spare Intel MacBook
 Pro with Colima; the host runs nothing stack-specific, only Docker and the
 runner. See [docs/host-bootstrap.md](docs/host-bootstrap.md).
 
+GitHub's `schedule` cron is unreliable. An opt-in **local fallback trigger** on
+the runner host dispatches the night run if the cron misses - without duplicate
+runs and without masking whether the cron works. See
+[docs/local-fallback.md](docs/local-fallback.md).
+
 ## Development
 
 ```sh

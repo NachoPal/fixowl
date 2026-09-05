@@ -34,11 +34,17 @@ describe("renderFixowlWorkflow", () => {
     expect(diff).toEqual(["    runs-on: [self-hosted, fixowl]"]);
   });
 
-  it("never uses GITHUB_TOKEN and has no container key", () => {
+  it("uses GITHUB_TOKEN only as the read-only budget guard, and has no container key", () => {
     const rendered = renderFixowlWorkflow(baseOptions);
-    expect(rendered).not.toMatch(/(?<!FIXOWL_)GITHUB_TOKEN/);
-    expect(rendered).not.toContain("container:");
+    // The runtime PAT (FIXOWL_GITHUB_TOKEN) authors PRs, so the target repo's CI
+    // triggers on them - GITHUB_TOKEN never does that.
     expect(rendered).toContain("FIXOWL_GITHUB_TOKEN: ${{ secrets.FIXOWL_GITHUB_TOKEN }}");
+    // GITHUB_TOKEN appears exactly once, as the ephemeral Actions: read token the
+    // once-a-day budget guard lists runs with; never a secrets.* value.
+    expect(rendered).not.toContain("secrets.GITHUB_TOKEN");
+    expect(rendered.match(/(?<!FIXOWL_)GITHUB_TOKEN/g) ?? []).toEqual(["GITHUB_TOKEN"]);
+    expect(rendered).toContain("GITHUB_TOKEN: ${{ github.token }}");
+    expect(rendered).not.toContain("container:");
   });
 
   it("wires every agent env var from a same-named secret", () => {

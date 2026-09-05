@@ -49693,10 +49693,21 @@ var globalConfigSchema = external_exports.object({
   version: external_exports.literal(1),
   github: external_exports.object({
     admin_token: external_exports.string().min(1),
-    runtime_token: external_exports.string().min(1)
+    runtime_token: external_exports.string().min(1),
+    /**
+     * Least-privilege PAT for the optional local fallback trigger: Actions:
+     * write only, used solely to dispatch the workflow when the cron misses.
+     * Separate from the setup-only admin token and the minimal runtime token.
+     */
+    fallback_token: external_exports.string().min(1).optional()
   }),
   runner: external_exports.object({
     dir: external_exports.string().min(1).optional()
+  }).optional(),
+  /** The optional host-local fallback trigger (`fixowl fallback`). */
+  fallback: external_exports.object({
+    /** Minutes after each repo's cron to run the local backup check. */
+    gap_minutes: external_exports.number().int().positive().optional()
   }).optional(),
   defaults: external_exports.object({
     schedule: cronSchema.optional(),
@@ -49731,7 +49742,14 @@ var FIXOWL_DEFAULTS = {
   agent: "claude",
   maxIssuesPerRun: 4,
   issueTimeoutMinutes: 45,
-  runnerDir: "~/.fixowl/runners"
+  runnerDir: "~/.fixowl/runners",
+  /**
+   * Minutes after the cron the local fallback fires. Generous on purpose:
+   * GitHub schedules also arrive late, and the check-then-dispatch logic makes
+   * exact timing non-critical as long as the fallback is reliably after the cron
+   * window. See docs/local-fallback.md.
+   */
+  fallbackGapMinutes: 30
 };
 function resolveRepoSettings(config2, repoName) {
   const entry = config2.repos.find((repo) => repo.name === repoName);
@@ -49792,6 +49810,60 @@ var REPO_CONFIG_PATH = ".fixowl.yml";
 
 // packages/core/src/workflow-template.ts
 var RUNTIME_TOKEN_SECRET = "FIXOWL_GITHUB_TOKEN";
+
+// packages/core/src/fallback-dispatch.ts
+var SCHEDULED_FALLBACK_SOURCE = "scheduled-fallback";
+var SCHEDULED_FALLBACK_MARKER = "[scheduled-fallback]";
+function isSameUtcDay(a, b) {
+  return a.getUTCFullYear() === b.getUTCFullYear() && a.getUTCMonth() === b.getUTCMonth() && a.getUTCDate() === b.getUTCDate();
+}
+function tryParseDailyCron(cron) {
+  const fields = cron.trim().split(/\s+/);
+  if (fields.length !== 5) return void 0;
+  const [minute, hour, dom, month, dow] = fields;
+  if (dom !== "*" || month !== "*" || dow !== "*") return void 0;
+  const minuteUtc = Number(minute);
+  const hourUtc = Number(hour);
+  if (!Number.isInteger(minuteUtc) || minuteUtc < 0 || minuteUtc > 59) return void 0;
+  if (!Number.isInteger(hourUtc) || hourUtc < 0 || hourUtc > 23) return void 0;
+  return { hourUtc, minuteUtc };
+}
+function anchorOccurrence(cron, now) {
+  const anchor2 = new Date(now);
+  anchor2.setUTCHours(cron.hourUtc, cron.minuteUtc, 0, 0);
+  if (anchor2.getTime() > now.getTime()) anchor2.setUTCDate(anchor2.getUTCDate() - 1);
+  return anchor2;
+}
+function isScheduledSlotRun(run2, marker = SCHEDULED_FALLBACK_MARKER) {
+  if (run2.event === "schedule") return true;
+  return run2.event === "workflow_dispatch" && run2.displayTitle.includes(marker);
+}
+function guardScheduledSlot(params) {
+  if (!params.selfIsScheduledSlot) {
+    return {
+      proceed: true,
+      reason: "not a scheduled-slot run (manual dispatch); never budget-limited"
+    };
+  }
+  const marker = params.marker ?? SCHEDULED_FALLBACK_MARKER;
+  const cronTime = params.cronSchedule !== void 0 ? tryParseDailyCron(params.cronSchedule) : void 0;
+  const anchor2 = cronTime !== void 0 ? anchorOccurrence(cronTime, params.now) : void 0;
+  const coversOccurrence = (run2) => anchor2 !== void 0 ? new Date(run2.createdAt).getTime() >= anchor2.getTime() : isSameUtcDay(new Date(run2.createdAt), params.now);
+  const earlier = params.runs.find(
+    (run2) => run2.id < params.currentRunId && coversOccurrence(run2) && isScheduledSlotRun(run2, marker)
+  );
+  if (earlier !== void 0) {
+    return {
+      proceed: false,
+      reason: `today's scheduled slot is already covered by run #${earlier.id} (${earlier.event}, status ${earlier.status ?? "unknown"}); standing down to keep the nightly run to one execution per day`,
+      supersededBy: earlier
+    };
+  }
+  return {
+    proceed: true,
+    reason: "first scheduled-slot run today; proceeding"
+  };
+}
 
 // packages/action/src/container-exec.ts
 var WORKSPACE_MOUNT_PATH = "/workspace";
@@ -50666,6 +50738,8 @@ ${agentResult.stderr}
 // packages/action/src/main.ts
 var CLASSIFY_TIMEOUT_MS = 10 * 60 * 1e3;
 async function runNight(deps, inputs) {
+  const standDown = await checkScheduledSlotBudget(deps, inputs);
+  if (standDown !== void 0) return standDown;
   const gitDir = extractGitDir(inputs.workspaceDir);
   const git = new GitWorkspace(deps.exec, inputs.workspaceDir, gitDir, inputs.pushToken);
   try {
@@ -50679,6 +50753,26 @@ async function runNight(deps, inputs) {
       );
     }
   }
+}
+async function checkScheduledSlotBudget(deps, inputs) {
+  if (inputs.scheduledSlot !== true) return void 0;
+  if (inputs.currentRunId === void 0) {
+    deps.log.warn(
+      "scheduled-slot budget guard disabled: this run's id is unavailable; re-run `fixowl provision` to update the workflow"
+    );
+    return void 0;
+  }
+  const runs = await deps.github.listRecentWorkflowRuns();
+  const guard = guardScheduledSlot({
+    runs,
+    now: /* @__PURE__ */ new Date(),
+    currentRunId: inputs.currentRunId,
+    selfIsScheduledSlot: true,
+    cronSchedule: inputs.cronSchedule
+  });
+  if (guard.proceed) return void 0;
+  deps.log.info(`\u{1F989} fixowl: ${guard.reason}`);
+  return { results: [], skipped: [], deferred: [], warnings: [guard.reason] };
 }
 async function runNightWithGit(deps, inputs, git) {
   const { github, engine, log: log2 } = deps;
@@ -51013,7 +51107,7 @@ var log = {
   warn: (message) => warning(message),
   error: (message) => error(message)
 };
-function makeGitHubApi(octokit, owner, repo) {
+function makeGitHubApi(octokit, owner, repo, runsOctokit) {
   return {
     async listOpenIssuesWithLabels(labelsQuery) {
       const issues = await octokit.paginate(octokit.issues.listForRepo, {
@@ -51046,6 +51140,22 @@ function makeGitHubApi(octokit, owner, repo) {
     },
     async createIssueComment(issueNumber, body) {
       await octokit.issues.createComment({ owner, repo, issue_number: issueNumber, body });
+    },
+    async listRecentWorkflowRuns() {
+      if (runsOctokit === void 0) return [];
+      const { data } = await runsOctokit.actions.listWorkflowRuns({
+        owner,
+        repo,
+        workflow_id: "fixowl.yml",
+        per_page: 50
+      });
+      return data.workflow_runs.map((workflowRun) => ({
+        id: workflowRun.id,
+        event: workflowRun.event,
+        status: workflowRun.status ?? null,
+        createdAt: workflowRun.created_at,
+        displayTitle: workflowRun.display_title ?? workflowRun.name ?? ""
+      }));
     },
     async getIssueDependencies(numbers) {
       const result = /* @__PURE__ */ new Map();
@@ -51131,10 +51241,14 @@ async function run() {
   }
   const octokit = new Octokit2({ auth: token });
   const { data: repoData } = await octokit.repos.get({ owner, repo });
+  const guardToken = process.env.GITHUB_TOKEN;
+  const runsOctokit = guardToken !== void 0 && guardToken !== "" ? new Octokit2({ auth: guardToken }) : void 0;
+  const scheduledSlot = process.env.GITHUB_EVENT_NAME === "schedule" || getInput("source") === SCHEDULED_FALLBACK_SOURCE;
+  const currentRunId = process.env.GITHUB_RUN_ID !== void 0 && process.env.GITHUB_RUN_ID !== "" ? Number(process.env.GITHUB_RUN_ID) : void 0;
   const runUrl = process.env.GITHUB_SERVER_URL !== void 0 && process.env.GITHUB_RUN_ID !== void 0 ? `${process.env.GITHUB_SERVER_URL}/${repoFullName}/actions/runs/${process.env.GITHUB_RUN_ID}` : void 0;
   const summary2 = await runNight(
     {
-      github: makeGitHubApi(octokit, owner, repo),
+      github: makeGitHubApi(octokit, owner, repo, runsOctokit),
       engine: new DockerEngine(realExec, log),
       exec: realExec,
       log
@@ -51142,6 +51256,9 @@ async function run() {
     {
       repoFullName,
       defaultBranch: repoData.default_branch,
+      scheduledSlot,
+      currentRunId,
+      cronSchedule: getInput("schedule") || void 0,
       labels,
       agentName,
       agentEnvNames: parseLabelInput(getInput("agent-env")),
