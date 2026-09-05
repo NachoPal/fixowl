@@ -92,9 +92,29 @@ const github: GitHubApi = {
   async listOpenIssuesWithLabels() {
     return issues;
   },
-  async createPullRequest(params) {
+  async ensurePullRequest(params) {
+    const existing = pulls.find((pull) => pull.head === params.head);
+    if (existing !== undefined) return { number: 500, url: "https://example.test/pull/500" };
     pulls.push(params);
     return { number: 500, url: "https://example.test/pull/500" };
+  },
+  async markPullRequestReadyForReview() {
+    const pull = pulls.at(-1);
+    if (pull !== undefined) pull.draft = false;
+  },
+  async updatePullRequestBody(_prNumber, body) {
+    const pull = pulls.at(-1);
+    if (pull !== undefined) pull.body = body;
+  },
+  // No branch protection in the local e2e; gate on all completed checks (of which there are none).
+  async getRequiredChecks() {
+    return { readable: false, contexts: [] };
+  },
+  async getChecksForRef() {
+    return [];
+  },
+  async getFailedCheckLogs() {
+    return undefined;
   },
   async createIssueComment(issueNumber, body) {
     comments.push({ issueNumber, body });

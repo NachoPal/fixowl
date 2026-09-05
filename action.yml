@@ -38,6 +38,20 @@ inputs:
     description: Hard timeout for the agent container per issue.
     required: false
     default: "45"
+  max-ci-tries:
+    description: >-
+      Max agent passes in the CI-gated fix loop. After the agent's change is
+      pushed, fixowl waits for the base branch's required checks; if red it
+      feeds the failures back and retries, up to this many passes, then leaves a
+      draft PR annotated with the outstanding failures.
+    required: false
+    default: "3"
+  ci-timeout-minutes:
+    description: >-
+      How long each pass waits for the pushed head's required checks to complete
+      before counting the attempt as a CI timeout.
+    required: false
+    default: "60"
   default-model:
     description: >-
       Model id the agent runs with when an issue carries none of the selector

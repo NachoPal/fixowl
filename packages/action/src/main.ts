@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  FIXOWL_DEFAULTS,
   getAgentAdapter,
   guardScheduledSlot,
   issueBranchName,
@@ -15,6 +16,7 @@ import {
 } from "@fixowl/core";
 import { parse as parseYaml } from "yaml";
 import { allIndependent, buildClassifyPrompt, parseClassification } from "./classify.ts";
+import type { Clock } from "./ci-poll.ts";
 import { planChains } from "./chain-planner.ts";
 import { containerName } from "./container-exec.ts";
 import { mergeGraphs } from "./merge-graph.ts";
@@ -44,6 +46,10 @@ export interface NightInputs {
   agentEnvNames?: string[];
   maxIssues: number;
   issueTimeoutMinutes: number;
+  /** Max agent passes in the CI-gated loop; undefined uses the built-in default. */
+  ciMaxTries?: number;
+  /** Minutes each pass waits for the pushed head's required checks; undefined uses the built-in default. */
+  ciTimeoutMinutes?: number;
   /** Default model when an issue carries no selector label; undefined uses the CLI default. */
   defaultModel?: string;
   /** Default reasoning effort when an issue carries no selector label. */
@@ -89,6 +95,8 @@ export interface NightDeps {
   engine: ContainerEngine;
   exec: Exec;
   log: Logger;
+  /** Clock for the per-issue CI wait; defaults to the real one (see ci-poll.ts). */
+  clock?: Clock;
 }
 
 export interface NightSummary {
@@ -331,7 +339,7 @@ async function runNightWithGit(
       let result: IssueResult;
       try {
         result = await processIssue(
-          { git, engine, github, log },
+          { git, engine, github, log, clock: deps.clock },
           {
             issue,
             branch,
@@ -348,6 +356,8 @@ async function runNightWithGit(
             promptDir: join(inputs.tempDir, "fixowl-prompts"),
             evidenceDir: join(inputs.tempDir, "fixowl-evidence", `issue-${issue.number}`),
             timeoutMs: inputs.issueTimeoutMinutes * 60 * 1000,
+            ciMaxTries: inputs.ciMaxTries ?? FIXOWL_DEFAULTS.ciMaxTries,
+            ciTimeoutMs: (inputs.ciTimeoutMinutes ?? FIXOWL_DEFAULTS.ciTimeoutMinutes) * 60 * 1000,
             runUrl: inputs.runUrl,
           },
         );

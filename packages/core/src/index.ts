@@ -64,6 +64,16 @@ export {
   type WebCheck,
 } from "./config-schema.ts";
 export {
+  evaluateGate,
+  failedChecks,
+  gatingChecks,
+  isFailureConclusion,
+  type CheckStatusLite,
+  type GateDecision,
+  type GatingChecks,
+  type RequiredChecks,
+} from "./ci-gate.ts";
+export {
   renderFixowlWorkflow,
   RUNTIME_TOKEN_SECRET,
   WORKFLOW_PATH,

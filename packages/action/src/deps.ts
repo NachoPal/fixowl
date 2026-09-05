@@ -4,7 +4,7 @@
  * real thing with the `script` adapter and zero LLM spend).
  */
 
-import type { WorkflowRunLite } from "@fixowl/core";
+import type { CheckStatusLite, RequiredChecks, WorkflowRunLite } from "@fixowl/core";
 
 export interface IssueLite {
   number: number;
@@ -67,13 +67,41 @@ export interface GitHubApi {
    * credential. Returns an empty list when no read token is available.
    */
   listRecentWorkflowRuns(): Promise<WorkflowRunLite[]>;
-  createPullRequest(params: {
+  /**
+   * Create the issue's PR if it does not exist yet, otherwise return the open
+   * one for `head`. The CI-gated loop creates one draft PR on the first push
+   * and reuses it across attempts (later pushes just advance its head SHA), so
+   * this is idempotent by design.
+   */
+  ensurePullRequest(params: {
     head: string;
     base: string;
     title: string;
     body: string;
     draft: boolean;
   }): Promise<{ number: number; url: string }>;
+  /** Flip a draft PR to ready-for-review once its required checks are green. */
+  markPullRequestReadyForReview(prNumber: number): Promise<void>;
+  /** Update an existing PR's body (e.g. to record the outstanding CI failures). */
+  updatePullRequestBody(prNumber: number, body: string): Promise<void>;
+  /**
+   * The required status-check contexts GitHub enforces for `baseBranch` (branch
+   * protection or ruleset), read via the branch-rules endpoint. Unreadable or
+   * empty results (`readable: false`) make the loop fall back to gating on all
+   * completed checks; it never fails loud (captain 7.2).
+   */
+  getRequiredChecks(baseBranch: string): Promise<RequiredChecks>;
+  /**
+   * All checks on a commit: GitHub Actions check runs plus legacy commit
+   * statuses, normalized to `CheckStatusLite` and de-duplicated by name.
+   */
+  getChecksForRef(sha: string): Promise<CheckStatusLite[]>;
+  /**
+   * Best-effort failure detail for a red check - the failing job's log tail
+   * (bounded) or the check's own summary - to feed back to the agent. CI logs
+   * are untrusted, so callers fence and length-cap the result.
+   */
+  getFailedCheckLogs(check: CheckStatusLite): Promise<string | undefined>;
   createIssueComment(issueNumber: number, body: string): Promise<void>;
   // Deliberately no merge capability. See no-merge.test.ts.
 }

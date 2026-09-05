@@ -46,10 +46,13 @@ describe("runVerification", () => {
         ],
       },
     });
-    expect(outcomes).toEqual([
+    expect(outcomes).toMatchObject([
       { name: "good tests", status: "passed", detail: undefined },
       { name: "bad tests", status: "failed", detail: undefined },
     ]);
+    // A passed check carries no fed-back log; a failed one carries its output.
+    expect(outcomes[0]?.log).toBeUndefined();
+    expect(outcomes[1]?.log).toContain("assertion failed");
     const log = readFileSync(join(evidenceDir, "check-good-tests.log"), "utf8");
     expect(log).toContain("$ npm test");
     expect(log).toContain("all good");
@@ -104,7 +107,7 @@ describe("runVerification", () => {
     expect((await runVerification({ ...shared, evidenceDir, verify }))[0]?.status).toBe("passed");
 
     exitCode = 2;
-    expect((await runVerification({ ...shared, evidenceDir, verify }))[0]).toEqual({
+    expect((await runVerification({ ...shared, evidenceDir, verify }))[0]).toMatchObject({
       name: "app",
       status: "failed",
       detail: "console errors; see evidence",

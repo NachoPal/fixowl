@@ -48,6 +48,8 @@ describe("resolveRepoSettings", () => {
       agent: "claude",
       maxIssuesPerRun: 4,
       issueTimeoutMinutes: 45,
+      ciMaxTries: 3,
+      ciTimeoutMinutes: 60,
       agentEnv: undefined,
       defaultModel: undefined,
       defaultEffort: undefined,
@@ -111,6 +113,17 @@ describe("resolveRepoSettings", () => {
     expect(settings.defaultModel).toBe("opus"); // repo override wins over defaults
     expect(settings.defaultEffort).toBe("medium"); // inherited from defaults
     expect(settings.labelModels).toEqual({ heavy: { model: "opus", effort: "max" } });
+  });
+
+  it("resolves CI-gated-loop settings: repo over defaults over built-ins", () => {
+    const config = globalConfigSchema.parse({
+      ...minimalConfig,
+      defaults: { ci_max_tries: 5 },
+      repos: [{ name: "NachoPal/storyengine", ci_timeout_minutes: 90 }],
+    });
+    const settings = resolveRepoSettings(config, "NachoPal/storyengine");
+    expect(settings.ciMaxTries).toBe(5); // from defaults
+    expect(settings.ciTimeoutMinutes).toBe(90); // per-repo override
   });
 
   it("throws for unknown repos", () => {

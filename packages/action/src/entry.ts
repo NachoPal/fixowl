@@ -4,8 +4,10 @@ import {
   labelModelsSchema,
   RUNTIME_TOKEN_SECRET,
   SCHEDULED_FALLBACK_SOURCE,
+  type CheckStatusLite,
   type LabelModelMap,
   type LabelRule,
+  type RequiredChecks,
 } from "@fixowl/core";
 import { DockerEngine } from "./container-exec.ts";
 import type { GitHubApi, IssueDeps, IssueLite, Logger, PullRequestLite } from "./deps.ts";
@@ -13,6 +15,14 @@ import { renderSummary, runNight, wipeoutFailure } from "./main.ts";
 import { realExec } from "./real-exec.ts";
 
 /** Real-world wiring for the action; all logic lives in main.ts behind fakes-friendly deps. */
+
+/** Longest job-log tail fetched for a red check before the prompt fence caps it further. */
+const CHECK_LOG_MAX = 6000;
+
+/** Shape of the `parameters` on a branch-rules `required_status_checks` rule. */
+interface RequiredStatusChecksParameters {
+  required_status_checks?: Array<{ context: string; integration_id?: number }>;
+}
 
 const log: Logger = {
   info: (message) => core.info(message),
@@ -51,7 +61,15 @@ function makeGitHubApi(
           ),
         }));
     },
-    async createPullRequest(params) {
+    async ensurePullRequest(params) {
+      const { data: existing } = await octokit.pulls.list({
+        owner,
+        repo,
+        state: "open",
+        head: `${owner}:${params.head}`,
+      });
+      const open = existing[0];
+      if (open !== undefined) return { number: open.number, url: open.html_url };
       const response = await octokit.pulls.create({
         owner,
         repo,
@@ -62,6 +80,98 @@ function makeGitHubApi(
         draft: params.draft,
       });
       return { number: response.data.number, url: response.data.html_url };
+    },
+    async markPullRequestReadyForReview(prNumber) {
+      const { data } = await octokit.pulls.get({ owner, repo, pull_number: prNumber });
+      // No REST endpoint flips draft->ready; the GraphQL mutation takes the node id.
+      await octokit.graphql(
+        `mutation($id: ID!) { markPullRequestReadyForReview(input: { pullRequestId: $id }) { clientMutationId } }`,
+        { id: data.node_id },
+      );
+    },
+    async updatePullRequestBody(prNumber, body) {
+      await octokit.pulls.update({ owner, repo, pull_number: prNumber, body });
+    },
+    async getRequiredChecks(baseBranch): Promise<RequiredChecks> {
+      // The branch-rules endpoint surfaces required status checks from both
+      // classic branch protection and rulesets, and is readable with the
+      // runtime token's Administration: read. Any failure (no protection,
+      // insufficient scope) degrades to the "gate on all checks" fallback.
+      try {
+        const { data } = await octokit.repos.getBranchRules({ owner, repo, branch: baseBranch });
+        const contexts = new Set<string>();
+        for (const rule of data) {
+          if (rule.type !== "required_status_checks") continue;
+          const params = (rule as { parameters?: RequiredStatusChecksParameters }).parameters;
+          for (const check of params?.required_status_checks ?? []) {
+            if (check.context !== "") contexts.add(check.context);
+          }
+        }
+        return { readable: contexts.size > 0, contexts: [...contexts] };
+      } catch {
+        return { readable: false, contexts: [] };
+      }
+    },
+    async getChecksForRef(sha): Promise<CheckStatusLite[]> {
+      const byName = new Map<string, CheckStatusLite>();
+      const runs = await octokit.paginate(octokit.checks.listForRef, {
+        owner,
+        repo,
+        ref: sha,
+        per_page: 100,
+      });
+      for (const checkRun of runs) {
+        byName.set(checkRun.name, {
+          name: checkRun.name,
+          status:
+            checkRun.status === null ? "completed" : (checkRun.status as CheckStatusLite["status"]),
+          conclusion: checkRun.conclusion as CheckStatusLite["conclusion"],
+          summary: checkRun.output?.summary ?? checkRun.output?.title ?? undefined,
+          detailsUrl: checkRun.details_url ?? undefined,
+        });
+      }
+      // Legacy commit statuses only fill contexts not already covered by a check run.
+      try {
+        const { data } = await octokit.repos.getCombinedStatusForRef({ owner, repo, ref: sha });
+        for (const status of data.statuses) {
+          if (byName.has(status.context)) continue;
+          byName.set(status.context, {
+            name: status.context,
+            status: status.state === "pending" ? "in_progress" : "completed",
+            conclusion:
+              status.state === "success"
+                ? "success"
+                : status.state === "pending"
+                  ? null
+                  : "failure",
+            summary: status.description ?? undefined,
+            detailsUrl: status.target_url ?? undefined,
+          });
+        }
+      } catch {
+        // combined status is best-effort; check runs alone are enough to gate
+      }
+      return [...byName.values()];
+    },
+    async getFailedCheckLogs(check): Promise<string | undefined> {
+      const match = /\/actions\/runs\/\d+\/job\/(\d+)/.exec(check.detailsUrl ?? "");
+      if (match === null) return check.summary ?? undefined;
+      try {
+        const response = await octokit.actions.downloadJobLogsForWorkflowRun({
+          owner,
+          repo,
+          job_id: Number(match[1]),
+        });
+        const text =
+          typeof response.data === "string" ? response.data : String(response.data ?? "");
+        const trimmed = text.trim();
+        if (trimmed === "") return check.summary ?? undefined;
+        return trimmed.length <= CHECK_LOG_MAX
+          ? trimmed
+          : `...(truncated)...\n${trimmed.slice(-CHECK_LOG_MAX)}`;
+      } catch {
+        return check.summary ?? undefined;
+      }
     },
     async createIssueComment(issueNumber, body) {
       await octokit.issues.createComment({ owner, repo, issue_number: issueNumber, body });
@@ -275,6 +385,8 @@ async function run(): Promise<void> {
       agentEnvNames: parseLabelInput(core.getInput("agent-env")),
       maxIssues: positiveIntInput("max-issues-per-run", 4),
       issueTimeoutMinutes: positiveIntInput("issue-timeout-minutes", 45),
+      ciMaxTries: positiveIntInput("max-ci-tries", 3),
+      ciTimeoutMinutes: positiveIntInput("ci-timeout-minutes", 60),
       defaultModel: core.getInput("default-model") || undefined,
       defaultEffort: core.getInput("default-effort") || undefined,
       labelModels: parseLabelModelsInput(core.getInput("label-models")),

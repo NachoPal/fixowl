@@ -10,6 +10,16 @@ export const EVIDENCE_MOUNT_PATH = "/fixowl/evidence";
 
 const CHECK_TIMEOUT_MS = 15 * 60 * 1000;
 
+/** Longest captured check output carried in a `CheckOutcome.log` (fed back to the agent). */
+const CHECK_LOG_MAX = 8000;
+
+function tailLog(stdout: string, stderr: string): string {
+  const combined = `${stdout}\n${stderr}`.trim();
+  return combined.length <= CHECK_LOG_MAX
+    ? combined
+    : `...(truncated)...\n${combined.slice(-CHECK_LOG_MAX)}`;
+}
+
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'\\''`)}'`;
 }
@@ -51,10 +61,12 @@ export async function runVerification(params: {
       join(evidenceDir, `check-${sanitize(check.name)}.log`),
       `$ ${check.run}\n\n${result.stdout}\n${result.stderr}\n(exit ${result.code}${result.timedOut ? ", timed out" : ""})\n`,
     );
+    const passed = result.code === 0 && !result.timedOut;
     outcomes.push({
       name: check.name,
-      status: result.code === 0 && !result.timedOut ? "passed" : "failed",
+      status: passed ? "passed" : "failed",
       detail: result.timedOut ? "timed out" : undefined,
+      log: passed ? undefined : `$ ${check.run}\n${tailLog(result.stdout, result.stderr)}`,
     });
   }
 
@@ -81,7 +93,11 @@ export async function runVerification(params: {
         join(webEvidenceDir, "verify.log"),
         `${result.stdout}\n${result.stderr}\n(exit ${result.code}${result.timedOut ? ", timed out" : ""})\n`,
       );
-      outcomes.push(webOutcome(web.name, result.code, result.timedOut));
+      const outcome = webOutcome(web.name, result.code, result.timedOut);
+      if (outcome.status === "failed") {
+        outcome.log = tailLog(result.stdout, result.stderr);
+      }
+      outcomes.push(outcome);
     }
   }
 

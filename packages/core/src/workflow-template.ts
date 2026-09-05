@@ -26,6 +26,10 @@ export interface WorkflowTemplateOptions {
   agentEnv: readonly string[];
   maxIssuesPerRun: number;
   issueTimeoutMinutes: number;
+  /** Max agent passes in the CI-gated fix loop. */
+  ciMaxTries: number;
+  /** Minutes each pass waits for the pushed head's required checks. */
+  ciTimeoutMinutes: number;
   /** Default model for issues carrying no selector label; omitted when unset. */
   defaultModel?: string;
   /** Default reasoning effort for issues carrying no selector label; omitted when unset. */
@@ -79,6 +83,8 @@ ${dispatchBlock}`;
     `          agent-env: "${options.agentEnv.join(",")}"`,
     `          max-issues-per-run: "${options.maxIssuesPerRun}"`,
     `          issue-timeout-minutes: "${options.issueTimeoutMinutes}"`,
+    `          max-ci-tries: "${options.ciMaxTries}"`,
+    `          ci-timeout-minutes: "${options.ciTimeoutMinutes}"`,
     `          source: "\${{ github.event.inputs.source }}"`,
   ];
   // The cron is passed to the action so its once-a-day budget guard can anchor
