@@ -135,7 +135,7 @@ Key action inputs (all optional; see [`action.yml`](https://github.com/NachoPal/
 | ----------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `labels-any`            | `overnight` | Comma-separated labels; an issue matches if it has ANY of them.                                                                                                      |
 | `labels-all`            | `""`        | Comma-separated labels; an issue matches only if it has ALL of them.                                                                                                 |
-| `agent`                 | `claude`    | Agent adapter to run (`claude`, `aider`).                                                                                                                            |
+| `agent`                 | `claude`    | Agent adapter to run (`claude`, `aider`, `codex`).                                                                                                                   |
 | `agent-env`             | `""`        | Comma-separated env var names allowed into the agent container, overriding the adapter's built-in allowlist.                                                         |
 | `max-issues-per-run`    | `4`         | Maximum number of issues to process in one run.                                                                                                                      |
 | `issue-timeout-minutes` | `45`        | Hard timeout for the agent container per issue.                                                                                                                      |
