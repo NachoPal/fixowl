@@ -45,6 +45,7 @@ export {
   type ResolveModelSelectionParams,
 } from "./model-selection.ts";
 export {
+  fallbackGapMinutes,
   FIXOWL_DEFAULTS,
   globalConfigSchema,
   globalConfigSchemaChecked,

@@ -49693,10 +49693,21 @@ var globalConfigSchema = external_exports.object({
   version: external_exports.literal(1),
   github: external_exports.object({
     admin_token: external_exports.string().min(1),
-    runtime_token: external_exports.string().min(1)
+    runtime_token: external_exports.string().min(1),
+    /**
+     * Least-privilege PAT for the optional local fallback trigger: Actions:
+     * write only, used solely to dispatch the workflow when the cron misses.
+     * Separate from the setup-only admin token and the minimal runtime token.
+     */
+    fallback_token: external_exports.string().min(1).optional()
   }),
   runner: external_exports.object({
     dir: external_exports.string().min(1).optional()
+  }).optional(),
+  /** The optional host-local fallback trigger (`fixowl fallback`). */
+  fallback: external_exports.object({
+    /** Minutes after each repo's cron to run the local backup check. */
+    gap_minutes: external_exports.number().int().positive().optional()
   }).optional(),
   defaults: external_exports.object({
     schedule: cronSchema.optional(),
@@ -49731,7 +49742,14 @@ var FIXOWL_DEFAULTS = {
   agent: "claude",
   maxIssuesPerRun: 4,
   issueTimeoutMinutes: 45,
-  runnerDir: "~/.fixowl/runners"
+  runnerDir: "~/.fixowl/runners",
+  /**
+   * Minutes after the cron the local fallback fires. Generous on purpose:
+   * GitHub schedules also arrive late, and the check-then-dispatch logic makes
+   * exact timing non-critical as long as the fallback is reliably after the cron
+   * window. See docs/local-fallback.md.
+   */
+  fallbackGapMinutes: 30
 };
 function resolveRepoSettings(config2, repoName) {
   const entry = config2.repos.find((repo) => repo.name === repoName);

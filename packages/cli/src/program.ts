@@ -1,4 +1,10 @@
 import { Command } from "commander";
+import {
+  fallbackCheckCommand,
+  fallbackInstallCommand,
+  fallbackStatusCommand,
+  fallbackUninstallCommand,
+} from "./commands/fallback.ts";
 import { initCommand } from "./commands/init.ts";
 import { logsCommand } from "./commands/logs.ts";
 import { provisionCommand } from "./commands/provision.ts";
@@ -112,6 +118,40 @@ export function createProgram(): Command {
     .description("dispatch the fixowl workflow now and follow it to completion")
     .action(async (repo: string) => {
       await runCommand(makeContext(configPath()), repo);
+    });
+
+  const fallback = program
+    .command("fallback")
+    .description(
+      "opt-in local backup for GitHub's unreliable cron: dispatches the night run only if the cron missed",
+    );
+
+  fallback
+    .command("install [repo]")
+    .description("install the launchd agent(s) that back up the cron on this host (macOS)")
+    .action(async (repo: string | undefined) => {
+      await fallbackInstallCommand(makeContext(configPath()), repo, configPath());
+    });
+
+  fallback
+    .command("uninstall [repo]")
+    .description("remove the fallback launchd agent(s) from this host")
+    .action(async (repo: string | undefined) => {
+      await fallbackUninstallCommand(makeContext(configPath()), repo);
+    });
+
+  fallback
+    .command("status [repo]")
+    .description("show whether the fallback is installed and its next fire time")
+    .action(async (repo: string | undefined) => {
+      await fallbackStatusCommand(makeContext(configPath()), repo);
+    });
+
+  fallback
+    .command("check [repo]")
+    .description("run the check-then-dispatch now (what the launchd agent invokes)")
+    .action(async (repo: string | undefined) => {
+      await fallbackCheckCommand(makeContext(configPath()), repo);
     });
 
   program

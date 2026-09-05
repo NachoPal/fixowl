@@ -5,6 +5,13 @@ import { describeGitHubError } from "../github/errors.ts";
 import { splitRepoFullName } from "../github/repo-provisioning.ts";
 import { findRunner, runnerNameFor } from "../github/runner-registration.ts";
 import { log } from "../log.ts";
+import {
+  fallbackLabel,
+  isFallbackInstalled,
+  isFallbackLoaded,
+  nextFireTime,
+  readPlistLocalTime,
+} from "../runner/fallback-launchd.ts";
 import { runnerDirFor } from "../runner/install.ts";
 import { svcStatus } from "../runner/launchd.ts";
 
@@ -19,6 +26,18 @@ export async function statusCommand(ctx: CliContext, repoArg: string | undefined
       log.info(`  service: not installed on this machine`);
     } else {
       log.info(`  service: ${await svcStatus(dir)} (${dir})`);
+    }
+
+    // Local fallback trigger (opt-in). Report installed state and next fire.
+    const label = fallbackLabel(repoFullName);
+    if (!isFallbackInstalled(label)) {
+      log.info(`  fallback: not installed`);
+    } else {
+      const local = readPlistLocalTime(label);
+      const when = local !== undefined ? `; next ${nextFireTime(local).toLocaleString()}` : "";
+      log.info(
+        `  fallback: installed${(await isFallbackLoaded(label)) ? "" : " (not loaded)"}${when}`,
+      );
     }
 
     // Registered runner. Listing runners needs Administration: read; if the
