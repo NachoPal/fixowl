@@ -77,7 +77,7 @@ then runs the rest for you and stops with an explanation if a step fails:
 fixowl validate      # tokens, repos, docker engine, agent credentials
 fixowl provision     # labels + sealed secrets into each repo, registers the runner
                      # on this host, and proposes the workflow, a starter .fixowl.yml,
-                     # and an issue template via PR (--no-pr pushes the workflow direct)
+                     # and an issue template via PR (never committed to the default branch)
 fixowl start         # installs and starts the runner service(s); no admin token needed
 ```
 
