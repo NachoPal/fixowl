@@ -63,9 +63,9 @@ then runs the rest for you and stops with an explanation if a step fails:
 
 ```sh
 fixowl validate      # tokens, repos, docker engine, agent credentials
-fixowl provision     # labels + sealed secrets + workflow into each repo, and
-                     # registers the runner on this host (also proposes a starter
-                     # .fixowl.yml and issue template via PR)
+fixowl provision     # labels + sealed secrets into each repo, registers the runner
+                     # on this host, and proposes the workflow, a starter .fixowl.yml,
+                     # and an issue template via PR (--no-pr pushes the workflow direct)
 fixowl start         # installs and starts the runner service(s); no admin token needed
 ```
 
@@ -136,8 +136,10 @@ ways that compose:
   `--model`/effort flag, falling through to the agent CLI's own default.
 
 Every model and effort is validated against the agent that repo uses (the
-catalog lives in `packages/core/src/agent-catalog.ts`). `fixowl init` presents
-the available options, and `fixowl validate` rejects any unknown value. For
+catalog lives in `packages/core/src/agent-catalog.ts`). `fixowl init` offers
+them as arrow-key lists - selector labels are ticked off the repo's own labels,
+then each gets a model and an effort - and `fixowl validate` rejects any
+unknown value. For
 `claude`, models are aliases like `opus`/`sonnet`/`haiku`/`fable` and efforts
 are `low`/`medium`/`high`/`xhigh`/`max` (both passed as `--model`/`--effort`).
 

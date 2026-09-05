@@ -52,7 +52,8 @@ The runner must be online when the schedule fires.
 npm install -g fixowl
 # copy ~/.fixowl/ (config.yaml + secrets.env) from your dev machine, then:
 fixowl validate
-fixowl provision # seals secrets, pushes the workflow, downloads runners under
+fixowl provision # seals secrets, proposes the workflow via PR (fixowl/provision-workflow),
+                 # downloads runners under
                  # ~/.fixowl/runners, and registers them (needs the admin token's
                  # Administration: write)
 fixowl start     # installs and starts the runners as launchd services

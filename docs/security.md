@@ -56,7 +56,7 @@ repos:
 
 | token | permissions | lives |
 | --- | --- | --- |
-| admin | Administration RW, Secrets RW, Contents RW, Workflows RW, Issues RW, Actions RW | CLI machine only (`~/.fixowl/secrets.env`, chmod 600) |
+| admin | Administration RW, Secrets RW, Contents RW, Workflows RW, Issues RW, Actions RW, Pull requests RW | CLI machine only (`~/.fixowl/secrets.env`, chmod 600) |
 | runtime | Contents RW, Pull requests RW, Issues RW | repo Actions secret `FIXOWL_GITHUB_TOKEN` |
 | fallback (optional) | Actions RW only | CLI/runner host only (`~/.fixowl/secrets.env`, chmod 600) as `FIXOWL_FALLBACK_TOKEN` |
 
