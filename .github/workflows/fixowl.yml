@@ -4,7 +4,7 @@ run-name: "fixowl night run${{ github.event.inputs.source == 'scheduled-fallback
 
 on:
   schedule:
-    - cron: "0 3 * * *"
+    - cron: "37 0 * * *"
   workflow_dispatch:
     inputs:
       source:
@@ -45,10 +45,10 @@ jobs:
           max-issues-per-run: "10"
           issue-timeout-minutes: "45"
           source: "${{ github.event.inputs.source }}"
-          schedule: "0 3 * * *"
+          schedule: "37 0 * * *"
           default-model: "opus"
           default-effort: "high"
-          label-models: "{\"effort: low\":{\"model\":\"sonnet\",\"effort\":\"high\"},\"effort: medium\":{\"model\":\"opus\",\"effort\":\"high\"},\"effort: high\":{\"model\":\"opus\",\"effort\":\"high\"},\"effort: xhigh\":{\"model\":\"opus\",\"effort\":\"xhigh\"},\"effort: max\":{\"model\":\"opus\",\"effort\":\"max\"}}"
+          label-models: "{\"effort: high\":{\"model\":\"opus\",\"effort\":\"high\"},\"effort: low\":{\"model\":\"sonnet\",\"effort\":\"high\"},\"effort: max\":{\"model\":\"opus\",\"effort\":\"max\"},\"effort: medium\":{\"model\":\"opus\",\"effort\":\"medium\"},\"effort: xhigh\":{\"model\":\"opus\",\"effort\":\"xhigh\"}}"
         env:
           GITHUB_TOKEN: ${{ github.token }} # Actions: read, for the once-a-day budget guard
           FIXOWL_GITHUB_TOKEN: ${{ secrets.FIXOWL_GITHUB_TOKEN }}
