@@ -144,6 +144,21 @@ See [docs/releasing.md](docs/releasing.md).
   still bounds how many issues are selected/classified. See the README "Run
   budgets" section.
 
+- Per-issue evidence is uploaded **progressively**, not only at job end. As each
+  issue finishes, `main.ts` uploads its `fixowl-evidence/issue-<n>/` dir as its
+  own `fixowl-evidence-issue-<n>` artifact via the `ArtifactUploader` deps edge
+  (`artifact-upload.ts`, `@actions/artifact`), so completed issues' evidence is
+  finalized mid-job and survives a later job cancellation - the single end-of-job
+  `upload-artifact` step never runs on a cancelled job (the runner reconnects
+  after the job is server-side "completed" and that upload 403s). Per-issue names
+  are mandatory: `@actions/artifact` v2+ forbids two artifacts sharing a name in
+  one run. Naming/paths are pure in `evidence.ts` (shared with `pr-body.ts`,
+  which links each PR to its own issue artifact); the workflow keeps the combined
+  end-of-job `fixowl-evidence` upload as the fully-successful fallback. Upload is
+  best-effort (a failure is logged, never aborts the night); in-process tests
+  inject a fake or omit it. The one accepted limit: the issue in progress at the
+  freeze may lose its evidence (its container was frozen).
+
 ## Maintaining this file
 
 Keep this file for knowledge useful to almost every future agent session in this

@@ -22,7 +22,9 @@ describe("buildPrBody", () => {
     expect(body).toContain("| tests | ✅ passed |");
     expect(body).toContain("| web | ❌ failed (console errors; see evidence) |");
     expect(body).toContain("| e2e | ⚪ unavailable (playwright not in image) |");
-    expect(body).toContain("fixowl-evidence");
+    // The PR links to this issue's own progressively-uploaded artifact - the one
+    // that survives a cancelled run - not the combined end-of-job artifact.
+    expect(body).toContain("`fixowl-evidence-issue-7`");
     expect(body).toContain("fixowl never merges");
   });
 
