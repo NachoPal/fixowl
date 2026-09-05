@@ -43,6 +43,8 @@ describe("renderConfigYaml", () => {
       labels: { any: ["overnight"] },
       agent: "claude",
       max_issues_per_run: 4,
+      ci_max_tries: 3,
+      ci_timeout_minutes: 60,
     });
     expect(config.agents).toEqual({ claude: { env: ["CLAUDE_CODE_OAUTH_TOKEN"] } });
     expect(config.repos).toEqual([{ name: "NachoPal/storyengine" }]);

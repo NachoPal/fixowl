@@ -199,8 +199,12 @@ repos you want it to touch:
            you can REVOKE it (or downgrade it to read-only if you want
            \`fixowl status\` to confirm the runner is online). Routine
            \`fixowl start\` needs no admin token.
-  runtime  Contents RW, Pull requests RW, Issues RW. Pushed to each repo as an
-           Actions secret; this is what the night run uses to push and open PRs.
+  runtime  Contents RW, Pull requests RW, Issues RW, plus read-only Checks,
+           Commit statuses, Actions, and Administration. Pushed to each repo as
+           an Actions secret; the night run uses it to push, open PRs, and read
+           the base branch's required checks + CI logs for the CI-gated fix
+           loop. The four extra scopes are READ-only: it still never gets any
+           write beyond Contents/Pull requests/Issues.
 
 Mint them at ${PAT_URL}`);
   await prompter.pause("\nPress Enter once you have both tokens ready ");
@@ -653,6 +657,8 @@ defaults:
   agent: claude
   max_issues_per_run: 4
   issue_timeout_minutes: 45
+  ci_max_tries: 3            # CI-gated fix loop: agent passes before a draft PR is left
+  ci_timeout_minutes: 60     # minutes each pass waits for the base branch's required checks
   # model: sonnet            # default model when an issue has no selector label
   # effort: medium           # default reasoning effort (low, medium, high, xhigh, max)
 
@@ -663,6 +669,8 @@ agents:
 repos:
   - name: your-user/your-repo
     # schedule: "30 1 * * *"   # per-repo override
+    # ci_max_tries: 5          # per-repo CI-gated-loop override
+    # ci_timeout_minutes: 90   # per-repo override
     # model: opus              # per-repo default model override
     # label_models:            # dedicated selector labels; exactly one per issue
     #   heavy: { model: opus, effort: max }
@@ -699,7 +707,10 @@ Next steps (or re-run \`fixowl init\` on a terminal for the guided setup):
                  Actions RW, Pull requests RW (stays on this machine; used only to
                  provision and register the runner - revoke or downgrade to
                  read-only afterward)
-       runtime - Contents RW, Pull requests RW, Issues RW (becomes a repo Actions secret)
+       runtime - Contents RW, Pull requests RW, Issues RW, plus read-only Checks,
+                 Commit statuses, Actions and Administration (becomes a repo Actions
+                 secret; the read scopes let the CI-gated fix loop read required
+                 checks and CI logs)
      Put them in ${secretsPath}.
   2. If using the claude agent: run \`claude setup-token\` and put the resulting
      token in ${secretsPath} as CLAUDE_CODE_OAUTH_TOKEN.

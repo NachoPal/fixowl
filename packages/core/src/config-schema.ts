@@ -33,6 +33,10 @@ const repoEntrySchema = z.object({
   agent: z.string().optional(),
   max_issues_per_run: z.number().int().positive().optional(),
   issue_timeout_minutes: z.number().int().positive().optional(),
+  /** Max agent passes in the CI-gated fix loop before a draft PR is left. */
+  ci_max_tries: z.number().int().positive().optional(),
+  /** Minutes to wait for the required checks on a pushed head before counting the attempt as a CI timeout. */
+  ci_timeout_minutes: z.number().int().positive().optional(),
   /** Default model for this repo when an issue carries no selector label. */
   model: z.string().min(1).optional(),
   /** Default reasoning effort for this repo when an issue carries no selector label. */
@@ -81,6 +85,10 @@ export const globalConfigSchema = z.object({
       agent: z.string().optional(),
       max_issues_per_run: z.number().int().positive().optional(),
       issue_timeout_minutes: z.number().int().positive().optional(),
+      /** Default CI-gated-loop try budget for any repo that does not set its own. */
+      ci_max_tries: z.number().int().positive().optional(),
+      /** Default CI-gated-loop per-attempt timeout (minutes) for any repo that does not set its own. */
+      ci_timeout_minutes: z.number().int().positive().optional(),
       /** Fallback model used by any repo that does not set its own. */
       model: z.string().min(1).optional(),
       /** Fallback reasoning effort used by any repo that does not set its own. */
@@ -131,6 +139,14 @@ export const FIXOWL_DEFAULTS = {
    * native `blocked_by` ordering is always-on and unaffected. See docs/stacked-prs.md.
    */
   heuristicConflictOrdering: false,
+  /**
+   * CI-gated fix loop: at most this many agent passes before a draft PR is
+   * left with the outstanding failures, and how long each pass waits for the
+   * pushed head's required checks before counting a CI timeout. See
+   * docs/ci-fix-loop.md and issue-pipeline.ts.
+   */
+  ciMaxTries: 3,
+  ciTimeoutMinutes: 60,
   runnerDir: "~/.fixowl/runners",
   /**
    * Minutes after the cron the local fallback fires. Generous on purpose:
@@ -148,6 +164,10 @@ export interface ResolvedRepoSettings {
   agent: string;
   maxIssuesPerRun: number;
   issueTimeoutMinutes: number;
+  /** Max agent passes in the CI-gated fix loop before leaving a draft PR. */
+  ciMaxTries: number;
+  /** Minutes each pass waits for the pushed head's required checks. */
+  ciTimeoutMinutes: number;
   /** Env allowlist for the agent; undefined means use the adapter's built-in default. */
   agentEnv: string[] | undefined;
   /** Default model when an issue carries no selector label; undefined uses the agent CLI default. */
@@ -183,6 +203,9 @@ export function resolveRepoSettings(config: GlobalConfig, repoName: string): Res
       entry.issue_timeout_minutes ??
       defaults.issue_timeout_minutes ??
       FIXOWL_DEFAULTS.issueTimeoutMinutes,
+    ciMaxTries: entry.ci_max_tries ?? defaults.ci_max_tries ?? FIXOWL_DEFAULTS.ciMaxTries,
+    ciTimeoutMinutes:
+      entry.ci_timeout_minutes ?? defaults.ci_timeout_minutes ?? FIXOWL_DEFAULTS.ciTimeoutMinutes,
     agentEnv: config.agents?.[agent]?.env,
     defaultModel: entry.model ?? defaults.model,
     defaultEffort: entry.effort ?? defaults.effort,

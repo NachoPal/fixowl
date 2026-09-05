@@ -47,6 +47,8 @@ jobs:
           agent-env: "CLAUDE_CODE_OAUTH_TOKEN"
           max-issues-per-run: "4"
           issue-timeout-minutes: "45"
+          max-ci-tries: "3"
+          ci-timeout-minutes: "60"
           source: "\${{ github.event.inputs.source }}"
           schedule: "30 1 * * *"
         env:

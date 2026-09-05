@@ -187,7 +187,9 @@ describe("runNight", () => {
     const commitMessage = await git(originDir, "log", "-1", "--format=%s", "issue/1-fix-header");
     expect(commitMessage.trim()).toBe("fix #1: Fix header");
 
-    expect(existsSync(join(tempDir, "fixowl-evidence", "issue-1", "agent.log"))).toBe(true);
+    expect(existsSync(join(tempDir, "fixowl-evidence", "issue-1", "agent-attempt-1.log"))).toBe(
+      true,
+    );
     expect(engine.builds).toHaveLength(1);
   });
 
@@ -842,6 +844,111 @@ describe("runNight", () => {
         { ...inputs, scheduledSlot: false, currentRunId: 300 },
       );
       expect(summary.results[0]?.status).toBe("pr-opened");
+    });
+  });
+
+  describe("CI-gated fix loop", () => {
+    it("retries a red required check and opens a ready PR once it goes green", async () => {
+      const { workspaceDir, tempDir, inputs } = await setup();
+      const github = new FakeGitHub([issue(1, "Fix header", "x")]);
+      github.requiredChecks = { readable: true, contexts: ["ci"] };
+      let ciCalls = 0;
+      github.checksForRef = () => {
+        ciCalls++;
+        return [
+          {
+            name: "ci",
+            status: "completed",
+            conclusion: ciCalls === 1 ? "failure" : "success",
+            summary: "bundle is stale",
+            detailsUrl: "https://github.com/test/repo/actions/runs/1/job/2",
+          },
+        ];
+      };
+      github.failedLogs = () => "dist/ is stale; run pnpm build";
+      const engine = makeEngine({ workspaceDir });
+
+      const summary = await runNight({ github, engine, exec: realExec, log: silentLog }, inputs);
+
+      expect(summary.results[0]?.status).toBe("pr-opened");
+      expect(summary.results[0]?.draft).toBe(false);
+      // One PR, created on the first push and reused across attempts.
+      expect(github.pulls).toHaveLength(1);
+      expect(github.pulls[0]?.draft).toBe(false);
+      expect(github.readyForReview).toContain(github.pulls[0]?.number);
+      expect(ciCalls).toBe(2);
+      expect(github.comments[0]?.body).toContain("ready for review");
+      // The retry prompt carried the CI failure, fenced and with the fetched log.
+      const prompt = readFileSync(join(tempDir, "fixowl-prompts", "issue-1.md"), "utf8");
+      expect(prompt).toContain("<untrusted-ci-output>");
+      expect(prompt).toContain("dist/ is stale");
+      expect(engine.runs.filter((s) => s.name.endsWith("-1-agent"))).toHaveLength(2);
+    });
+
+    it("leaves an annotated draft PR when the required checks stay red", async () => {
+      const { workspaceDir, inputs } = await setup();
+      const github = new FakeGitHub([issue(1, "Fix header", "x")]);
+      github.requiredChecks = { readable: true, contexts: ["ci"] };
+      github.checksForRef = () => [
+        { name: "ci", status: "completed", conclusion: "failure", summary: "still failing" },
+      ];
+      const engine = makeEngine({ workspaceDir });
+
+      const summary = await runNight(
+        { github, engine, exec: realExec, log: silentLog },
+        { ...inputs, ciMaxTries: 2 },
+      );
+
+      expect(summary.results[0]?.status).toBe("pr-opened");
+      expect(summary.results[0]?.draft).toBe(true);
+      expect(github.pulls).toHaveLength(1);
+      expect(github.pulls[0]?.draft).toBe(true);
+      expect(github.readyForReview).toEqual([]);
+      expect(github.comments[0]?.body).toContain("draft");
+      expect(github.pulls[0]?.body).toContain("still red");
+      expect(engine.runs.filter((s) => s.name.endsWith("-1-agent"))).toHaveLength(2);
+    });
+
+    it("a failing local pre-check short-circuits: no push and no CI call", async () => {
+      const { workspaceDir, inputs } = await setup();
+      const github = new FakeGitHub([issue(1, "Fix header", "x")]);
+      let ciCalls = 0;
+      github.checksForRef = () => {
+        ciCalls++;
+        return [];
+      };
+      const engine = makeEngine({ workspaceDir, failCheck: true });
+
+      const summary = await runNight(
+        { github, engine, exec: realExec, log: silentLog },
+        { ...inputs, ciMaxTries: 2 },
+      );
+
+      // CI is never consulted while the local pre-check is red.
+      expect(ciCalls).toBe(0);
+      // The work still lands as a draft for the human, annotated with the local failure.
+      expect(summary.results[0]?.status).toBe("pr-opened");
+      expect(summary.results[0]?.draft).toBe(true);
+      expect(github.pulls).toHaveLength(1);
+      expect(github.readyForReview).toEqual([]);
+      expect(github.pulls[0]?.body).toContain("❌ failed");
+      expect(engine.runs.filter((s) => s.name.endsWith("-1-agent"))).toHaveLength(2);
+    });
+
+    it("gates only on required checks; a failing non-required check does not block", async () => {
+      const { workspaceDir, inputs } = await setup();
+      const github = new FakeGitHub([issue(1, "Fix header", "x")]);
+      github.requiredChecks = { readable: true, contexts: ["ci"] };
+      github.checksForRef = () => [
+        { name: "ci", status: "completed", conclusion: "success" },
+        { name: "lint", status: "completed", conclusion: "failure" },
+      ];
+      const engine = makeEngine({ workspaceDir });
+
+      const summary = await runNight({ github, engine, exec: realExec, log: silentLog }, inputs);
+      expect(summary.results[0]?.status).toBe("pr-opened");
+      expect(summary.results[0]?.draft).toBe(false);
+      expect(github.pulls[0]?.draft).toBe(false);
     });
   });
 });

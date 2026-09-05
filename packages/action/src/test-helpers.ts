@@ -1,4 +1,4 @@
-import type { WorkflowRunLite } from "@fixowl/core";
+import type { CheckStatusLite, RequiredChecks, WorkflowRunLite } from "@fixowl/core";
 import type {
   ContainerEngine,
   ContainerRunSpec,
@@ -42,6 +42,21 @@ export class FakeGitHub implements GitHubApi {
   pullsByBranch: Map<string, PullRequestLite> = new Map();
   /** Recent workflow runs the scheduled-slot guard sees; empty by default. */
   workflowRuns: WorkflowRunLite[] = [];
+  /** PR numbers flipped ready-for-review, in order. */
+  readyForReview: number[] = [];
+  /**
+   * The base branch's required checks. Default: unreadable, so the CI-gated
+   * loop falls back to gating on all checks (see getChecksForRef).
+   */
+  requiredChecks: RequiredChecks = { readable: false, contexts: [] };
+  /**
+   * Checks on a head SHA, resolved per call so tests can vary them across
+   * attempts. Default: none - with the default unreadable required set this is
+   * a vacuous green, so a night with no CI opens ready-for-review PRs.
+   */
+  checksForRef: (sha: string) => CheckStatusLite[] = () => [];
+  /** Failure detail for a red check; default none. */
+  failedLogs: (check: CheckStatusLite) => string | undefined = () => undefined;
   private nextPrNumber = 100;
 
   constructor(public issues: IssueLite[]) {}
@@ -65,16 +80,43 @@ export class FakeGitHub implements GitHubApi {
     return this.pullsByBranch.get(branch);
   }
 
-  async createPullRequest(params: {
+  async ensurePullRequest(params: {
     head: string;
     base: string;
     title: string;
     body: string;
     draft: boolean;
   }): Promise<{ number: number; url: string }> {
+    const existing = this.pulls.find((pull) => pull.head === params.head);
+    if (existing !== undefined) {
+      return { number: existing.number, url: this.prUrl(existing.number) };
+    }
     const number = ++this.nextPrNumber;
     this.pulls.push({ number, ...params });
-    return { number, url: `https://github.com/test/repo/pull/${number}` };
+    return { number, url: this.prUrl(number) };
+  }
+
+  async markPullRequestReadyForReview(prNumber: number): Promise<void> {
+    this.readyForReview.push(prNumber);
+    const pull = this.pulls.find((candidate) => candidate.number === prNumber);
+    if (pull !== undefined) pull.draft = false;
+  }
+
+  async updatePullRequestBody(prNumber: number, body: string): Promise<void> {
+    const pull = this.pulls.find((candidate) => candidate.number === prNumber);
+    if (pull !== undefined) pull.body = body;
+  }
+
+  async getRequiredChecks(): Promise<RequiredChecks> {
+    return this.requiredChecks;
+  }
+
+  async getChecksForRef(sha: string): Promise<CheckStatusLite[]> {
+    return this.checksForRef(sha);
+  }
+
+  async getFailedCheckLogs(check: CheckStatusLite): Promise<string | undefined> {
+    return this.failedLogs(check);
   }
 
   async createIssueComment(issueNumber: number, body: string): Promise<void> {
@@ -83,6 +125,10 @@ export class FakeGitHub implements GitHubApi {
 
   async listRecentWorkflowRuns(): Promise<WorkflowRunLite[]> {
     return this.workflowRuns;
+  }
+
+  private prUrl(number: number): string {
+    return `https://github.com/test/repo/pull/${number}`;
   }
 }
 

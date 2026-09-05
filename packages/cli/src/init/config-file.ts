@@ -172,7 +172,9 @@ ${cronLine("  ", base)}
   labels: ${labelRule(base.labels)}
   agent: ${answers.agent}
   max_issues_per_run: ${base.maxIssuesPerRun}
-  issue_timeout_minutes: ${FIXOWL_DEFAULTS.issueTimeoutMinutes}${defaultModelBlock}
+  issue_timeout_minutes: ${FIXOWL_DEFAULTS.issueTimeoutMinutes}
+  ci_max_tries: ${FIXOWL_DEFAULTS.ciMaxTries}          # CI-gated fix loop: agent passes before a draft PR is left
+  ci_timeout_minutes: ${FIXOWL_DEFAULTS.ciTimeoutMinutes}     # minutes each pass waits for the base branch's required checks${defaultModelBlock}
   # heuristic_conflict_ordering: true   # opt-in Layer 2: an LLM groups & stacks
   #   non-dependent issues that touch the same files, to avoid merge conflicts.
   #   Off by default: fixowl never merges (so never restacks what it stacks),

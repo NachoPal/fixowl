@@ -39,8 +39,12 @@ See [docs/releasing.md](docs/releasing.md).
   (`packages/cli/src/runner/register.ts`). Routine `fixowl start` uses no admin
   token; its online check (and `fixowl status`) soft-fails when the token is
   revoked/downgraded. Never move a write-scoped GitHub call into the routine
-  `start` path, and never grant the runtime token Administration. See
-  [docs/security.md](docs/security.md).
+  `start` path, and never grant the runtime token any Administration **write**
+  (or other write beyond Contents/Pull requests/Issues). The CI-gated fix loop
+  adds read-only Checks/Statuses/Actions/Administration to the runtime token so
+  it can read required checks and CI logs; that read-only Administration is the
+  only Administration the runtime token ever holds. See
+  [docs/security.md](docs/security.md) and [docs/ci-fix-loop.md](docs/ci-fix-loop.md).
 
 - **Never merge.** No code path may call a GitHub merge API. `no-merge.test.ts` greps for
   it; do not weaken that test.
@@ -52,6 +56,9 @@ See [docs/releasing.md](docs/releasing.md).
   runs with an explicit `--git-dir`, so a `.git` planted in the workspace is inert.
 - **Issue bodies are untrusted input.** They enter prompts only inside
   `<untrusted-issue-body>` fences, and container hardening assumes fencing fails.
+  CI logs and check summaries are semi-untrusted the same way (a job can echo
+  attacker-controlled text): the CI-gated loop feeds them back only inside
+  `<untrusted-ci-output>` fences, length-capped, via `fenceUntrustedCiOutput`.
 - **Exactly one level of containerization.** The runner is native; the action calls
   `docker run` once per agent/verify step. Nothing invokes Docker from inside a container.
 - **Containers run non-root.** Every `docker run` (agent, classifier, verify) runs as
@@ -108,6 +115,16 @@ See [docs/releasing.md](docs/releasing.md).
   restacks; independent PRs review more robustly; the classifier is a paid LLM
   guess) lives in `docs/stacked-prs.md`. Empty edges + Layer 2 off == the
   pre-dep-graph behavior (the regression guard in `main.test.ts`).
+- The per-issue runner (`packages/action/src/issue-pipeline.ts::processIssue`)
+  is a bounded CI-gated fix loop, not one-shot: agent -> local pre-check
+  (`.fixowl.yml`, a cheap smoke test) -> push -> wait for the base branch's
+  *required* checks -> green flips the draft PR to ready, red/timeout feeds the
+  failures back and retries, up to `ci_max_tries`, then leaves an annotated
+  draft. The pure gate decision is `packages/core/src/ci-gate.ts`; the poll loop
+  is `ci-poll.ts` (inject a `Clock` in tests); `getRequiredChecks`/`getChecksForRef`/
+  `getFailedCheckLogs` live behind `deps.ts`. Config is `ci_max_tries` (3) /
+  `ci_timeout_minutes` (60) in `config-schema.ts`, propagated through
+  `provision` -> `action.yml` inputs. See [docs/ci-fix-loop.md](docs/ci-fix-loop.md).
 
 ## Maintaining this file
 

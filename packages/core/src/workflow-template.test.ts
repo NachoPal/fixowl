@@ -12,6 +12,8 @@ const baseOptions: WorkflowTemplateOptions = {
   agentEnv: ["CLAUDE_CODE_OAUTH_TOKEN"],
   maxIssuesPerRun: 4,
   issueTimeoutMinutes: 45,
+  ciMaxTries: 3,
+  ciTimeoutMinutes: 60,
   actionRef: "NachoPal/fixowl@0000000000000000000000000000000000000000",
   actionRefComment: "main @ 2026-09-02",
 };
@@ -51,6 +53,12 @@ describe("renderFixowlWorkflow", () => {
     const rendered = renderFixowlWorkflow({ ...baseOptions, agentEnv: ["A_TOKEN", "B_TOKEN"] });
     expect(rendered).toContain("A_TOKEN: ${{ secrets.A_TOKEN }}");
     expect(rendered).toContain("B_TOKEN: ${{ secrets.B_TOKEN }}");
+  });
+
+  it("renders the CI-gated loop inputs", () => {
+    const rendered = renderFixowlWorkflow(baseOptions);
+    expect(rendered).toContain('max-ci-tries: "3"');
+    expect(rendered).toContain('ci-timeout-minutes: "60"');
   });
 
   it("omits model inputs when unset (today's workflows are unchanged)", () => {
