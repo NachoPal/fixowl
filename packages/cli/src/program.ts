@@ -47,30 +47,23 @@ export function createProgram(): Command {
   program
     .command("provision [repo]")
     .description(
-      "create labels, seal secrets, propose the workflow via PR (--no-pr to push it directly), and register the runner on this host",
+      "create labels, seal secrets, propose the workflow via PR, and register the runner on this host",
     )
     .option(
-      "--no-pr",
-      "push the workflow file straight to the default branch instead of proposing it via PR (the default)",
+      "--pr",
+      "deprecated no-op: the workflow is always proposed via PR now (will be removed next release)",
     )
-    .option("--pr", "propose the workflow file via PR (the default; accepted for back-compat)")
     .option("--no-schedule", "generate the workflow with workflow_dispatch only (no cron)")
     .option(
       "--no-register",
       "skip runner registration (register on the runner host with `start --register`)",
     )
-    .action(
-      async (
-        repo: string | undefined,
-        options: { pr?: boolean; schedule: boolean; register: boolean },
-      ) => {
-        await provisionCommand(makeContext(configPath()), repo, {
-          pr: options.pr,
-          noSchedule: !options.schedule,
-          noRegister: !options.register,
-        });
-      },
-    );
+    .action(async (repo: string | undefined, options: { schedule: boolean; register: boolean }) => {
+      await provisionCommand(makeContext(configPath()), repo, {
+        noSchedule: !options.schedule,
+        noRegister: !options.register,
+      });
+    });
 
   program
     .command("start [repo]")
