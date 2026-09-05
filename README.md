@@ -36,8 +36,11 @@ In the morning you review. **fixowl never merges.**
   [docs/stacked-prs.md](docs/stacked-prs.md).
 - **Verification is a capability, not a mandate**: repos declare checks and
   optional web screenshot targets in `.fixowl.yml`; missing capability
-  degrades to "unavailable", failing checks turn the PR into a draft, and
-  screenshots/logs land in the run's `fixowl-evidence` artifact.
+  degrades to "unavailable", and screenshots/logs land in the run's
+  `fixowl-evidence` artifact. Every PR opens as a **draft**; the target repo's
+  own required CI - not the local `.fixowl.yml` checks, which now run only as a
+  cheap pre-filter - is the authority that flips it to ready-for-review in a
+  bounded fix loop. See [docs/ci-fix-loop.md](docs/ci-fix-loop.md).
 - **Agent-agnostic**: adapters for `claude` (default), `aider`, and a
   deterministic `script` adapter used for e2e tests (test-only: it executes
   issue bodies as shell, so the action refuses it without an explicit
