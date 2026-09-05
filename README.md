@@ -27,10 +27,13 @@ In the morning you review. **fixowl never merges.**
   is already in flight with a live PR, stacks on that existing branch), and is
   otherwise **deferred** (the prerequisite isn't selected, failed to ship, is
   cross-repo, or forms a cycle - deferrals are logged and listed in the night
-  summary). Then a heuristic pass classifies the
-  remaining issues by whether they touch the same code and stacks those too;
-  prerequisites always win over that heuristic. Issues are fixed one at a time -
-  topology, not concurrency. See [docs/stacked-prs.md](docs/stacked-prs.md).
+  summary). Second, an **opt-in** heuristic pass (off by default; enable with
+  `heuristic_conflict_ordering: true`) classifies the remaining issues by whether
+  they touch the same code and stacks those too, with prerequisites always winning
+  over that heuristic; when it is off every non-deferred issue branches from the
+  default branch independently. Native `blocked-by` ordering is always-on either
+  way. Issues are fixed one at a time - topology, not concurrency. See
+  [docs/stacked-prs.md](docs/stacked-prs.md).
 - **Verification is a capability, not a mandate**: repos declare checks and
   optional web screenshot targets in `.fixowl.yml`; missing capability
   degrades to "unavailable", failing checks turn the PR into a draft, and
@@ -52,9 +55,11 @@ In the morning you review. **fixowl never merges.**
 ![How fixowl orders one example night into stacked-PR chains. The night's selected issues (#12, #15, #18, #21, #23, #40) flow through two layers of pure planning. Layer 1 reads native GitHub blocked-by edges and is authoritative: #18 is blocked-by #15 so #15 ships first with #18 stacked under it, while #21 is blocked-by #7 which is not shipping tonight so #21 is deferred with no PR. Layer 2 is a same-file conflict heuristic over the survivors: it groups #12 and #23 and predicts #15, #18 and #40 independent. The two merge under "prerequisites always win": chain 1 is #12 then #23, chain 2 is #15 then #18 (the blocked-by edge forces the stack the heuristic had split), chain 3 is #40 alone, and #21 stays deferred. Each chain then becomes stacked PRs where every PR targets the previous issue's branch and the first PR of a chain targets the default branch. One PR per issue; fixowl never merges.](assets/issue-ordering.svg)
 
 Two layers of pure planning decide branch topology: native `blocked-by`
-prerequisites first (authoritative - deferring what cannot ship tonight), then a
-same-file conflict heuristic over the survivors, combined under "prerequisites
-always win" into chains whose PRs each stack on the previous branch. Full detail
+prerequisites first (authoritative and always-on - deferring what cannot ship
+tonight), then an opt-in same-file conflict heuristic over the survivors (off by
+default; enable with `heuristic_conflict_ordering: true`), combined under
+"prerequisites always win" into chains whose PRs each stack on the previous
+branch. The diagram above shows a night with the heuristic enabled. Full detail
 in [docs/stacked-prs.md](docs/stacked-prs.md).
 
 ## Quick start
