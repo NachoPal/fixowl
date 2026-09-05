@@ -4,7 +4,7 @@ run-name: "fixowl night run"
 
 on:
   schedule:
-    - cron: "0 3 * * *"
+    - cron: "18 5 * * *"
   workflow_dispatch: {}
 
 permissions:
