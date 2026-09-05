@@ -7,6 +7,7 @@ import type {
   IssueDeps,
   IssueLite,
   Logger,
+  PullRequestLite,
 } from "./deps.ts";
 
 export const silentLog: Logger = {
@@ -37,6 +38,8 @@ export class FakeGitHub implements GitHubApi {
   comments: Array<{ issueNumber: number; body: string }> = [];
   /** Native dependency edges keyed by issue number; empty means no edges (today's behavior). */
   dependencies: Map<number, IssueDeps> = new Map();
+  /** PR liveness keyed by head branch, for the in-flight stacking-base lookup (issue #48). */
+  pullsByBranch: Map<string, PullRequestLite> = new Map();
   /** Recent workflow runs the scheduled-slot guard sees; empty by default. */
   workflowRuns: WorkflowRunLite[] = [];
   private nextPrNumber = 100;
@@ -56,6 +59,10 @@ export class FakeGitHub implements GitHubApi {
       result.set(n, this.dependencies.get(n) ?? { number: n, blockedBy: [] });
     }
     return result;
+  }
+
+  async getPullRequestForBranch(branch: string): Promise<PullRequestLite | undefined> {
+    return this.pullsByBranch.get(branch);
   }
 
   async createPullRequest(params: {

@@ -8,7 +8,7 @@ import {
   type LabelRule,
 } from "@fixowl/core";
 import { DockerEngine } from "./container-exec.ts";
-import type { GitHubApi, IssueDeps, IssueLite, Logger } from "./deps.ts";
+import type { GitHubApi, IssueDeps, IssueLite, Logger, PullRequestLite } from "./deps.ts";
 import { renderSummary, runNight, wipeoutFailure } from "./main.ts";
 import { realExec } from "./real-exec.ts";
 
@@ -65,6 +65,26 @@ function makeGitHubApi(
     },
     async createIssueComment(issueNumber, body) {
       await octokit.issues.createComment({ owner, repo, issue_number: issueNumber, body });
+    },
+    async getPullRequestForBranch(branch: string): Promise<PullRequestLite | undefined> {
+      // Read-only: list every PR for this head branch (a branch may have an old
+      // merged/closed PR alongside a newer open one) and reduce to a single
+      // liveness verdict, preferring an open PR, then a merged one, then a
+      // closed-unmerged one. `head` is `owner:branch` (fixowl always pushes to
+      // the same repo).
+      const prs = await octokit.paginate(octokit.pulls.list, {
+        owner,
+        repo,
+        head: `${owner}:${branch}`,
+        state: "all",
+        per_page: 100,
+      });
+      const open = prs.find((pr) => pr.state === "open");
+      if (open !== undefined) return { number: open.number, state: "OPEN" };
+      const merged = prs.find((pr) => pr.merged_at !== null && pr.merged_at !== undefined);
+      if (merged !== undefined) return { number: merged.number, state: "MERGED" };
+      const [closed] = prs;
+      return closed === undefined ? undefined : { number: closed.number, state: "CLOSED" };
     },
     async listRecentWorkflowRuns() {
       if (runsOctokit === undefined) return [];

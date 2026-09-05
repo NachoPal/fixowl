@@ -50172,13 +50172,15 @@ function orderWithinChain(members2, prereqs, position) {
 }
 
 // packages/action/src/prereq-planner.ts
-function planPrereqs(selected, deps, currentRepo) {
+function planPrereqs(selected, deps, currentRepo, inFlight = /* @__PURE__ */ new Map()) {
   const byNumber = new Map(selected.map((issue3) => [issue3.number, issue3]));
   const selectedNumbers = new Set(byNumber.keys());
   const warnings = [];
   const directDeferReason = /* @__PURE__ */ new Map();
   const inSetPrereqs = /* @__PURE__ */ new Map();
   for (const issue3 of selected) inSetPrereqs.set(issue3.number, []);
+  const inFlightBases = /* @__PURE__ */ new Map();
+  for (const issue3 of selected) inFlightBases.set(issue3.number, []);
   for (const issue3 of selected) {
     const issueDeps = deps.get(issue3.number);
     if (issueDeps === void 0) continue;
@@ -50199,13 +50201,41 @@ function planPrereqs(selected, deps, currentRepo) {
       }
       if (selectedNumbers.has(edge.number)) {
         inSetPrereqs.get(issue3.number)?.push(edge.number);
-      } else {
-        directDeferReason.set(
-          issue3.number,
-          `blocked by #${edge.number}, which is not in tonight's shippable set`
-        );
+        continue;
       }
+      const flight = inFlight.get(edge.number);
+      if (flight !== void 0) {
+        if (flight.pr?.state === "OPEN") {
+          inFlightBases.get(issue3.number)?.push({ branch: flight.branch, prNumber: flight.pr.number });
+        } else if (flight.pr?.state !== "MERGED") {
+          directDeferReason.set(
+            issue3.number,
+            `blocked by #${edge.number}, whose branch is not a live in-flight PR to stack on`
+          );
+        }
+        continue;
+      }
+      directDeferReason.set(
+        issue3.number,
+        `blocked by #${edge.number}, which is not in tonight's shippable set`
+      );
     }
+  }
+  const stackBases = /* @__PURE__ */ new Map();
+  for (const issue3 of selected) {
+    if (directDeferReason.has(issue3.number)) continue;
+    const candidates = inFlightBases.get(issue3.number) ?? [];
+    if (candidates.length === 0) continue;
+    const distinct = [...new Map(candidates.map((base) => [base.branch, base])).values()];
+    const hasSameNightPrereq = (inSetPrereqs.get(issue3.number) ?? []).length > 0;
+    if (distinct.length > 1 || hasSameNightPrereq) {
+      directDeferReason.set(
+        issue3.number,
+        "blocked by multiple in-flight or same-night prerequisites that cannot be stacked linearly; deferred"
+      );
+      continue;
+    }
+    stackBases.set(issue3.number, distinct[0]);
   }
   const cycleNodes = findCycleNodes(selectedNumbers, inSetPrereqs);
   if (cycleNodes.size > 0) {
@@ -50252,7 +50282,10 @@ function planPrereqs(selected, deps, currentRepo) {
   }
   const order = topoSortOldestFirst(shippableNumbers, prereqs);
   const shippable = order.map((n) => byNumber.get(n)).filter((i) => i !== void 0);
-  return { shippable, prereqs, deferred, warnings };
+  for (const n of stackBases.keys()) {
+    if (!shippableNumbers.has(n)) stackBases.delete(n);
+  }
+  return { shippable, prereqs, stackBases, deferred, warnings };
 }
 function findCycleNodes(nodes, prereqs) {
   const inDegree = /* @__PURE__ */ new Map();
@@ -50382,6 +50415,16 @@ var GitWorkspace = class {
   async checkoutNewBranch(branch, baseRef) {
     this.dropPlantedGitDir();
     await this.git("checkout", "-B", branch, baseRef);
+  }
+  /**
+   * Fetch one remote branch into its `origin/<branch>` tracking ref so it can be
+   * used as a base for stacking (issue #48). The initial `fetch-depth: 0`
+   * checkout already brings every branch, but an in-flight prerequisite branch
+   * pushed on a prior night is fetched explicitly here so the base always
+   * resolves regardless of how the workspace was set up.
+   */
+  async fetchRemoteBranch(branch) {
+    await this.git("fetch", "origin", `${branch}:refs/remotes/origin/${branch}`);
   }
   async checkout(ref) {
     await this.git("checkout", ref);
@@ -50815,7 +50858,8 @@ async function runNightWithGit(deps, inputs, git) {
     return { results: [], skipped, deferred: [], warnings };
   }
   const depsMap = await github.getIssueDependencies(selected.map((issue3) => issue3.number));
-  const prereqPlan = planPrereqs(selected, depsMap, inputs.repoFullName);
+  const inFlight = await resolveInFlightPrereqs(github, depsMap, skipped, inputs.repoFullName);
+  const prereqPlan = planPrereqs(selected, depsMap, inputs.repoFullName, inFlight);
   for (const warning2 of prereqPlan.warnings) {
     warnings.push(warning2);
     log2.warn(warning2);
@@ -50867,6 +50911,26 @@ async function runNightWithGit(deps, inputs, git) {
         continue;
       }
       const branch = issueBranchName(issue3.number, issue3.title);
+      const stackBase = prereqPlan.stackBases.get(issue3.number);
+      let issueBaseRef = baseRef;
+      let issuePrBase = prBase;
+      let issueStackedOn = stackedOn;
+      if (stackBase !== void 0) {
+        try {
+          await git.fetchRemoteBranch(stackBase.branch);
+        } catch (error62) {
+          const reason = `could not fetch in-flight prerequisite branch ${stackBase.branch}: ${String(error62)}`;
+          log2.info(`issue #${issue3.number}: deferred - ${reason}`);
+          deferred.push({ issue: issue3, reason });
+          continue;
+        }
+        issueBaseRef = `origin/${stackBase.branch}`;
+        issuePrBase = stackBase.branch;
+        issueStackedOn = { prNumber: stackBase.prNumber, branch: stackBase.branch };
+        log2.info(
+          `issue #${issue3.number}: stacking on in-flight prerequisite PR #${stackBase.prNumber} (${stackBase.branch})`
+        );
+      }
       const resolution = resolveModelSelection({
         issueLabels: issue3.labels,
         labelModels,
@@ -50889,9 +50953,9 @@ async function runNightWithGit(deps, inputs, git) {
           {
             issue: issue3,
             branch,
-            baseRef,
-            prBase,
-            stackedOn,
+            baseRef: issueBaseRef,
+            prBase: issuePrBase,
+            stackedOn: issueStackedOn,
             image,
             repoFullName: inputs.repoFullName,
             repoConfig,
@@ -50929,6 +50993,24 @@ async function runNightWithGit(deps, inputs, git) {
     }
   }
   return { results, skipped, deferred, warnings };
+}
+async function resolveInFlightPrereqs(github, depsMap, skipped, currentRepo) {
+  const branchByNumber = new Map(skipped.map((skip) => [skip.issue.number, skip.branch]));
+  const prereqNumbers = /* @__PURE__ */ new Set();
+  for (const issueDeps of depsMap.values()) {
+    for (const edge of issueDeps.blockedBy) {
+      if (edge.state === "OPEN" && edge.repo === currentRepo && branchByNumber.has(edge.number)) {
+        prereqNumbers.add(edge.number);
+      }
+    }
+  }
+  const inFlight = /* @__PURE__ */ new Map();
+  for (const number4 of prereqNumbers) {
+    const branch = branchByNumber.get(number4);
+    const pr = await github.getPullRequestForBranch(branch);
+    inFlight.set(number4, { branch, pr });
+  }
+  return inFlight;
 }
 function loadRepoConfig(workspaceDir, warnings) {
   const path = join4(workspaceDir, REPO_CONFIG_PATH);
@@ -51145,6 +51227,21 @@ function makeGitHubApi(octokit, owner, repo, runsOctokit) {
     },
     async createIssueComment(issueNumber, body) {
       await octokit.issues.createComment({ owner, repo, issue_number: issueNumber, body });
+    },
+    async getPullRequestForBranch(branch) {
+      const prs = await octokit.paginate(octokit.pulls.list, {
+        owner,
+        repo,
+        head: `${owner}:${branch}`,
+        state: "all",
+        per_page: 100
+      });
+      const open3 = prs.find((pr) => pr.state === "open");
+      if (open3 !== void 0) return { number: open3.number, state: "OPEN" };
+      const merged = prs.find((pr) => pr.merged_at !== null && pr.merged_at !== void 0);
+      if (merged !== void 0) return { number: merged.number, state: "MERGED" };
+      const [closed] = prs;
+      return closed === void 0 ? void 0 : { number: closed.number, state: "CLOSED" };
     },
     async listRecentWorkflowRuns() {
       if (runsOctokit === void 0) return [];

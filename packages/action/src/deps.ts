@@ -30,6 +30,18 @@ export interface IssueDeps {
   blockedByOverflow?: boolean;
 }
 
+/**
+ * One pull request's liveness, used to gate whether an idempotency-skipped
+ * prerequisite branch is a live stacking base (issue #48). `OPEN` = in flight
+ * (a live base to stack on); `MERGED` = already in the base branch (disregard,
+ * base from default); `CLOSED` = closed unmerged, i.e. abandoned (disregard,
+ * never stack on abandoned work).
+ */
+export interface PullRequestLite {
+  number: number;
+  state: "OPEN" | "MERGED" | "CLOSED";
+}
+
 export interface GitHubApi {
   /** One GitHub "list issues" call; `labelsQuery` is the comma-joined AND query. Returns issues only, never PRs. */
   listOpenIssuesWithLabels(labelsQuery: string): Promise<IssueLite[]>;
@@ -40,6 +52,14 @@ export interface GitHubApi {
    * awareness. Never writes edges (see the propose-and-confirm decision, off).
    */
   getIssueDependencies(numbers: readonly number[]): Promise<Map<number, IssueDeps>>;
+  /**
+   * Read-only lookup of the pull request whose head is `branch`, used to gate
+   * whether an idempotency-skipped prerequisite is still in flight before
+   * stacking a dependent on its branch (issue #48). Prefers an open PR, then a
+   * merged one, then a closed-unmerged one; undefined when the branch has no PR.
+   * Never writes (see the no-merge invariant).
+   */
+  getPullRequestForBranch(branch: string): Promise<PullRequestLite | undefined>;
   /**
    * Recent runs of this workflow, newest first, for the scheduled-slot budget
    * guard. Backed by a token with Actions: read (the ephemeral `GITHUB_TOKEN`,

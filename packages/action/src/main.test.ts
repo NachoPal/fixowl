@@ -132,6 +132,22 @@ async function remoteBranches(originDir: string): Promise<string[]> {
   return out.split("\n").filter((line) => line !== "");
 }
 
+/** Pushes an in-flight issue branch (main + one marker file) to origin, as a prior night would. */
+async function pushInFlightBranch(
+  originDir: string,
+  branch: string,
+  marker: string,
+): Promise<void> {
+  const parent = mkdtempSync(join(tmpdir(), "fixowl-inflight-"));
+  const dir = join(parent, "clone");
+  await git(parent, "clone", originDir, dir);
+  await git(dir, "checkout", "-b", branch);
+  writeFileSync(join(dir, marker), "prereq work\n");
+  await git(dir, "add", "-A");
+  await git(dir, "commit", "-m", `work for ${branch}`);
+  await git(dir, "push", "origin", branch);
+}
+
 const threeIssues: IssueLite[] = [
   issue(1, "Fix header", "the header is wrong"),
   issue(2, "Fix footer", "the footer is wrong"),
@@ -598,6 +614,93 @@ describe("runNight", () => {
     expect(github.pulls.map((pr) => pr.head)).toEqual(["issue/3-fix-sidebar"]);
     expect(summary.deferred.map((d) => d.issue.number).toSorted()).toEqual([1, 2]);
     expect(summary.warnings.some((w) => w.includes("cycle"))).toBe(true);
+  });
+
+  describe("in-flight stacking base (issue #48)", () => {
+    it("stacks a fresh dependent on a skipped prerequisite whose PR is open", async () => {
+      const { originDir, workspaceDir, inputs } = await setup();
+      // #1's branch is in flight from a prior night (open PR); #2 is fresh and
+      // natively blocked by #1.
+      await pushInFlightBranch(originDir, "issue/1-fix-header", "fix-1.txt");
+      const github = new FakeGitHub([issue(1, "Fix header", "x"), issue(2, "Fix footer", "y")]);
+      github.dependencies.set(2, {
+        number: 2,
+        blockedBy: [{ number: 1, repo: "test/repo", state: "OPEN" }],
+      });
+      github.pullsByBranch.set("issue/1-fix-header", { number: 101, state: "OPEN" });
+      const engine = makeEngine({ workspaceDir });
+
+      const summary = await runNight({ github, engine, exec: realExec, log: silentLog }, inputs);
+
+      // #1 stays skipped (in flight, not re-run); #2 ships stacked on #1's branch.
+      expect(summary.skipped.map((s) => s.issue.number)).toEqual([1]);
+      expect(summary.deferred).toEqual([]);
+      expect(engine.runs.some((spec) => spec.name.endsWith("-1-agent"))).toBe(false);
+      expect(github.pulls.map((pr) => [pr.head, pr.base])).toEqual([
+        ["issue/2-fix-footer", "issue/1-fix-header"],
+      ]);
+      expect(github.pulls[0]?.body).toContain("Stacked on #101");
+      // The dependent branch carries the prerequisite's already-pushed work.
+      const files = await git(workspaceDir, "ls-tree", "-r", "--name-only", "issue/2-fix-footer");
+      expect(files).toContain("fix-1.txt");
+      expect(files).toContain("fix-2.txt");
+    });
+
+    it("bases from the default branch once the prerequisite PR is merged (not stacked)", async () => {
+      const { originDir, workspaceDir, inputs } = await setup();
+      await pushInFlightBranch(originDir, "issue/1-fix-header", "fix-1.txt");
+      const github = new FakeGitHub([issue(1, "Fix header", "x"), issue(2, "Fix footer", "y")]);
+      github.dependencies.set(2, {
+        number: 2,
+        blockedBy: [{ number: 1, repo: "test/repo", state: "OPEN" }],
+      });
+      github.pullsByBranch.set("issue/1-fix-header", { number: 101, state: "MERGED" });
+      const engine = makeEngine({ workspaceDir });
+
+      const summary = await runNight({ github, engine, exec: realExec, log: silentLog }, inputs);
+
+      expect(summary.deferred).toEqual([]);
+      expect(github.pulls.map((pr) => [pr.head, pr.base])).toEqual([
+        ["issue/2-fix-footer", "main"],
+      ]);
+      expect(github.pulls[0]?.body).not.toContain("Stacked on");
+    });
+
+    it("defers rather than stacking on an abandoned (closed-unmerged) prerequisite PR", async () => {
+      const { originDir, workspaceDir, inputs } = await setup();
+      await pushInFlightBranch(originDir, "issue/1-fix-header", "fix-1.txt");
+      const github = new FakeGitHub([issue(1, "Fix header", "x"), issue(2, "Fix footer", "y")]);
+      github.dependencies.set(2, {
+        number: 2,
+        blockedBy: [{ number: 1, repo: "test/repo", state: "OPEN" }],
+      });
+      github.pullsByBranch.set("issue/1-fix-header", { number: 101, state: "CLOSED" });
+      const engine = makeEngine({ workspaceDir });
+
+      const summary = await runNight({ github, engine, exec: realExec, log: silentLog }, inputs);
+
+      expect(summary.results).toEqual([]);
+      expect(github.pulls).toHaveLength(0);
+      expect(summary.deferred.map((d) => d.issue.number)).toEqual([2]);
+      expect(engine.runs.some((spec) => spec.name.endsWith("-2-agent"))).toBe(false);
+    });
+
+    it("never stacks across nights without a native edge (heuristic path unchanged)", async () => {
+      const { originDir, workspaceDir, inputs } = await setup();
+      // #1 is in flight with an open PR, but #2 carries NO native blocked_by edge.
+      await pushInFlightBranch(originDir, "issue/1-fix-header", "fix-1.txt");
+      const github = new FakeGitHub([issue(1, "Fix header", "x"), issue(2, "Fix footer", "y")]);
+      github.pullsByBranch.set("issue/1-fix-header", { number: 101, state: "OPEN" });
+      const engine = makeEngine({ workspaceDir });
+
+      const summary = await runNight({ github, engine, exec: realExec, log: silentLog }, inputs);
+
+      expect(summary.skipped.map((s) => s.issue.number)).toEqual([1]);
+      expect(github.pulls.map((pr) => [pr.head, pr.base])).toEqual([
+        ["issue/2-fix-footer", "main"],
+      ]);
+      expect(github.pulls[0]?.body).not.toContain("Stacked on");
+    });
   });
 
   describe("scheduled-slot budget guard", () => {

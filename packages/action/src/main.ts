@@ -18,12 +18,13 @@ import { allIndependent, buildClassifyPrompt, parseClassification } from "./clas
 import { planChains } from "./chain-planner.ts";
 import { containerName } from "./container-exec.ts";
 import { mergeGraphs } from "./merge-graph.ts";
-import { planPrereqs, type DeferredIssue } from "./prereq-planner.ts";
+import { planPrereqs, type DeferredIssue, type InFlightPrereq } from "./prereq-planner.ts";
 import type {
   ContainerEngine,
   ContainerMount,
   Exec,
   GitHubApi,
+  IssueDeps,
   IssueLite,
   Logger,
 } from "./deps.ts";
@@ -197,7 +198,15 @@ async function runNightWithGit(
   // the rest are ordered so a prerequisite always precedes (and is stacked under)
   // its dependent. With no edges this is a no-op and the night is unchanged.
   const depsMap = await github.getIssueDependencies(selected.map((issue) => issue.number));
-  const prereqPlan = planPrereqs(selected, depsMap, inputs.repoFullName);
+
+  // A native blocked_by edge may point at an issue idempotency skipped because
+  // its branch is already in flight. Rather than defer the dependent every night
+  // (Layer 1's default), stack it on that prerequisite's existing branch - but
+  // only while the prerequisite is genuinely in flight. This resolves each such
+  // prerequisite's PR liveness (read-only) so the pure planner can gate on it.
+  const inFlight = await resolveInFlightPrereqs(github, depsMap, skipped, inputs.repoFullName);
+
+  const prereqPlan = planPrereqs(selected, depsMap, inputs.repoFullName, inFlight);
   for (const warning of prereqPlan.warnings) {
     warnings.push(warning);
     log.warn(warning);
@@ -260,6 +269,32 @@ async function runNightWithGit(
       }
       const branch = issueBranchName(issue.number, issue.title);
 
+      // A native in-flight prerequisite (issue #48) roots this issue on the
+      // prerequisite's already-pushed branch instead of the chain's running base
+      // or the default branch - authoritative over any heuristic chain position.
+      // The base branch is fetched first so `origin/<branch>` resolves; a fetch
+      // failure defers just this issue rather than crashing the night.
+      const stackBase = prereqPlan.stackBases.get(issue.number);
+      let issueBaseRef = baseRef;
+      let issuePrBase = prBase;
+      let issueStackedOn = stackedOn;
+      if (stackBase !== undefined) {
+        try {
+          await git.fetchRemoteBranch(stackBase.branch);
+        } catch (error) {
+          const reason = `could not fetch in-flight prerequisite branch ${stackBase.branch}: ${String(error)}`;
+          log.info(`issue #${issue.number}: deferred - ${reason}`);
+          deferred.push({ issue, reason });
+          continue;
+        }
+        issueBaseRef = `origin/${stackBase.branch}`;
+        issuePrBase = stackBase.branch;
+        issueStackedOn = { prNumber: stackBase.prNumber, branch: stackBase.branch };
+        log.info(
+          `issue #${issue.number}: stacking on in-flight prerequisite PR #${stackBase.prNumber} (${stackBase.branch})`,
+        );
+      }
+
       // Resolve this issue's model/effort from its labels. A multi-selector-
       // label conflict fails just this issue, loudly, without touching the rest.
       const resolution = resolveModelSelection({
@@ -285,9 +320,9 @@ async function runNightWithGit(
           {
             issue,
             branch,
-            baseRef,
-            prBase,
-            stackedOn,
+            baseRef: issueBaseRef,
+            prBase: issuePrBase,
+            stackedOn: issueStackedOn,
             image,
             repoFullName: inputs.repoFullName,
             repoConfig,
@@ -328,6 +363,38 @@ async function runNightWithGit(
   }
 
   return { results, skipped, deferred, warnings };
+}
+
+/**
+ * For each idempotency-skipped issue that is a native prerequisite of a selected
+ * issue (an OPEN, same-repo `blocked_by` edge), read its PR state so Layer 1 can
+ * decide whether its in-flight branch is a live stacking base (issue #48). Only
+ * genuine prerequisites are looked up, so a night with no such edges makes no
+ * extra GitHub calls. Native edges only - the heuristic classifier never stacks
+ * on a skipped branch across nights.
+ */
+async function resolveInFlightPrereqs(
+  github: GitHubApi,
+  depsMap: Map<number, IssueDeps>,
+  skipped: ReadonlyArray<{ issue: IssueLite; branch: string }>,
+  currentRepo: string,
+): Promise<Map<number, InFlightPrereq>> {
+  const branchByNumber = new Map(skipped.map((skip) => [skip.issue.number, skip.branch]));
+  const prereqNumbers = new Set<number>();
+  for (const issueDeps of depsMap.values()) {
+    for (const edge of issueDeps.blockedBy) {
+      if (edge.state === "OPEN" && edge.repo === currentRepo && branchByNumber.has(edge.number)) {
+        prereqNumbers.add(edge.number);
+      }
+    }
+  }
+  const inFlight = new Map<number, InFlightPrereq>();
+  for (const number of prereqNumbers) {
+    const branch = branchByNumber.get(number) as string;
+    const pr = await github.getPullRequestForBranch(branch);
+    inFlight.set(number, { branch, pr });
+  }
+  return inFlight;
 }
 
 function loadRepoConfig(workspaceDir: string, warnings: string[]): RepoFileConfig {
