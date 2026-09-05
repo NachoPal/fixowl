@@ -19,6 +19,22 @@ Each stacked PR carries a banner: `Stacked on #<parent> - merge that first.`
    satisfied. A dependency cycle defers the whole cycle. Unlike a same-code
    chain (below), a deferred dependent is never rebased onto the default branch:
    a real prerequisite that didn't land means the work genuinely cannot proceed.
+
+   **In-flight prerequisite exception.** There is one case where A is not
+   shipping tonight yet B still proceeds: A was **skipped by idempotency**
+   because its `issue/<a>-*` branch is already in flight from a prior night. When
+   that branch still has a **live** PR (open and unmerged), B stacks directly on
+   A's existing branch - B's base and PR target become that branch, and B's PR is
+   marked stacked on A's open PR - instead of re-running A. The gate is PR
+   *liveness*, not branch existence (a merged branch often lingers on the
+   remote): if A's PR is already **merged** it counts as satisfied and B bases
+   off the default branch as normal; if A's PR is **closed unmerged** (abandoned)
+   or A has no PR at all, B is disregarded-as-a-base and **deferred** as above -
+   fixowl never stacks on abandoned work. This applies to native `blocked-by`
+   edges only; the same-code heuristic below never stacks on a skipped branch
+   across nights. A dependent blocked by several distinct in-flight bases, or by
+   an in-flight base mixed with a same-night prerequisite, cannot be linearized
+   and is deferred conservatively.
 2. **Same-code grouping (heuristic).** Over the non-deferred issues, fixowl then
    predicts which ones touch overlapping code and stacks those into chains to
    avoid merge conflicts. Prerequisites always win: this pass may reorder or
