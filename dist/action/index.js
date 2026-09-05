@@ -125486,6 +125486,15 @@ var GitWorkspace = class {
   async push(branch) {
     await this.git("push", "origin", `${branch}:refs/heads/${branch}`);
   }
+  /**
+   * Delete a remote issue branch. Used to reset an orphaned branch - one pushed
+   * by a prior night that was interrupted before its PR opened - so the retry
+   * pushes a fresh branch from the base rather than hitting a non-fast-forward
+   * (issue #57). Contents:write only; deleting a ref is never a merge.
+   */
+  async deleteRemoteBranch(branch) {
+    await this.git("push", "origin", "--delete", `refs/heads/${branch}`);
+  }
 };
 
 // packages/action/src/idempotency.ts
@@ -126158,13 +126167,19 @@ async function runNightWithGit(deps, inputs, git) {
   };
   const matching = await selectIssues(github, inputs.labels);
   log3.info(`${matching.length} open issue(s) match the label rule`);
-  const { selected: fresh, skipped } = filterAlreadyAttempted(
-    matching,
-    await git.listRemoteIssueBranches()
-  );
+  const withBranch = filterAlreadyAttempted(matching, await git.listRemoteIssueBranches()).skipped;
+  const { attempted: skipped, orphaned } = await resolveAttemptedBranches(github, withBranch);
+  for (const item of orphaned) {
+    log3.info(
+      `issue #${item.issue.number}: branch ${item.branch} exists but has no PR (orphaned interrupted work); resetting the branch and retrying`
+    );
+    await git.deleteRemoteBranch(item.branch);
+  }
   for (const skip of skipped) {
     log3.info(`issue #${skip.issue.number}: skipping, branch ${skip.branch} already exists`);
   }
+  const skippedNumbers = new Set(skipped.map((skip) => skip.issue.number));
+  const fresh = matching.filter((issue3) => !skippedNumbers.has(issue3.number));
   const selected = fresh.slice(0, inputs.maxIssues);
   if (fresh.length > selected.length) {
     log3.info(
@@ -126361,6 +126376,16 @@ async function uploadIssueEvidence(deps, issueNumber, evidenceDir) {
       `issue #${issueNumber}: progressive evidence upload failed (${String(error62)}); the end-of-job artifact is the fallback`
     );
   }
+}
+async function resolveAttemptedBranches(github, withBranch) {
+  const attempted = [];
+  const orphaned = [];
+  for (const item of withBranch) {
+    const pr = await github.getPullRequestForBranch(item.branch);
+    if (pr === void 0) orphaned.push(item);
+    else attempted.push(item);
+  }
+  return { attempted, orphaned };
 }
 async function resolveInFlightPrereqs(github, depsMap, skipped, currentRepo) {
   const branchByNumber = new Map(skipped.map((skip) => [skip.issue.number, skip.branch]));

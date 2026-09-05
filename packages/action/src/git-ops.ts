@@ -172,4 +172,14 @@ export class GitWorkspace {
   async push(branch: string): Promise<void> {
     await this.git("push", "origin", `${branch}:refs/heads/${branch}`);
   }
+
+  /**
+   * Delete a remote issue branch. Used to reset an orphaned branch - one pushed
+   * by a prior night that was interrupted before its PR opened - so the retry
+   * pushes a fresh branch from the base rather than hitting a non-fast-forward
+   * (issue #57). Contents:write only; deleting a ref is never a merge.
+   */
+  async deleteRemoteBranch(branch: string): Promise<void> {
+    await this.git("push", "origin", "--delete", `refs/heads/${branch}`);
+  }
 }

@@ -258,13 +258,26 @@ async function runNightWithGit(
 
   const matching = await selectIssues(github, inputs.labels);
   log.info(`${matching.length} open issue(s) match the label rule`);
-  const { selected: fresh, skipped } = filterAlreadyAttempted(
-    matching,
-    await git.listRemoteIssueBranches(),
-  );
+  // An existing branch only *marks* an issue as touched; a branch with no PR at
+  // all is orphaned interrupted work (pushed, then interrupted before the PR
+  // opened), not a genuine attempt - it must be retried, not stranded (issue
+  // #57). Resolve each branch's PR (bounded to the branch-matching set) to split
+  // genuinely-attempted (skip, as before) from orphaned (reset the stale branch
+  // and re-select the issue).
+  const withBranch = filterAlreadyAttempted(matching, await git.listRemoteIssueBranches()).skipped;
+  const { attempted: skipped, orphaned } = await resolveAttemptedBranches(github, withBranch);
+  for (const item of orphaned) {
+    log.info(
+      `issue #${item.issue.number}: branch ${item.branch} exists but has no PR (orphaned ` +
+        `interrupted work); resetting the branch and retrying`,
+    );
+    await git.deleteRemoteBranch(item.branch);
+  }
   for (const skip of skipped) {
     log.info(`issue #${skip.issue.number}: skipping, branch ${skip.branch} already exists`);
   }
+  const skippedNumbers = new Set(skipped.map((skip) => skip.issue.number));
+  const fresh = matching.filter((issue) => !skippedNumbers.has(issue.number));
   const selected = fresh.slice(0, inputs.maxIssues);
   if (fresh.length > selected.length) {
     log.info(
@@ -530,6 +543,33 @@ async function uploadIssueEvidence(
         `the end-of-job artifact is the fallback`,
     );
   }
+}
+
+/**
+ * Split the idempotency-skipped issues (those with an existing `issue/<n>-*`
+ * branch) by whether that branch has an associated PR (issue #57). A branch with
+ * a PR - open, merged, or closed-unmerged - is genuinely attempted and stays
+ * skipped. A branch with NO PR is orphaned interrupted work: a prior night
+ * pushed the branch, then was interrupted before opening the PR (the host slept,
+ * or PR creation failed after the push), so the issue must be retried, not
+ * stranded forever. Read-only, and only the skipped set is looked up, so the
+ * extra PR calls are bounded to branch-matching issues.
+ */
+async function resolveAttemptedBranches(
+  github: GitHubApi,
+  withBranch: ReadonlyArray<{ issue: IssueLite; branch: string }>,
+): Promise<{
+  attempted: Array<{ issue: IssueLite; branch: string }>;
+  orphaned: Array<{ issue: IssueLite; branch: string }>;
+}> {
+  const attempted: Array<{ issue: IssueLite; branch: string }> = [];
+  const orphaned: Array<{ issue: IssueLite; branch: string }> = [];
+  for (const item of withBranch) {
+    const pr = await github.getPullRequestForBranch(item.branch);
+    if (pr === undefined) orphaned.push(item);
+    else attempted.push(item);
+  }
+  return { attempted, orphaned };
 }
 
 /**
