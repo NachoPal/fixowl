@@ -63,9 +63,9 @@ then runs the rest for you and stops with an explanation if a step fails:
 
 ```sh
 fixowl validate      # tokens, repos, docker engine, agent credentials
-fixowl provision     # labels + sealed secrets + workflow into each repo, and
-                     # registers the runner on this host (also proposes a starter
-                     # .fixowl.yml and issue template via PR)
+fixowl provision     # labels + sealed secrets into each repo, registers the runner
+                     # on this host, and proposes the workflow, a starter .fixowl.yml,
+                     # and an issue template via PR (--no-pr pushes the workflow direct)
 fixowl start         # installs and starts the runner service(s); no admin token needed
 ```
 
