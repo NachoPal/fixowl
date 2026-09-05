@@ -1,10 +1,12 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1260 1088" width="1260" height="1088" role="img" aria-labelledby="t d">
   <title id="t">How fixowl orders the night's issues</title>
-  <desc id="d">A top-to-bottom pipeline showing fixowl's two-layer "double ordering" for one example night. Start: six selected overnight-labeled issues (#12, #15, #18, #21, #23, #40). Layer 1 (prereq-planner.ts) reads native GitHub blocked-by edges, which are authoritative: #18 is blocked-by #15 and both ship tonight, so #15 is ordered first and #18 stacks under it; #21 is blocked-by #7 which is not in tonight's set, so #21 is deferred with no PR and the reason is logged in the night summary; #12, #23 and #40 have no edges and pass straight through. Layer 2 (classify.ts) is a same-file conflict heuristic run over the survivors: it groups #12 and #23 because they touch the same files, and predicts #15, #18 and #40 are independent. Merge (merge-graph.ts) overlays Layer 1 onto Layer 2 under the rule "prerequisites always win": chain 1 is [#12 then #23] from the same-file group, chain 2 is [#15 then #18] because the blocked-by edge forces the stack even though the heuristic had split them, chain 3 is [#40] alone, and #21 stays deferred. Finally the main.ts stacking loop turns each chain into stacked PRs: within a chain each issue is fixed one at a time and each PR targets the previous issue's branch instead of the default branch (PR #23 targets issue/12, PR #18 targets issue/15), while the first PR of every chain targets the default branch main. One PR per issue; fixowl never merges.</desc>
+  <desc id="d">A top-to-bottom pipeline showing fixowl's two-layer "double ordering" for one example night. Start: six selected overnight-labeled issues (#12, #15, #18, #21, #23, #40). Layer 1 (prereq-planner.ts) reads native GitHub blocked-by edges, which are authoritative: #18 is blocked-by #15 and both ship tonight, so #15 is ordered first and #18 stacks under it; #21 is blocked-by #7 which is not in tonight's set, so #21 is deferred with no PR and the reason is logged in the night summary; #12, #23 and #40 have no edges and pass straight through. Layer 2 (classify.ts) is a same-file conflict heuristic that is optional and off by default - it only runs when heuristic_conflict_ordering: true is set; this example shows a night with it enabled. Run over the survivors, it groups #12 and #23 because they touch the same files, and predicts #15, #18 and #40 are independent. With Layer 2 off (the default), every non-deferred survivor branches from the default branch independently and only Layer 1 shapes the night. Merge (merge-graph.ts) overlays Layer 1 onto Layer 2 under the rule "prerequisites always win": chain 1 is [#12 then #23] from the same-file group, chain 2 is [#15 then #18] because the blocked-by edge forces the stack even though the heuristic had split them, chain 3 is [#40] alone, and #21 stays deferred. Finally the main.ts stacking loop turns each chain into stacked PRs: within a chain each issue is fixed one at a time and each PR targets the previous issue's branch instead of the default branch (PR #23 targets issue/12, PR #18 targets issue/15), while the first PR of every chain targets the default branch main. One PR per issue; fixowl never merges.</desc>
 
   <style>
     .bg     { fill: #0a0f1e; }
     .band   { fill: #101a33; }
+    .optband { fill: #0e1830; stroke: #3f6ea5; stroke-width: 1.5; stroke-dasharray: 8 5; }
+    .optbadge{ fill: #0d1730; stroke: #3f6ea5; stroke-width: 1.3; stroke-dasharray: 5 4; }
     .chip   { fill: #16203a; stroke: #2b3a5c; stroke-width: 1.5; }
     .prbox  { fill: #16203a; stroke: #2b3a5c; stroke-width: 1.5; }
     .base   { fill: #0d1730; stroke: #33456e; stroke-width: 1.5; }
@@ -31,6 +33,7 @@
     .amber2 { font: 400 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #e0b070; }
     .purpT  { font: 600 12.5px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #c4b5fd; }
     .blueT  { font: 600 12.5px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #93c5fd; }
+    .optt   { font: 700 11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #93c5fd; letter-spacing: 0.8px; }
 
     .ap { stroke: #a78bfa; stroke-width: 2.5; fill: none; marker-end: url(#ap); }
     .ab { stroke: #60a5fa; stroke-width: 2.5; fill: none; marker-end: url(#ab); stroke-dasharray: 6 4; }
@@ -111,14 +114,17 @@
   <text class="amber"  x="786" y="392">#21 deferred - not shipping tonight</text>
   <text class="amber2" x="786" y="414">no PR attempted; reason logged in the night summary</text>
 
-  <!-- ============ BAND 3: LAYER 2 ============ -->
-  <rect class="band" x="20" y="470" width="1220" height="150" rx="12"/>
+  <!-- ============ BAND 3: LAYER 2 (optional, off by default) ============ -->
+  <rect class="band optband" x="20" y="470" width="1220" height="150" rx="12"/>
   <text class="bandt" x="40" y="508">LAYER 2</text>
-  <text class="rail"  x="40" y="530">same-file conflict</text>
-  <text class="rail"  x="40" y="548">heuristic</text>
-  <text class="mono2" x="40" y="570">classify.ts</text>
+  <rect class="optbadge" x="123" y="495" width="205" height="23" rx="7"/>
+  <text class="optt" x="225" y="511" text-anchor="middle">OPTIONAL · OFF BY DEFAULT</text>
+  <text class="rail"  x="40" y="534">same-file conflict</text>
+  <text class="rail"  x="40" y="552">heuristic</text>
+  <text class="mono2" x="40" y="574">classify.ts</text>
+  <text class="mono2" x="40" y="592">heuristic_conflict_ordering</text>
 
-  <text class="l3" x="395" y="504" text-anchor="middle">runs only over the survivors (#21 is gone)</text>
+  <text class="l3" x="675" y="504" text-anchor="middle">shown enabled here · runs only over the survivors (#21 is gone)</text>
 
   <!-- same-file group -->
   <rect class="hgroup" x="298" y="524" width="196" height="54" rx="12"/>
