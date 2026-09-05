@@ -200,12 +200,15 @@ repos you want it to touch:
            you can REVOKE it (or downgrade it to read-only if you want
            \`fixowl status\` to confirm the runner is online). Routine
            \`fixowl start\` needs no admin token.
-  runtime  Contents RW, Pull requests RW, Issues RW, plus read-only Checks,
-           Commit statuses, Actions, and Administration. Pushed to each repo as
-           an Actions secret; the night run uses it to push, open PRs, and read
-           the base branch's required checks + CI logs for the CI-gated fix
-           loop. The four extra scopes are READ-only: it still never gets any
-           write beyond Contents/Pull requests/Issues.
+  runtime  Contents RW, Pull requests RW, Issues RW, plus read-only Commit
+           statuses, Actions, and Administration. Pushed to each repo as an
+           Actions secret; the night run uses it to push, open PRs, and read the
+           base branch's required checks + CI logs for the CI-gated fix loop.
+           The three extra scopes are READ-only: it still never gets any write
+           beyond Contents/Pull requests/Issues. (GitHub does not expose a
+           grantable "Checks" scope for fine-grained PATs, so check-run status
+           may be unreadable; the CI gate then degrades - it warns and opens the
+           PR after a settle instead of failing.)
 
 Mint them at ${PAT_URL}`);
   await prompter.pause("\nPress Enter once you have both tokens ready ");

@@ -111,7 +111,7 @@ const github: GitHubApi = {
     return { readable: false, contexts: [] };
   },
   async getChecksForRef() {
-    return [];
+    return { readable: true, checks: [] };
   },
   async getFailedCheckLogs() {
     return undefined;

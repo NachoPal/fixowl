@@ -1,5 +1,5 @@
 import { readdirSync } from "node:fs";
-import type { CheckStatusLite, RequiredChecks, WorkflowRunLite } from "@fixowl/core";
+import type { CheckStatusLite, ChecksForRef, RequiredChecks, WorkflowRunLite } from "@fixowl/core";
 import type { Clock } from "./ci-poll.ts";
 import type {
   ArtifactUploader,
@@ -75,6 +75,13 @@ export class FakeGitHub implements GitHubApi {
    * a vacuous green, so a night with no CI opens ready-for-review PRs.
    */
   checksForRef: (sha: string) => CheckStatusLite[] = () => [];
+  /**
+   * Whether the ref's checks can be read at all. Default true; set false to
+   * simulate the real 403 a fine-grained runtime token gets from the check-runs
+   * API, which the read edge (github-api.ts::getChecksForRef) swallows into
+   * `readable: false` so the CI gate degrades gracefully.
+   */
+  checksReadable = true;
   /** Failure detail for a red check; default none. */
   failedLogs: (check: CheckStatusLite) => string | undefined = () => undefined;
   private nextPrNumber = 100;
@@ -137,8 +144,8 @@ export class FakeGitHub implements GitHubApi {
     return this.requiredChecks;
   }
 
-  async getChecksForRef(sha: string): Promise<CheckStatusLite[]> {
-    return this.checksForRef(sha);
+  async getChecksForRef(sha: string): Promise<ChecksForRef> {
+    return { readable: this.checksReadable, checks: this.checksForRef(sha) };
   }
 
   async getFailedCheckLogs(check: CheckStatusLite): Promise<string | undefined> {

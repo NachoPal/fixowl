@@ -124,6 +124,43 @@ describe("waitForRequiredChecks", () => {
     expect(result.failed.map((c) => c.name)).toEqual(["ci"]);
   });
 
+  it("degrades to settle->green with a loud warning when the checks cannot be read (403), never throwing", async () => {
+    // Reproduces the bug: a fine-grained runtime PAT cannot read the check-runs
+    // API, so the read edge returns readable:false. The gate must NOT throw or
+    // fail the issue; it must warn loudly that CI was not verified and flip to
+    // ready after the settle window (as it does when no CI is configured).
+    const github = new FakeGitHub([issue(1, "t")]);
+    github.checksReadable = false;
+    // Even a required set that is itself readable must not keep the gate pending
+    // forever when the checks behind it cannot be read.
+    let calls = 0;
+    github.checksForRef = () => {
+      calls++;
+      return [];
+    };
+    const { log, warnings } = capturingLog();
+    const result = await waitForRequiredChecks(
+      { github, log, clock: fakeClock() },
+      {
+        sha: "sha",
+        base: "main",
+        required: { readable: true, contexts: ["ci"] },
+        timeoutMs: 600_000,
+        pollMs: 15_000,
+      },
+    );
+    expect(result.outcome).toBe("green");
+    expect(result.timedOut).toBe(false);
+    expect(result.usedFallback).toBe(true);
+    // Loud, explicit warning so an operator knows CI gating was skipped.
+    expect(warnings.some((w) => /could not read checks/i.test(w) && /not verified/i.test(w))).toBe(
+      true,
+    );
+    // Warned once, and held for the settle window (polls at t=0, 15000, 30000).
+    expect(warnings.filter((w) => /could not read checks/i.test(w))).toHaveLength(1);
+    expect(calls).toBe(3);
+  });
+
   it("greens only after the settle window when there is no CI at all (unreadable + no checks)", async () => {
     const github = new FakeGitHub([issue(1, "t")]);
     let calls = 0;

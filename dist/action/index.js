@@ -124954,6 +124954,195 @@ var DockerEngine = class {
   }
 };
 
+// packages/action/src/github-api.ts
+var CHECK_LOG_MAX = 6e3;
+function isNotAccessibleError(error62) {
+  const status = error62.status;
+  if (status === 403 || status === 404) return true;
+  const message = error62 instanceof Error ? error62.message : String(error62);
+  return /not accessible/i.test(message);
+}
+function makeGitHubApi(octokit, owner, repo, runsOctokit) {
+  return {
+    async listOpenIssuesWithLabels(labelsQuery) {
+      const issues = await octokit.paginate(octokit.issues.listForRepo, {
+        owner,
+        repo,
+        state: "open",
+        labels: labelsQuery,
+        per_page: 100
+      });
+      return issues.filter((issue3) => issue3.pull_request === void 0).map((issue3) => ({
+        number: issue3.number,
+        title: issue3.title,
+        body: issue3.body ?? "",
+        labels: issue3.labels.map(
+          (label) => typeof label === "string" ? label : label.name ?? ""
+        )
+      }));
+    },
+    async ensurePullRequest(params) {
+      const { data: existing } = await octokit.pulls.list({
+        owner,
+        repo,
+        state: "open",
+        head: `${owner}:${params.head}`
+      });
+      const open3 = existing[0];
+      if (open3 !== void 0) return { number: open3.number, url: open3.html_url };
+      const response = await octokit.pulls.create({
+        owner,
+        repo,
+        head: params.head,
+        base: params.base,
+        title: params.title,
+        body: params.body,
+        draft: params.draft
+      });
+      return { number: response.data.number, url: response.data.html_url };
+    },
+    async markPullRequestReadyForReview(prNumber) {
+      const { data } = await octokit.pulls.get({ owner, repo, pull_number: prNumber });
+      await octokit.graphql(
+        `mutation($id: ID!) { markPullRequestReadyForReview(input: { pullRequestId: $id }) { clientMutationId } }`,
+        { id: data.node_id }
+      );
+    },
+    async updatePullRequestBody(prNumber, body2) {
+      await octokit.pulls.update({ owner, repo, pull_number: prNumber, body: body2 });
+    },
+    async getRequiredChecks(baseBranch) {
+      try {
+        const { data } = await octokit.repos.getBranchRules({ owner, repo, branch: baseBranch });
+        const contexts = /* @__PURE__ */ new Set();
+        for (const rule of data) {
+          if (rule.type !== "required_status_checks") continue;
+          const params = rule.parameters;
+          for (const check2 of params?.required_status_checks ?? []) {
+            if (check2.context !== "") contexts.add(check2.context);
+          }
+        }
+        return { readable: contexts.size > 0, contexts: [...contexts] };
+      } catch {
+        return { readable: false, contexts: [] };
+      }
+    },
+    async getChecksForRef(sha) {
+      const byName = /* @__PURE__ */ new Map();
+      const runs = await octokit.paginate(octokit.checks.listForRef, { owner, repo, ref: sha, per_page: 100 }).catch((error62) => {
+        if (isNotAccessibleError(error62)) return void 0;
+        throw error62;
+      });
+      if (runs === void 0) return { readable: false, checks: [] };
+      for (const checkRun of runs) {
+        byName.set(checkRun.name, {
+          name: checkRun.name,
+          status: checkRun.status === null ? "completed" : checkRun.status,
+          conclusion: checkRun.conclusion,
+          summary: checkRun.output?.summary ?? checkRun.output?.title ?? void 0,
+          detailsUrl: checkRun.details_url ?? void 0
+        });
+      }
+      try {
+        const { data } = await octokit.repos.getCombinedStatusForRef({ owner, repo, ref: sha });
+        for (const status of data.statuses) {
+          if (byName.has(status.context)) continue;
+          byName.set(status.context, {
+            name: status.context,
+            status: status.state === "pending" ? "in_progress" : "completed",
+            conclusion: status.state === "success" ? "success" : status.state === "pending" ? null : "failure",
+            summary: status.description ?? void 0,
+            detailsUrl: status.target_url ?? void 0
+          });
+        }
+      } catch {
+      }
+      return { readable: true, checks: [...byName.values()] };
+    },
+    async getFailedCheckLogs(check2) {
+      const match = /\/actions\/runs\/\d+\/job\/(\d+)/.exec(check2.detailsUrl ?? "");
+      if (match === null) return check2.summary ?? void 0;
+      try {
+        const response = await octokit.actions.downloadJobLogsForWorkflowRun({
+          owner,
+          repo,
+          job_id: Number(match[1])
+        });
+        const text = typeof response.data === "string" ? response.data : String(response.data ?? "");
+        const trimmed = text.trim();
+        if (trimmed === "") return check2.summary ?? void 0;
+        return trimmed.length <= CHECK_LOG_MAX ? trimmed : `...(truncated)...
+${trimmed.slice(-CHECK_LOG_MAX)}`;
+      } catch {
+        return check2.summary ?? void 0;
+      }
+    },
+    async createIssueComment(issueNumber, body2) {
+      await octokit.issues.createComment({ owner, repo, issue_number: issueNumber, body: body2 });
+    },
+    async getPullRequestForBranch(branch) {
+      const prs = await octokit.paginate(octokit.pulls.list, {
+        owner,
+        repo,
+        head: `${owner}:${branch}`,
+        state: "all",
+        per_page: 100
+      });
+      const open3 = prs.find((pr) => pr.state === "open");
+      if (open3 !== void 0) return { number: open3.number, state: "OPEN" };
+      const merged = prs.find((pr) => pr.merged_at !== null && pr.merged_at !== void 0);
+      if (merged !== void 0) return { number: merged.number, state: "MERGED" };
+      const [closed] = prs;
+      return closed === void 0 ? void 0 : { number: closed.number, state: "CLOSED" };
+    },
+    async listRecentWorkflowRuns() {
+      if (runsOctokit === void 0) return [];
+      const { data } = await runsOctokit.actions.listWorkflowRuns({
+        owner,
+        repo,
+        workflow_id: "fixowl.yml",
+        per_page: 50
+      });
+      return data.workflow_runs.map((workflowRun) => ({
+        id: workflowRun.id,
+        event: workflowRun.event,
+        status: workflowRun.status ?? null,
+        createdAt: workflowRun.created_at,
+        displayTitle: workflowRun.display_title ?? workflowRun.name ?? ""
+      }));
+    },
+    async getIssueDependencies(numbers) {
+      const result = /* @__PURE__ */ new Map();
+      if (numbers.length === 0) return result;
+      const aliases = numbers.map(
+        (n) => `i${n}: issue(number: ${n}) { number blockedBy(first: 50) { totalCount nodes { number state repository { nameWithOwner } } } }`
+      ).join("\n");
+      const query = `query($owner: String!, $repo: String!) { repository(owner: $owner, name: $repo) { ${aliases} } }`;
+      const data = await octokit.graphql(
+        query,
+        { owner, repo }
+      );
+      const repository = data.repository ?? {};
+      for (const n of numbers) {
+        const node2 = repository[`i${n}`];
+        const connection = node2?.blockedBy;
+        const nodes = connection?.nodes ?? [];
+        const blockedBy = nodes.filter((edge) => edge !== null).map((edge) => ({
+          number: edge.number,
+          repo: edge.repository.nameWithOwner,
+          state: edge.state
+        }));
+        result.set(n, {
+          number: n,
+          blockedBy,
+          blockedByOverflow: (connection?.totalCount ?? 0) > blockedBy.length
+        });
+      }
+      return result;
+    }
+  };
+}
+
 // packages/action/src/main.ts
 import { existsSync as existsSync5, mkdirSync as mkdirSync3, readFileSync as readFileSync2, writeFileSync as writeFileSync3 } from "node:fs";
 import { join as join7 } from "node:path";
@@ -125541,8 +125730,23 @@ async function waitForRequiredChecks(deps, params) {
   const start = clock.now();
   const settleMs = Math.min(2 * pollMs, params.timeoutMs);
   let warnedFallback = false;
+  let warnedUnreadable = false;
   for (; ; ) {
-    const all = await github.getChecksForRef(params.sha);
+    const checks = await github.getChecksForRef(params.sha);
+    if (!checks.readable) {
+      if (!warnedUnreadable) {
+        warnedUnreadable = true;
+        log3.warn(
+          `could not read checks for ${params.sha} (403 - not accessible to the runtime token); CI NOT verified for ${params.base} - proceeding to ready after settle`
+        );
+      }
+      if (clock.now() - start < settleMs) {
+        await clock.sleep(pollMs);
+        continue;
+      }
+      return { outcome: "green", timedOut: false, gating: [], failed: [], usedFallback: true };
+    }
+    const all = checks.checks;
     const gating = gatingChecks(all, params.required);
     if (gating.usedFallback && !warnedFallback) {
       warnedFallback = true;
@@ -125749,12 +125953,12 @@ console.log("fixowl-verify-web: screenshot captured, no console errors");
 // packages/action/src/verification.ts
 var EVIDENCE_MOUNT_PATH = "/fixowl/evidence";
 var CHECK_TIMEOUT_MS = 15 * 60 * 1e3;
-var CHECK_LOG_MAX = 8e3;
+var CHECK_LOG_MAX2 = 8e3;
 function tailLog(stdout, stderr) {
   const combined = `${stdout}
 ${stderr}`.trim();
-  return combined.length <= CHECK_LOG_MAX ? combined : `...(truncated)...
-${combined.slice(-CHECK_LOG_MAX)}`;
+  return combined.length <= CHECK_LOG_MAX2 ? combined : `...(truncated)...
+${combined.slice(-CHECK_LOG_MAX2)}`;
 }
 function shellQuote(value) {
   return `'${value.replaceAll("'", `'\\''`)}'`;
@@ -126597,193 +126801,11 @@ var realExec = {
 };
 
 // packages/action/src/entry.ts
-var CHECK_LOG_MAX2 = 6e3;
 var log2 = {
   info: (message) => info(message),
   warn: (message) => warning(message),
   error: (message) => error(message)
 };
-function makeGitHubApi(octokit, owner, repo, runsOctokit) {
-  return {
-    async listOpenIssuesWithLabels(labelsQuery) {
-      const issues = await octokit.paginate(octokit.issues.listForRepo, {
-        owner,
-        repo,
-        state: "open",
-        labels: labelsQuery,
-        per_page: 100
-      });
-      return issues.filter((issue3) => issue3.pull_request === void 0).map((issue3) => ({
-        number: issue3.number,
-        title: issue3.title,
-        body: issue3.body ?? "",
-        labels: issue3.labels.map(
-          (label) => typeof label === "string" ? label : label.name ?? ""
-        )
-      }));
-    },
-    async ensurePullRequest(params) {
-      const { data: existing } = await octokit.pulls.list({
-        owner,
-        repo,
-        state: "open",
-        head: `${owner}:${params.head}`
-      });
-      const open3 = existing[0];
-      if (open3 !== void 0) return { number: open3.number, url: open3.html_url };
-      const response = await octokit.pulls.create({
-        owner,
-        repo,
-        head: params.head,
-        base: params.base,
-        title: params.title,
-        body: params.body,
-        draft: params.draft
-      });
-      return { number: response.data.number, url: response.data.html_url };
-    },
-    async markPullRequestReadyForReview(prNumber) {
-      const { data } = await octokit.pulls.get({ owner, repo, pull_number: prNumber });
-      await octokit.graphql(
-        `mutation($id: ID!) { markPullRequestReadyForReview(input: { pullRequestId: $id }) { clientMutationId } }`,
-        { id: data.node_id }
-      );
-    },
-    async updatePullRequestBody(prNumber, body2) {
-      await octokit.pulls.update({ owner, repo, pull_number: prNumber, body: body2 });
-    },
-    async getRequiredChecks(baseBranch) {
-      try {
-        const { data } = await octokit.repos.getBranchRules({ owner, repo, branch: baseBranch });
-        const contexts = /* @__PURE__ */ new Set();
-        for (const rule of data) {
-          if (rule.type !== "required_status_checks") continue;
-          const params = rule.parameters;
-          for (const check2 of params?.required_status_checks ?? []) {
-            if (check2.context !== "") contexts.add(check2.context);
-          }
-        }
-        return { readable: contexts.size > 0, contexts: [...contexts] };
-      } catch {
-        return { readable: false, contexts: [] };
-      }
-    },
-    async getChecksForRef(sha) {
-      const byName = /* @__PURE__ */ new Map();
-      const runs = await octokit.paginate(octokit.checks.listForRef, {
-        owner,
-        repo,
-        ref: sha,
-        per_page: 100
-      });
-      for (const checkRun of runs) {
-        byName.set(checkRun.name, {
-          name: checkRun.name,
-          status: checkRun.status === null ? "completed" : checkRun.status,
-          conclusion: checkRun.conclusion,
-          summary: checkRun.output?.summary ?? checkRun.output?.title ?? void 0,
-          detailsUrl: checkRun.details_url ?? void 0
-        });
-      }
-      try {
-        const { data } = await octokit.repos.getCombinedStatusForRef({ owner, repo, ref: sha });
-        for (const status of data.statuses) {
-          if (byName.has(status.context)) continue;
-          byName.set(status.context, {
-            name: status.context,
-            status: status.state === "pending" ? "in_progress" : "completed",
-            conclusion: status.state === "success" ? "success" : status.state === "pending" ? null : "failure",
-            summary: status.description ?? void 0,
-            detailsUrl: status.target_url ?? void 0
-          });
-        }
-      } catch {
-      }
-      return [...byName.values()];
-    },
-    async getFailedCheckLogs(check2) {
-      const match = /\/actions\/runs\/\d+\/job\/(\d+)/.exec(check2.detailsUrl ?? "");
-      if (match === null) return check2.summary ?? void 0;
-      try {
-        const response = await octokit.actions.downloadJobLogsForWorkflowRun({
-          owner,
-          repo,
-          job_id: Number(match[1])
-        });
-        const text = typeof response.data === "string" ? response.data : String(response.data ?? "");
-        const trimmed = text.trim();
-        if (trimmed === "") return check2.summary ?? void 0;
-        return trimmed.length <= CHECK_LOG_MAX2 ? trimmed : `...(truncated)...
-${trimmed.slice(-CHECK_LOG_MAX2)}`;
-      } catch {
-        return check2.summary ?? void 0;
-      }
-    },
-    async createIssueComment(issueNumber, body2) {
-      await octokit.issues.createComment({ owner, repo, issue_number: issueNumber, body: body2 });
-    },
-    async getPullRequestForBranch(branch) {
-      const prs = await octokit.paginate(octokit.pulls.list, {
-        owner,
-        repo,
-        head: `${owner}:${branch}`,
-        state: "all",
-        per_page: 100
-      });
-      const open3 = prs.find((pr) => pr.state === "open");
-      if (open3 !== void 0) return { number: open3.number, state: "OPEN" };
-      const merged = prs.find((pr) => pr.merged_at !== null && pr.merged_at !== void 0);
-      if (merged !== void 0) return { number: merged.number, state: "MERGED" };
-      const [closed] = prs;
-      return closed === void 0 ? void 0 : { number: closed.number, state: "CLOSED" };
-    },
-    async listRecentWorkflowRuns() {
-      if (runsOctokit === void 0) return [];
-      const { data } = await runsOctokit.actions.listWorkflowRuns({
-        owner,
-        repo,
-        workflow_id: "fixowl.yml",
-        per_page: 50
-      });
-      return data.workflow_runs.map((workflowRun) => ({
-        id: workflowRun.id,
-        event: workflowRun.event,
-        status: workflowRun.status ?? null,
-        createdAt: workflowRun.created_at,
-        displayTitle: workflowRun.display_title ?? workflowRun.name ?? ""
-      }));
-    },
-    async getIssueDependencies(numbers) {
-      const result = /* @__PURE__ */ new Map();
-      if (numbers.length === 0) return result;
-      const aliases = numbers.map(
-        (n) => `i${n}: issue(number: ${n}) { number blockedBy(first: 50) { totalCount nodes { number state repository { nameWithOwner } } } }`
-      ).join("\n");
-      const query = `query($owner: String!, $repo: String!) { repository(owner: $owner, name: $repo) { ${aliases} } }`;
-      const data = await octokit.graphql(
-        query,
-        { owner, repo }
-      );
-      const repository = data.repository ?? {};
-      for (const n of numbers) {
-        const node2 = repository[`i${n}`];
-        const connection = node2?.blockedBy;
-        const nodes = connection?.nodes ?? [];
-        const blockedBy = nodes.filter((edge) => edge !== null).map((edge) => ({
-          number: edge.number,
-          repo: edge.repository.nameWithOwner,
-          state: edge.state
-        }));
-        result.set(n, {
-          number: n,
-          blockedBy,
-          blockedByOverflow: (connection?.totalCount ?? 0) > blockedBy.length
-        });
-      }
-      return result;
-    }
-  };
-}
 function parseLabelInput(value) {
   return value.split(",").map((label) => label.trim()).filter((label) => label !== "");
 }

@@ -66,9 +66,29 @@ export async function waitForRequiredChecks(
   const start = clock.now();
   const settleMs = Math.min(2 * pollMs, params.timeoutMs);
   let warnedFallback = false;
+  let warnedUnreadable = false;
 
   for (;;) {
-    const all = await github.getChecksForRef(params.sha);
+    const checks = await github.getChecksForRef(params.sha);
+    // The runtime token could not read the ref's checks at all (a fine-grained
+    // PAT cannot access the check-runs API; GitHub 403s). CI cannot be verified,
+    // so degrade to the same settle-then-ready fallback used when no CI exists,
+    // but warn loudly - the operator must know gating was skipped for this issue.
+    if (!checks.readable) {
+      if (!warnedUnreadable) {
+        warnedUnreadable = true;
+        log.warn(
+          `could not read checks for ${params.sha} (403 - not accessible to the runtime ` +
+            `token); CI NOT verified for ${params.base} - proceeding to ready after settle`,
+        );
+      }
+      if (clock.now() - start < settleMs) {
+        await clock.sleep(pollMs);
+        continue;
+      }
+      return { outcome: "green", timedOut: false, gating: [], failed: [], usedFallback: true };
+    }
+    const all = checks.checks;
     const gating = gatingChecks(all, params.required);
     if (gating.usedFallback && !warnedFallback) {
       warnedFallback = true;

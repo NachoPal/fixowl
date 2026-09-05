@@ -4,7 +4,7 @@
  * real thing with the `script` adapter and zero LLM spend).
  */
 
-import type { CheckStatusLite, RequiredChecks, WorkflowRunLite } from "@fixowl/core";
+import type { CheckStatusLite, ChecksForRef, RequiredChecks, WorkflowRunLite } from "@fixowl/core";
 
 export interface IssueLite {
   number: number;
@@ -93,9 +93,13 @@ export interface GitHubApi {
   getRequiredChecks(baseBranch: string): Promise<RequiredChecks>;
   /**
    * All checks on a commit: GitHub Actions check runs plus legacy commit
-   * statuses, normalized to `CheckStatusLite` and de-duplicated by name.
+   * statuses, normalized to `CheckStatusLite` and de-duplicated by name. Returns
+   * `readable: false` (never throws) when the runtime token cannot read the
+   * check-runs API - a fine-grained PAT cannot be granted that scope, so the read
+   * 403s; the CI gate then degrades to the settle-then-ready fallback instead of
+   * failing the issue (captain 7.2).
    */
-  getChecksForRef(sha: string): Promise<CheckStatusLite[]>;
+  getChecksForRef(sha: string): Promise<ChecksForRef>;
   /**
    * Best-effort failure detail for a red check - the failing job's log tail
    * (bounded) or the check's own summary - to feed back to the agent. CI logs
