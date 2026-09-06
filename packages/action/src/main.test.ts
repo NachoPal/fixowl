@@ -145,11 +145,17 @@ async function remoteBranches(originDir: string): Promise<string[]> {
   return out.split("\n").filter((line) => line !== "");
 }
 
-/** Pushes an in-flight issue branch (main + one marker file) to origin, as a prior night would. */
+/**
+ * Pushes an in-flight issue branch (main + one marker file) to origin, as a
+ * prior night would. `opts.authorEmail`/`opts.message` control the tip commit's
+ * author identity and subject, which the orphan-branch ownership gate (issue
+ * #69) reads; defaults model a foreign (non-fixowl) branch.
+ */
 async function pushInFlightBranch(
   originDir: string,
   branch: string,
   marker: string,
+  opts?: { authorEmail?: string; message?: string },
 ): Promise<void> {
   const parent = mkdtempSync(join(tmpdir(), "fixowl-inflight-"));
   const dir = join(parent, "clone");
@@ -157,7 +163,9 @@ async function pushInFlightBranch(
   await git(dir, "checkout", "-b", branch);
   writeFileSync(join(dir, marker), "prereq work\n");
   await git(dir, "add", "-A");
-  await git(dir, "commit", "-m", `work for ${branch}`);
+  const message = opts?.message ?? `work for ${branch}`;
+  const authorArgs = opts?.authorEmail ? ["--author", `fixowl <${opts.authorEmail}>`] : [];
+  await git(dir, "commit", "-m", message, ...authorArgs);
   await git(dir, "push", "origin", branch);
 }
 
@@ -1053,8 +1061,13 @@ describe("runNight", () => {
     it("re-selects an issue whose branch exists but has no PR, resetting the stale branch", async () => {
       const { originDir, workspaceDir, inputs } = await setup();
       // A prior night pushed #1's branch, then was interrupted before opening a
-      // PR: the branch exists remotely but no PR points at it.
-      await pushInFlightBranch(originDir, "issue/1-fix-header", "orphan.txt");
+      // PR: the branch exists remotely but no PR points at it. Its tip is
+      // fixowl's own work (bot author + `fix #1:` trailer), so the reset fires
+      // (the ownership gate, issue #69, only permits deleting fixowl's branches).
+      await pushInFlightBranch(originDir, "issue/1-fix-header", "orphan.txt", {
+        authorEmail: "fixowl-bot@users.noreply.github.com",
+        message: "fix #1: prior work",
+      });
       const github = new FakeGitHub([issue(1, "Fix header", "x")]);
       // Deliberately no pullsByBranch entry: getPullRequestForBranch returns undefined.
       const engine = makeEngine({ workspaceDir });
@@ -1075,6 +1088,38 @@ describe("runNight", () => {
       const files = await git(workspaceDir, "ls-tree", "-r", "--name-only", "issue/1-fix-header");
       expect(files).toContain("fix-1.txt");
       expect(files).not.toContain("orphan.txt");
+    });
+
+    it("preserves and skips a PR-less branch that is not fixowl's work (issue #69)", async () => {
+      const { originDir, workspaceDir, inputs } = await setup();
+      // A human pushed `issue/1-*` without opening a PR (a very natural branch
+      // name). Its tip is authored by a person, not fixowl - the night must NOT
+      // force-delete it. Instead the issue is skipped with a loud warning.
+      await pushInFlightBranch(originDir, "issue/1-fix-header", "human.txt");
+      const github = new FakeGitHub([issue(1, "Fix header", "x")]);
+      // No pullsByBranch entry: getPullRequestForBranch returns undefined.
+      const engine = makeEngine({ workspaceDir });
+
+      const summary = await runNight(
+        { github, engine, exec: realExec, log: silentLog, clock: instantClock() },
+        inputs,
+      );
+
+      // The branch survives, the issue is skipped, and nothing ran.
+      expect(await remoteBranches(originDir)).toContain("issue/1-fix-header");
+      expect(summary.skipped.map((s) => s.issue.number)).toEqual([1]);
+      expect(summary.results).toEqual([]);
+      expect(engine.runs.some((spec) => spec.name.endsWith("-1-agent"))).toBe(false);
+      expect(github.pulls).toEqual([]);
+      // The human's commit is intact on the remote tip (not overwritten).
+      const files = await git(originDir, "ls-tree", "-r", "--name-only", "issue/1-fix-header");
+      expect(files).toContain("human.txt");
+      // A loud warning explains why the issue was skipped.
+      expect(
+        summary.warnings.some(
+          (w) => w.includes("is not fixowl's") && w.includes("issue/1-fix-header"),
+        ),
+      ).toBe(true);
     });
 
     it.each([

@@ -66458,6 +66458,16 @@ function issueBranchPrefix(issueNumber) {
   return `issue/${issueNumber}-`;
 }
 
+// packages/core/src/branch-ownership.ts
+var FIXOWL_BOT_EMAIL = "fixowl-bot@users.noreply.github.com";
+function fixowlCommitTrailer(issueNumber) {
+  return `fix #${issueNumber}:`;
+}
+function isFixowlBranchTip(tip, issueNumber) {
+  if (tip.authorEmail.trim().toLowerCase() === FIXOWL_BOT_EMAIL) return true;
+  return tip.subject.trimStart().startsWith(fixowlCommitTrailer(issueNumber));
+}
+
 // node_modules/.pnpm/zod@4.5.4/node_modules/zod/v4/classic/external.js
 var external_exports = {};
 __export(external_exports, {
@@ -125617,7 +125627,7 @@ var GitWorkspace = class {
   }
   async configureIdentity() {
     await this.git("config", "user.name", "fixowl");
-    await this.git("config", "user.email", "fixowl-bot@users.noreply.github.com");
+    await this.git("config", "user.email", FIXOWL_BOT_EMAIL);
     await this.git("config", "commit.gpgsign", "false");
     await this.git("config", "tag.gpgsign", "false");
   }
@@ -125638,6 +125648,20 @@ var GitWorkspace = class {
    */
   async fetchRemoteBranch(branch) {
     await this.git("fetch", "origin", `${branch}:refs/remotes/origin/${branch}`);
+  }
+  /**
+   * Read the tip commit of a remote branch (author email + subject) so the
+   * orphan-branch reset can confirm the branch is fixowl's own work before
+   * deleting it (issue #69). The branch is fetched first, so it resolves even
+   * when it was pushed after the night's checkout.
+   */
+  async remoteBranchTip(branch) {
+    await this.fetchRemoteBranch(branch);
+    const out = (await this.git("log", "-1", "--format=%ae%n%s", `refs/remotes/origin/${branch}`)).stdout;
+    const newline = out.indexOf("\n");
+    const authorEmail = newline === -1 ? out : out.slice(0, newline);
+    const subject = newline === -1 ? "" : out.slice(newline + 1);
+    return { authorEmail: authorEmail.trim(), subject: subject.trim() };
   }
   async checkout(ref) {
     await this.git("checkout", ref);
@@ -125677,7 +125701,10 @@ var GitWorkspace = class {
    * Delete a remote issue branch. Used to reset an orphaned branch - one pushed
    * by a prior night that was interrupted before its PR opened - so the retry
    * pushes a fresh branch from the base rather than hitting a non-fast-forward
-   * (issue #57). Contents:write only; deleting a ref is never a merge.
+   * (issue #57). The caller must first confirm the branch is fixowl's own work
+   * (`remoteBranchTip` + `isFixowlBranchTip`, issue #69) so a human's hand-pushed
+   * `issue/<n>-*` branch is never deleted. Contents:write only; deleting a ref
+   * is never a merge.
    */
   async deleteRemoteBranch(branch) {
     await this.git("push", "origin", "--delete", `refs/heads/${branch}`);
@@ -126372,6 +126399,14 @@ async function runNightWithGit(deps, inputs, git) {
   const withBranch = filterAlreadyAttempted(matching, await git.listRemoteIssueBranches()).skipped;
   const { attempted: skipped, orphaned } = await resolveAttemptedBranches(github, withBranch);
   for (const item of orphaned) {
+    const tip = await git.remoteBranchTip(item.branch);
+    if (!isFixowlBranchTip(tip, item.issue.number)) {
+      const warning2 = `issue #${item.issue.number}: branch ${item.branch} exists and is not fixowl's (tip commit by ${tip.authorEmail || "unknown"}); delete it or open a PR to proceed. Skipping - fixowl will not reset a branch it did not create.`;
+      warnings.push(warning2);
+      log3.warn(warning2);
+      skipped.push(item);
+      continue;
+    }
     log3.info(
       `issue #${item.issue.number}: branch ${item.branch} exists but has no PR (orphaned interrupted work); resetting the branch and retrying`
     );

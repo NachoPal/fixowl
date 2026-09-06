@@ -101,8 +101,23 @@ remote branch `issue/<n>-*` only marks an issue as touched:
 - branch exists + open PR: in review, fixowl skips the issue
 - branch merged: done (`fix #<n>:` in the commit closes the issue)
 - branch exists + PR closed unmerged: deliberately abandoned, never retried
-- branch exists + **no PR at all**: orphaned interrupted work - a prior night
-  pushed the branch but was interrupted before opening the PR (the host slept, or
-  PR creation failed after the push). fixowl re-selects the issue, resets the
-  stale branch (delete-and-recreate), and retries it (issue #57)
+- branch exists + **no PR at all**, tip is fixowl's own work: orphaned
+  interrupted work - a prior night pushed the branch but was interrupted before
+  opening the PR (the host slept, or PR creation failed after the push). fixowl
+  re-selects the issue, resets the stale branch (delete-and-recreate), and
+  retries it (issue #57)
+- branch exists + **no PR at all**, tip is **not** fixowl's work: a human or a
+  third party pushed an `issue/<n>-*` branch (a natural name to pick) without
+  opening a PR. fixowl **never** deletes it - the issue is skipped and a loud
+  warning is logged (`branch ... is not fixowl's; delete it or open a PR to
+  proceed`). Resetting a branch fixowl did not create would destroy someone
+  else's commits, so the reset is gated on ownership (issue #69)
 - to retry an issue manually: delete its branch; next run picks it up again
+
+**Ownership rule.** A PR-less `issue/<n>-*` branch is treated as fixowl's own -
+and so eligible for the reset above - only when its **tip commit** proves it:
+the author email is fixowl's bot identity (`fixowl-bot@users.noreply.github.com`,
+set by `configureIdentity`) **or** the subject starts with fixowl's commit
+trailer `fix #<n>:`. Either signal is sufficient; a branch matching neither is
+preserved. The check is pure logic in `packages/core/src/branch-ownership.ts`
+(`isFixowlBranchTip`); the tip is read by `GitWorkspace.remoteBranchTip`.
