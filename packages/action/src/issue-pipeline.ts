@@ -195,9 +195,16 @@ export async function processIssue(
     );
     lastCi = ci;
 
-    if (ci.outcome === "green") {
+    // Green and unverified both flip the PR to ready (settle-then-ready, captain
+    // 7.2), but they must NEVER read the same to a human: unverified means zero
+    // checks were consulted, so its wording says CI could not be verified, never
+    // "green". Red/timeout falls through to the retry / exhaustion path below.
+    if (ci.outcome === "green" || ci.outcome === "unverified") {
       await github.markPullRequestReadyForReview(pr.number);
-      const summary: CiGateSummary = { state: "green", usedFallback: ci.usedFallback };
+      const summary: CiGateSummary =
+        ci.outcome === "unverified"
+          ? { state: "unverified" }
+          : { state: "green", usedFallback: ci.usedFallback };
       await github.updatePullRequestBody(
         pr.number,
         buildPrBody({
@@ -208,11 +215,18 @@ export async function processIssue(
           ci: summary,
         }),
       );
-      log.info(`issue #${issue.number}: required checks green; PR #${pr.number} ready for review`);
-      await github.createIssueComment(
-        issue.number,
-        `🦉 fixowl opened ${pr.url} for this issue; its required checks are green and it is ready for review.`,
+      const comment =
+        ci.outcome === "unverified"
+          ? `🦉 fixowl opened ${pr.url} for this issue and flipped it to ready, but CI could ` +
+            `not be verified: the runtime token cannot read this branch's check runs, so no ` +
+            `checks were consulted. Review CI on the PR before merging.`
+          : `🦉 fixowl opened ${pr.url} for this issue; its required checks are green and it is ready for review.`;
+      log.info(
+        ci.outcome === "unverified"
+          ? `issue #${issue.number}: CI unverified (checks unreadable); PR #${pr.number} flipped to ready`
+          : `issue #${issue.number}: required checks green; PR #${pr.number} ready for review`,
       );
+      await github.createIssueComment(issue.number, comment);
       return {
         ...base,
         status: "pr-opened",

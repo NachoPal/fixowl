@@ -59,6 +59,16 @@ describe("buildPrBody", () => {
     expect(body).toContain("gated on all completed checks");
   });
 
+  it("renders an honest unverified CI section when the check runs could not be read", () => {
+    const body = buildPrBody({ issueNumber: 7, verification: [], ci: { state: "unverified" } });
+    expect(body).toContain("## CI");
+    expect(body).toContain("CI could not be verified");
+    expect(body).toContain("Review CI on this PR before merging");
+    // Must never claim green on the unreadable path.
+    expect(body).not.toContain("required checks are green");
+    expect(body).not.toContain("All completed checks passed");
+  });
+
   it("lists the failing required checks when the budget was exhausted red", () => {
     const body = buildPrBody({
       issueNumber: 7,

@@ -125742,7 +125742,13 @@ async function waitForRequiredChecks(deps, params) {
         await clock.sleep(pollMs);
         continue;
       }
-      return { outcome: "green", timedOut: false, gating: [], failed: [], usedFallback: true };
+      return {
+        outcome: "unverified",
+        timedOut: false,
+        gating: [],
+        failed: [],
+        usedFallback: false
+      };
     }
     const all = checks.checks;
     const gating = gatingChecks(all, params.required);
@@ -125798,6 +125804,13 @@ function renderCiSection(ci) {
   if (ci.state === "green") {
     lines.push(
       ci.usedFallback === true ? `\u2705 All completed checks passed. (No required checks were readable for the base branch, so fixowl gated on all completed checks.)` : `\u2705 The base branch's required checks are green.`
+    );
+    lines.push(``);
+    return lines;
+  }
+  if (ci.state === "unverified") {
+    lines.push(
+      `\u26A0\uFE0F CI could not be verified: the runtime token cannot read this branch's check runs, so fixowl consulted **no** checks. Review CI on this PR before merging.`
     );
     lines.push(``);
     return lines;
@@ -126128,9 +126141,9 @@ ${agentResult.stderr}`.trim();
       { sha: headSha, base: ctx.prBase, required: required2, timeoutMs: ctx.ciTimeoutMs }
     );
     lastCi = ci;
-    if (ci.outcome === "green") {
+    if (ci.outcome === "green" || ci.outcome === "unverified") {
       await github.markPullRequestReadyForReview(pr.number);
-      const summary2 = { state: "green", usedFallback: ci.usedFallback };
+      const summary2 = ci.outcome === "unverified" ? { state: "unverified" } : { state: "green", usedFallback: ci.usedFallback };
       await github.updatePullRequestBody(
         pr.number,
         buildPrBody({
@@ -126141,11 +126154,11 @@ ${agentResult.stderr}`.trim();
           ci: summary2
         })
       );
-      log3.info(`issue #${issue3.number}: required checks green; PR #${pr.number} ready for review`);
-      await github.createIssueComment(
-        issue3.number,
-        `\u{1F989} fixowl opened ${pr.url} for this issue; its required checks are green and it is ready for review.`
+      const comment = ci.outcome === "unverified" ? `\u{1F989} fixowl opened ${pr.url} for this issue and flipped it to ready, but CI could not be verified: the runtime token cannot read this branch's check runs, so no checks were consulted. Review CI on the PR before merging.` : `\u{1F989} fixowl opened ${pr.url} for this issue; its required checks are green and it is ready for review.`;
+      log3.info(
+        ci.outcome === "unverified" ? `issue #${issue3.number}: CI unverified (checks unreadable); PR #${pr.number} flipped to ready` : `issue #${issue3.number}: required checks green; PR #${pr.number} ready for review`
       );
+      await github.createIssueComment(issue3.number, comment);
       return {
         ...base,
         status: "pr-opened",
