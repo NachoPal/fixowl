@@ -799,7 +799,7 @@ describe("runNight", () => {
 
     const summary = await runNight(
       { github, engine, exec: spyExec, log: silentLog, clock: instantClock() },
-      { ...inputs, pushToken: token },
+      { ...inputs, pushTokenProvider: async () => token },
     );
     expect(summary.results[0]?.status).toBe("pr-opened");
 

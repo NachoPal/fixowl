@@ -39,14 +39,28 @@ See [docs/releasing.md](docs/releasing.md).
   (`packages/cli/src/runner/register.ts`). Routine `fixowl start` uses no admin
   token; its online check (and `fixowl status`) soft-fails when the token is
   revoked/downgraded. Never move a write-scoped GitHub call into the routine
-  `start` path, and never grant the runtime token any Administration **write**
-  (or other write beyond Contents/Pull requests/Issues). The CI-gated fix loop
-  adds read-only Commit statuses/Actions/Administration to the runtime token so
-  it can read required checks and CI logs (GitHub does not expose a grantable
-  "Checks" scope for fine-grained PATs, so the gate degrades - settle then ready,
-  with a loud warning - when check-run status cannot be read); that read-only
-  Administration is the only Administration the runtime token ever holds. See
-  [docs/security.md](docs/security.md) and [docs/ci-fix-loop.md](docs/ci-fix-loop.md).
+  `start` path, and never grant the runtime credential any Administration
+  **write** (or other write beyond Contents/Pull requests/Issues). The CI-gated
+  fix loop adds read-only Commit statuses/Actions/Administration to the runtime
+  credential so it can read required checks and CI logs (GitHub does not expose a
+  grantable "Checks" scope for fine-grained PATs, so the gate degrades - settle
+  then ready, with a loud warning - when check-run status cannot be read); that
+  read-only Administration is the only Administration the runtime credential ever
+  holds. The runtime credential is **either a fine-grained PAT (Tier 1) or a
+  GitHub App installation token (Tier 2)** - selected purely by which secrets the
+  workflow injects (`resolveRuntimeCredentialFromEnv`, config enforces
+  `runtime_token` XOR `app`). The App path constructs its Octokit with
+  `@octokit/auth-app` (`packages/core/src/runtime-credential.ts`,
+  `packages/action/src/runtime-octokit.ts`) so the ~1h installation token
+  **auto-refreshes** across the multi-hour night; only the App reads Checks, so
+  only the App makes the gate truly verify CI. The git edge takes a token
+  **provider callback** (`GitWorkspace`, `git-ops.ts`), called before each
+  fetch/push, so an App token refreshed mid-night is always current on the wire.
+  The App private key is sealed as **PKCS#8** (`toPkcs8Pem`,
+  `packages/cli/src/github/app-key.ts`); WebCrypto rejects GitHub's PKCS#1. The
+  PAT path is byte-for-byte unchanged and stays the quick-start tier. See
+  [docs/security.md](docs/security.md), [docs/ci-fix-loop.md](docs/ci-fix-loop.md),
+  and [docs/app-auth.md](docs/app-auth.md).
 
 - **Never merge.** No code path may call a GitHub merge API. `no-merge.test.ts` greps for
   it; do not weaken that test.

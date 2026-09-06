@@ -141,7 +141,7 @@ const summary = await runNight(
     issueTimeoutMinutes: 3,
     workspaceDir,
     tempDir,
-    pushToken: FAKE_PUSH_TOKEN,
+    pushTokenProvider: async () => FAKE_PUSH_TOKEN,
     env: {},
   },
 );

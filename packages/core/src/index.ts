@@ -79,6 +79,7 @@ export {
   resolvedModelSelectionErrors,
   resolveRepoSettings,
   runnerBaseDir,
+  type GithubAppConfig,
   type GlobalConfig,
   type RepoEntry,
   type RepoFileConfig,
@@ -99,10 +100,16 @@ export {
 } from "./ci-gate.ts";
 export {
   renderFixowlWorkflow,
-  RUNTIME_TOKEN_SECRET,
   WORKFLOW_PATH,
   type WorkflowTemplateOptions,
 } from "./workflow-template.ts";
+export {
+  APP_ID_SECRET,
+  APP_INSTALLATION_ID_SECRET,
+  APP_PRIVATE_KEY_SECRET,
+  RUNTIME_TOKEN_SECRET,
+} from "./secret-names.ts";
+export { resolveRuntimeCredentialFromEnv, type RuntimeCredential } from "./runtime-credential.ts";
 export {
   anchorOccurrence,
   decideFallbackDispatch,

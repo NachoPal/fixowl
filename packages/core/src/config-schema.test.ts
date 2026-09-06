@@ -37,6 +37,61 @@ describe("globalConfigSchema", () => {
   });
 });
 
+describe("runtime credential XOR (github.runtime_token vs github.app)", () => {
+  const app = {
+    app_id: 123456,
+    installation_id: 7890123,
+    private_key: "${FIXOWL_APP_PRIVATE_KEY}",
+  };
+
+  it("accepts a PAT-only github block (backward compatible)", () => {
+    expect(() => globalConfigSchema.parse(minimalConfig)).not.toThrow();
+  });
+
+  it("accepts an App-only github block", () => {
+    const config = globalConfigSchema.parse({
+      ...minimalConfig,
+      github: { admin_token: "ghp_admin", app },
+    });
+    expect(config.github.app?.app_id).toBe(123456);
+  });
+
+  it("rejects a github block with BOTH a runtime_token and an app", () => {
+    expect(() =>
+      globalConfigSchema.parse({
+        ...minimalConfig,
+        github: { admin_token: "ghp_admin", runtime_token: "ghp_runtime", app },
+      }),
+    ).toThrow(/exactly one of github.runtime_token or github.app/);
+  });
+
+  it("rejects a github block with NEITHER a runtime_token nor an app", () => {
+    expect(() =>
+      globalConfigSchema.parse({ ...minimalConfig, github: { admin_token: "ghp_admin" } }),
+    ).toThrow(/exactly one of github.runtime_token or github.app/);
+  });
+
+  it("accepts a numeric-string app_id / installation_id", () => {
+    const config = globalConfigSchema.parse({
+      ...minimalConfig,
+      github: {
+        admin_token: "ghp_admin",
+        app: { app_id: "123456", installation_id: "7890123", private_key: "pem" },
+      },
+    });
+    expect(config.github.app?.app_id).toBe("123456");
+  });
+
+  it("still lets the App tier through the agent-aware checked schema", () => {
+    expect(() =>
+      globalConfigSchemaChecked.parse({
+        ...minimalConfig,
+        github: { admin_token: "ghp_admin", app },
+      }),
+    ).not.toThrow();
+  });
+});
+
 describe("resolveRepoSettings", () => {
   it("falls back to built-in defaults", () => {
     const config = globalConfigSchema.parse(minimalConfig);

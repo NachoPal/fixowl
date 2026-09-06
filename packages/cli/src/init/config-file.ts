@@ -27,10 +27,22 @@ export interface RepoAnswers {
   labelModels?: Record<string, { model: string; effort: string }>;
 }
 
+/**
+ * The runtime credential the config declares: a fine-grained PAT (Tier 1,
+ * default) or a GitHub App (Tier 2). The App carries its non-secret ids inline;
+ * its private key is referenced as ${FIXOWL_APP_PRIVATE_KEY} (stored base64 in
+ * secrets.env).
+ */
+export type RuntimeCredentialAnswer =
+  | { kind: "pat" }
+  | { kind: "app"; appId: string; installationId: string };
+
 export interface ConfigAnswers {
   agent: string;
   agentEnv: readonly string[];
   repos: RepoAnswers[];
+  /** Runtime credential tier; defaults to the PAT (Tier 1) when omitted. */
+  runtimeCredential?: RuntimeCredentialAnswer;
   /** When true, wire the opt-in local fallback trigger's token into the config. */
   fallback?: boolean;
 }
@@ -187,13 +199,27 @@ export function renderConfigYaml(answers: ConfigAnswers): string {
     ? `\n  fallback_token: \${FIXOWL_FALLBACK_TOKEN} # fine-grained PAT, Actions: write only; the local fallback trigger dispatches with it`
     : "";
 
+  // Runtime credential: Tier 1 (a single runtime PAT) or Tier 2 (the GitHub App
+  // block, whose private key stays base64 in secrets.env). PAT is the default so
+  // the rendered config is byte-for-byte as before when no App is chosen.
+  const cred = answers.runtimeCredential ?? { kind: "pat" };
+  const runtimeCredentialLine =
+    cred.kind === "app"
+      ? [
+          "  app:                                    # GitHub App (Tier 2, real CI-gating)",
+          `    app_id: ${cred.appId}`,
+          `    installation_id: ${cred.installationId}`,
+          "    private_key: ${FIXOWL_APP_PRIVATE_KEY} # base64 of the downloaded App .pem",
+        ].join("\n")
+      : "  runtime_token: ${FIXOWL_RUNTIME_TOKEN}  # fine-grained PAT, pushed to repos as an Actions secret";
+
   return `# fixowl configuration, written by \`fixowl init\`. Secrets live in secrets.env next
 # to this file and are referenced as \${VAR}; this file never contains raw secrets.
 version: 1
 
 github:
   admin_token: \${FIXOWL_ADMIN_TOKEN}      # fine-grained PAT, CLI machine only
-  runtime_token: \${FIXOWL_RUNTIME_TOKEN}  # fine-grained PAT, pushed to repos as an Actions secret${fallbackTokenLine}
+${runtimeCredentialLine}${fallbackTokenLine}
 
 # runner:
 #   dir: ${FIXOWL_DEFAULTS.runnerDir}   # must live under $HOME (Colima shares $HOME with its VM)
@@ -231,7 +257,12 @@ const SECRETS_HEADER = `# fixowl secrets - keep this file mode 600. config.yaml 
 `;
 
 /** Known keys first so the file reads in setup order, then anything else, sorted. */
-const SECRET_ORDER = ["FIXOWL_ADMIN_TOKEN", "FIXOWL_RUNTIME_TOKEN", "FIXOWL_FALLBACK_TOKEN"];
+const SECRET_ORDER = [
+  "FIXOWL_ADMIN_TOKEN",
+  "FIXOWL_RUNTIME_TOKEN",
+  "FIXOWL_APP_PRIVATE_KEY",
+  "FIXOWL_FALLBACK_TOKEN",
+];
 
 export function renderSecretsEnv(values: Record<string, string>): string {
   const known = SECRET_ORDER.filter((name) => name in values);

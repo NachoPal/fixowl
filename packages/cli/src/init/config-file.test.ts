@@ -222,6 +222,28 @@ describe("renderConfigYaml", () => {
     );
   });
 
+  it("renders the GitHub App block for the App tier and drops runtime_token", () => {
+    const yaml = renderConfigYaml({
+      agent: "claude",
+      agentEnv: ["CLAUDE_CODE_OAUTH_TOKEN"],
+      repos: [repo()],
+      runtimeCredential: { kind: "app", appId: "123456", installationId: "7890123" },
+    });
+    expect(yaml).toContain("app_id: 123456");
+    expect(yaml).toContain("installation_id: 7890123");
+    expect(yaml).toContain("private_key: ${FIXOWL_APP_PRIVATE_KEY}");
+    expect(yaml).not.toContain("runtime_token:");
+    const config = globalConfigSchema.parse(
+      substituteSecretRefs(parseYaml(yaml), { ...SECRETS, FIXOWL_APP_PRIVATE_KEY: "base64pem" }),
+    );
+    expect(config.github.app).toEqual({
+      app_id: 123456,
+      installation_id: 7890123,
+      private_key: "base64pem",
+    });
+    expect(config.github.runtime_token).toBeUndefined();
+  });
+
   it("omits the fallback token unless the fallback is enabled", () => {
     expect(
       renderConfigYaml({ agent: "claude", agentEnv: ["CLAUDE_CODE_OAUTH_TOKEN"], repos: [repo()] }),

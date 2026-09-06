@@ -21,6 +21,7 @@
   },
   "devDependencies": {
     "@fixowl/core": "workspace:*",
+    "@octokit/auth-app": "8.3.1",
     "@octokit/rest": "22.0.1",
     "commander": "15.0.0",
     "libsodium-wrappers": "0.8.4",
