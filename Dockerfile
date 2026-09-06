@@ -20,10 +20,16 @@ RUN apt-get update \
     git \
   && rm -rf /var/lib/apt/lists/*
 
-# pnpm, pinned to the repo's packageManager (root package.json). corepack ships
-# with Node and activates the exact version, so the image and CI agree.
-RUN corepack enable \
-  && corepack prepare pnpm@11.25.0 --activate
+# pnpm, pinned to the repo's packageManager (root package.json). Installed
+# globally with npm (not `corepack prepare --activate`) so it lands in the
+# world-readable global prefix (/usr/local) rather than root's corepack cache
+# (~/.cache/node/corepack, mode 700). Every `docker run` uses `--user <host
+# uid>` with HOME=/tmp (see packages/action/src/container-exec.ts), so a
+# root-owned cache would be invisible and corepack would re-download pnpm from
+# the registry every run - failing offline / on `--network none`. A global
+# install needs no network or writable HOME at run time. Keep in sync with the
+# `packageManager` field in the root package.json.
+RUN npm install -g pnpm@11.25.0
 
 # The coding agent CLI (Claude Code); the adapter execs `claude` in-container.
 RUN npm install -g @anthropic-ai/claude-code
