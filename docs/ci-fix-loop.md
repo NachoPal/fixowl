@@ -67,9 +67,13 @@ workflow at `fixowl provision` time (`action.yml` inputs `max-ci-tries` /
 All GitHub API calls and every git push stay host-side; the coding agent stays
 credential-less, the `.git` dir never enters a container, and containers keep
 `--cap-drop ALL` and non-root. The loop only *reads* CI state, so the runtime
-token gains read-only Checks / Commit statuses / Actions / Administration on top
-of its Contents/Pull requests/Issues write - no new write, and fixowl still has
-no merge capability (`no-merge.test.ts`). CI logs and check summaries are
+token gains read-only Commit statuses / Actions / Administration on top of its
+Contents/Pull requests/Issues write - no new write, and fixowl still has no merge
+capability (`no-merge.test.ts`). Reading GitHub Actions **check runs** needs a
+"Checks" permission GitHub does not expose to fine-grained PATs, so a
+fine-grained runtime token cannot read check-run status; the gate degrades (warns
+and flips to ready after a settle window) rather than failing when that read
+403s. CI logs and check summaries are
 semi-untrusted and enter retry prompts only inside `<untrusted-ci-output>`
 fences, length-capped, exactly like issue bodies. See
 [security.md](security.md).

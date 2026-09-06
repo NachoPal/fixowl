@@ -57,7 +57,7 @@ repos:
 | token | permissions | lives |
 | --- | --- | --- |
 | admin | Administration RW, Secrets RW, Contents RW, Workflows RW, Issues RW, Actions RW, Pull requests RW | CLI machine only (`~/.fixowl/secrets.env`, chmod 600) |
-| runtime | Contents RW, Pull requests RW, Issues RW; Checks: read, Commit statuses: read, Actions: read, Administration: read | repo Actions secret `FIXOWL_GITHUB_TOKEN` |
+| runtime | Contents RW, Pull requests RW, Issues RW; Commit statuses: read, Actions: read, Administration: read | repo Actions secret `FIXOWL_GITHUB_TOKEN` |
 | fallback (optional) | Actions RW only | CLI/runner host only (`~/.fixowl/secrets.env`, chmod 600) as `FIXOWL_FALLBACK_TOKEN` |
 
 - **The admin token is setup-only.** It is spent by `fixowl provision` (labels,
@@ -81,15 +81,29 @@ repos:
   secret injected into the night run), so it can push branches, open PRs, and
   comment, and nothing more. The [CI-gated fix loop](ci-fix-loop.md) additionally
   needs to *read* the base branch's required checks and the failing jobs' logs,
-  so the runtime PAT also carries **read-only** Checks, Commit statuses, Actions,
-  and Administration. Administration is **read only**: it lets the loop read
-  branch-protection / ruleset required checks, but grants no runner registration
-  or protection changes, so the admin-token-is-setup-only property (no
-  Administration **write** anywhere but the setup-only admin token) is preserved.
-  When the required checks are unreadable (no branch protection, or the read
-  scope is missing), the loop falls back to gating on all completed checks and
-  logs a warning rather than failing - so under-granting degrades gracefully.
-  The online check (an Administration *read* of the repo's runners) is still not
+  so the runtime PAT also carries **read-only** Commit statuses, Actions, and
+  Administration - the only grantable reads it needs. Administration is **read
+  only**: it lets the loop read branch-protection / ruleset required checks, but
+  grants no runner registration or protection changes, so the
+  admin-token-is-setup-only property (no Administration **write** anywhere but the
+  setup-only admin token) is preserved.
+- There is a deliberate gap in what these reads can cover: GitHub Actions **check
+  runs** are read through an API that requires a "Checks" permission GitHub does
+  **not** expose in the fine-grained-PAT permission list, and no grantable read
+  (Commit statuses / Actions / Administration) substitutes for it. So a
+  fine-grained runtime PAT simply **cannot read check-run status**, and the
+  check-runs read 403s ("Resource not accessible by personal access token").
+  fixowl treats that the same as "no readable checks": the CI gate **degrades**
+  rather than failing the issue - it warns loudly that CI could not be verified
+  and flips the draft PR to ready after a short settle window (the same fallback
+  used when a repo has no branch protection). CI gating is therefore best-effort
+  for fine-grained runtime tokens; a GitHub App or classic token with the Checks
+  scope is required for the gate to actually verify check runs.
+- When the required checks are unreadable (no branch protection, or the read
+  scope is missing), the loop likewise falls back to gating on all completed
+  checks and logs a warning rather than failing - so under-granting degrades
+  gracefully.
+- The online check (an Administration *read* of the repo's runners) is still not
   solved by the runtime token: it is deliberately performed with the admin token.
 - The runtime PAT (not `GITHUB_TOKEN`) authors PRs so the target repo's own CI
   triggers on them.

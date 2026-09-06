@@ -61,6 +61,22 @@ export function isFailureConclusion(conclusion: CheckStatusLite["conclusion"]): 
   );
 }
 
+/**
+ * The result of reading a ref's checks. `readable` is false only when the read
+ * itself failed because the runtime token cannot access the check-runs API - a
+ * fine-grained PAT cannot be granted that scope (GitHub does not expose a
+ * grantable "Checks" permission), so the read returns HTTP 403. An unreadable
+ * result degrades the CI gate the same way an unreadable required set does: the
+ * poll loop warns loudly that CI could not be verified and flips the draft PR to
+ * ready after the settle window, rather than failing the issue (captain 7.2).
+ * When `readable` is true, `checks` is the full, de-duplicated set on the ref
+ * (possibly empty when no CI is configured).
+ */
+export interface ChecksForRef {
+  readable: boolean;
+  checks: CheckStatusLite[];
+}
+
 export interface GatingChecks {
   /** The checks the PR is gated on this poll. */
   checks: CheckStatusLite[];

@@ -86,6 +86,7 @@ export {
   gatingChecks,
   isFailureConclusion,
   type CheckStatusLite,
+  type ChecksForRef,
   type GateDecision,
   type GatingChecks,
   type RequiredChecks,

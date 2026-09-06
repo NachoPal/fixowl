@@ -41,9 +41,11 @@ See [docs/releasing.md](docs/releasing.md).
   revoked/downgraded. Never move a write-scoped GitHub call into the routine
   `start` path, and never grant the runtime token any Administration **write**
   (or other write beyond Contents/Pull requests/Issues). The CI-gated fix loop
-  adds read-only Checks/Statuses/Actions/Administration to the runtime token so
-  it can read required checks and CI logs; that read-only Administration is the
-  only Administration the runtime token ever holds. See
+  adds read-only Commit statuses/Actions/Administration to the runtime token so
+  it can read required checks and CI logs (GitHub does not expose a grantable
+  "Checks" scope for fine-grained PATs, so the gate degrades - settle then ready,
+  with a loud warning - when check-run status cannot be read); that read-only
+  Administration is the only Administration the runtime token ever holds. See
   [docs/security.md](docs/security.md) and [docs/ci-fix-loop.md](docs/ci-fix-loop.md).
 
 - **Never merge.** No code path may call a GitHub merge API. `no-merge.test.ts` greps for
