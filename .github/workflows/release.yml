@@ -234,8 +234,20 @@ jobs:
       SANDBOX_REPO: NachoPal/fixowl-e2e-sandbox
       E2E_MODE: paid
       RUN_TAG: paid-${{ github.run_id }}-${{ github.run_attempt }}
-      GH_TOKEN: ${{ secrets.FIXOWL_E2E_SANDBOX_TOKEN }} # for the fixture gh calls
     steps:
+      # Mint a GitHub App installation token scoped to the sandbox only. Unlike a
+      # fine-grained PAT (which has no "Checks" permission and makes fixowl's CI
+      # gate a silent no-op), an App token can read Actions check-runs, so the
+      # gate actually verifies green/red. The token is job-scoped and expires in
+      # ~1h, which comfortably outlasts this short job. See docs/adr/0001-*.
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        id: app-token
+        with:
+          app-id: ${{ secrets.FIXOWL_E2E_APP_ID }}
+          private-key: ${{ secrets.FIXOWL_E2E_APP_PRIVATE_KEY }}
+          owner: NachoPal
+          repositories: fixowl-e2e-sandbox
+
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
@@ -259,19 +271,21 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           repository: NachoPal/fixowl-e2e-sandbox
-          token: ${{ secrets.FIXOWL_E2E_SANDBOX_TOKEN }}
+          token: ${{ steps.app-token.outputs.token }}
           path: sandbox
           fetch-depth: 0
-          persist-credentials: false # the action pushes with its own PAT
+          persist-credentials: false # the action pushes with its own App token
 
       - name: Seed sandbox fixtures
         id: seed
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }} # for the fixture gh calls
         run: bash scripts/e2e/seed.sh
 
       - name: Run fixowl against the sandbox (real sonnet call)
         id: run
         env:
-          FIXOWL_GITHUB_TOKEN: ${{ secrets.FIXOWL_E2E_SANDBOX_TOKEN }}
+          FIXOWL_GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # Action inputs (read by @actions/core.getInput as INPUT_<NAME
           # upper-cased, spaces->_, hyphens kept>).
@@ -300,6 +314,7 @@ jobs:
       - name: Assert delivery (loose)
         id: assert
         env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }} # for the fixture gh calls
           A: ${{ steps.seed.outputs.A }}
           B: ${{ steps.seed.outputs.B }}
         run: bash scripts/e2e/assert.sh
@@ -307,6 +322,7 @@ jobs:
       - name: Tear down sandbox fixtures
         if: always()
         env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }} # for the fixture gh calls
           A: ${{ steps.seed.outputs.A }}
           B: ${{ steps.seed.outputs.B }}
         run: bash scripts/e2e/cleanup.sh

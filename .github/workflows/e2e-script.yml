@@ -35,19 +35,35 @@ jobs:
       SANDBOX_REPO: NachoPal/fixowl-e2e-sandbox
       E2E_MODE: free
       RUN_TAG: free-${{ github.run_id }}-${{ github.run_attempt }}
-      GH_TOKEN: ${{ secrets.FIXOWL_E2E_SANDBOX_TOKEN }} # for the fixture gh calls
     steps:
-      # Until the captain provisions the sandbox repo + FIXOWL_E2E_SANDBOX_TOKEN,
-      # skip cleanly (green) instead of failing every main-push.
+      # Until the captain provisions the sandbox repo + the App secrets
+      # (FIXOWL_E2E_APP_ID / FIXOWL_E2E_APP_PRIVATE_KEY), skip cleanly (green)
+      # instead of failing every main-push.
       - name: Check sandbox is provisioned
         id: guard
+        env:
+          APP_ID: ${{ secrets.FIXOWL_E2E_APP_ID }}
+          APP_PRIVATE_KEY: ${{ secrets.FIXOWL_E2E_APP_PRIVATE_KEY }}
         run: |
-          if [ -z "${GH_TOKEN}" ]; then
-            echo "FIXOWL_E2E_SANDBOX_TOKEN not set - sandbox not provisioned yet; skipping." >> "${GITHUB_STEP_SUMMARY}"
+          if [ -z "${APP_ID}" ] || [ -z "${APP_PRIVATE_KEY}" ]; then
+            echo "FIXOWL_E2E_APP_ID / FIXOWL_E2E_APP_PRIVATE_KEY not set - sandbox not provisioned yet; skipping." >> "${GITHUB_STEP_SUMMARY}"
             echo "ready=false" >> "${GITHUB_OUTPUT}"
           else
             echo "ready=true" >> "${GITHUB_OUTPUT}"
           fi
+
+      # Mint a GitHub App installation token scoped to the sandbox only. Unlike a
+      # fine-grained PAT (no "Checks" permission -> fixowl's CI gate silently
+      # no-ops), an App token can read Actions check-runs, so the gate actually
+      # verifies green/red. Job-scoped, ~1h expiry, outlasts this short job.
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        id: app-token
+        if: steps.guard.outputs.ready == 'true'
+        with:
+          app-id: ${{ secrets.FIXOWL_E2E_APP_ID }}
+          private-key: ${{ secrets.FIXOWL_E2E_APP_PRIVATE_KEY }}
+          owner: NachoPal
+          repositories: fixowl-e2e-sandbox
 
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         if: steps.guard.outputs.ready == 'true'
@@ -76,21 +92,23 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           repository: NachoPal/fixowl-e2e-sandbox
-          token: ${{ secrets.FIXOWL_E2E_SANDBOX_TOKEN }}
+          token: ${{ steps.app-token.outputs.token }}
           path: sandbox
           fetch-depth: 0
-          persist-credentials: false # the action pushes with its own PAT
+          persist-credentials: false # the action pushes with its own App token
 
       - name: Seed sandbox fixtures
         id: seed
         if: steps.guard.outputs.ready == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }} # for the fixture gh calls
         run: bash scripts/e2e/seed.sh
 
       - name: Run fixowl against the sandbox (script adapter, no LLM spend)
         id: run
         if: steps.guard.outputs.ready == 'true'
         env:
-          FIXOWL_GITHUB_TOKEN: ${{ secrets.FIXOWL_E2E_SANDBOX_TOKEN }}
+          FIXOWL_GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
           FIXOWL_UNSAFE_SCRIPT_AGENT: "1" # the script adapter is refused without this
           INPUT_LABELS-ANY: "for: agent"
           INPUT_AGENT: script
@@ -113,6 +131,7 @@ jobs:
         id: assert
         if: steps.guard.outputs.ready == 'true'
         env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }} # for the fixture gh calls
           A: ${{ steps.seed.outputs.A }}
           B: ${{ steps.seed.outputs.B }}
         run: bash scripts/e2e/assert.sh
@@ -120,6 +139,7 @@ jobs:
       - name: Tear down sandbox fixtures
         if: always() && steps.guard.outputs.ready == 'true'
         env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }} # for the fixture gh calls
           A: ${{ steps.seed.outputs.A }}
           B: ${{ steps.seed.outputs.B }}
         run: bash scripts/e2e/cleanup.sh
