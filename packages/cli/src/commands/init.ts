@@ -765,10 +765,12 @@ Next steps (or re-run \`fixowl init\` on a terminal for the guided setup):
                  Actions RW, Pull requests RW (stays on this machine; used only to
                  provision and register the runner - revoke or downgrade to
                  read-only afterward)
-       runtime - Contents RW, Pull requests RW, Issues RW, plus read-only Checks,
-                 Commit statuses, Actions and Administration (becomes a repo Actions
+       runtime - Contents RW, Pull requests RW, Issues RW, plus read-only Commit
+                 statuses, Actions and Administration (becomes a repo Actions
                  secret; the read scopes let the CI-gated fix loop read required
-                 checks and CI logs)
+                 checks and CI logs; GitHub exposes no grantable "Checks" scope
+                 for fine-grained PATs, so the gate degrades when check-run
+                 status is unreadable)
      Put them in ${secretsPath}.
   2. If using the claude agent: run \`claude setup-token\` and put the resulting
      token in ${secretsPath} as CLAUDE_CODE_OAUTH_TOKEN.

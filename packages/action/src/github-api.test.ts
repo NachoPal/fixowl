@@ -59,10 +59,9 @@ describe("makeGitHubApi.getChecksForRef", () => {
   });
 
   it("re-throws a transient rate-limit 403 (must not degrade to readable:false)", async () => {
-    const rateLimited = Object.assign(
-      new Error("You have exceeded a secondary rate limit"),
-      { status: 403 },
-    );
+    const rateLimited = Object.assign(new Error("You have exceeded a secondary rate limit"), {
+      status: 403,
+    });
     const octokit = {
       paginate: async () => {
         throw rateLimited;
@@ -90,10 +89,9 @@ describe("makeGitHubApi.getChecksForRef", () => {
   });
 
   it("degrades on the App-token permission-denial variant (integration)", async () => {
-    const notAccessible = Object.assign(
-      new Error("Resource not accessible by integration"),
-      { status: 403 },
-    );
+    const notAccessible = Object.assign(new Error("Resource not accessible by integration"), {
+      status: 403,
+    });
     const octokit = {
       paginate: async () => {
         throw notAccessible;
