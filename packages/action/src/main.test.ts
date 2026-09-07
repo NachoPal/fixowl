@@ -1283,6 +1283,38 @@ describe("runNight", () => {
       expect(engine.runs.filter((s) => s.name.endsWith("-1-agent"))).toHaveLength(2);
     });
 
+    it("flips to ready but reports CI unverified (never green) when the check runs cannot be read", async () => {
+      // The runtime FG-PAT 403s on the check-runs API, so no check is ever
+      // consulted. The PR still flips to ready (settle-then-ready, captain 7.2),
+      // but the durable artifacts a human reads - the PR body and the issue
+      // comment - must say CI could not be verified, NEVER "green" / "passed".
+      const { workspaceDir, inputs } = await setup();
+      const github = new FakeGitHub([issue(1, "Fix header", "x")]);
+      github.requiredChecks = { readable: true, contexts: ["ci"] };
+      github.checksReadable = false;
+      const engine = makeEngine({ workspaceDir });
+
+      const summary = await runNight(
+        { github, engine, exec: realExec, log: silentLog, clock: instantClock() },
+        inputs,
+      );
+
+      expect(summary.results[0]?.status).toBe("pr-opened");
+      expect(summary.results[0]?.draft).toBe(false);
+      expect(github.pulls[0]?.draft).toBe(false);
+      expect(github.readyForReview).toContain(github.pulls[0]?.number);
+
+      const comment = github.comments[0]?.body ?? "";
+      expect(comment).toContain("CI could not be verified");
+      expect(comment).toContain("Review CI on the PR before merging");
+      expect(comment).not.toContain("required checks are green");
+
+      const body = github.pulls[0]?.body ?? "";
+      expect(body).toContain("CI could not be verified");
+      expect(body).not.toContain("All completed checks passed");
+      expect(body).not.toContain("required checks are green");
+    });
+
     it("gates only on required checks; a failing non-required check does not block", async () => {
       const { workspaceDir, inputs } = await setup();
       const github = new FakeGitHub([issue(1, "Fix header", "x")]);

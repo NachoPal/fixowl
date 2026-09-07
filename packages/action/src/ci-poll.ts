@@ -32,15 +32,25 @@ export const realClock: Clock = {
 };
 
 export interface WaitForChecksResult {
-  /** Green when every gating check passed; otherwise a red or timed-out attempt. */
-  outcome: "green" | "failed";
+  /**
+   * Green when every gating check passed; failed on a red or timed-out attempt;
+   * `unverified` when the ref's check runs could not be read at all (the runtime
+   * token 403s on the check-runs API). `unverified` is distinct from `green`: no
+   * check was ever consulted, so the PR must never be reported as CI-green even
+   * though it is still flipped to ready after the settle window (captain 7.2).
+   */
+  outcome: "green" | "failed" | "unverified";
   /** True when the wait hit `timeoutMs` before the gating set settled. */
   timedOut: boolean;
   /** The gating checks seen on the final poll (used to build agent feedback). */
   gating: CheckStatusLite[];
   /** The completed, failing checks on the final poll. */
   failed: CheckStatusLite[];
-  /** True when the required set was unreadable and we gated on all checks. */
+  /**
+   * True when the *required* set was unreadable and we gated on all completed
+   * checks (still a real, readable gate). This is NOT the check-runs-unreadable
+   * case, which is reported as `outcome: "unverified"` instead.
+   */
   usedFallback: boolean;
 }
 
@@ -72,8 +82,10 @@ export async function waitForRequiredChecks(
     const checks = await github.getChecksForRef(params.sha);
     // The runtime token could not read the ref's checks at all (a fine-grained
     // PAT cannot access the check-runs API; GitHub 403s). CI cannot be verified,
-    // so degrade to the same settle-then-ready fallback used when no CI exists,
-    // but warn loudly - the operator must know gating was skipped for this issue.
+    // so settle then flip to ready as the no-CI fallback does (captain 7.2), but
+    // report it as a distinct `unverified` outcome - never green - so the PR body
+    // and issue comment tell the human CI was never consulted, matching the loud
+    // runner-log warning below.
     if (!checks.readable) {
       if (!warnedUnreadable) {
         warnedUnreadable = true;
@@ -86,7 +98,13 @@ export async function waitForRequiredChecks(
         await clock.sleep(pollMs);
         continue;
       }
-      return { outcome: "green", timedOut: false, gating: [], failed: [], usedFallback: true };
+      return {
+        outcome: "unverified",
+        timedOut: false,
+        gating: [],
+        failed: [],
+        usedFallback: false,
+      };
     }
     const all = checks.checks;
     const gating = gatingChecks(all, params.required);

@@ -73,7 +73,10 @@ capability (`no-merge.test.ts`). Reading GitHub Actions **check runs** needs a
 "Checks" permission GitHub does not expose to fine-grained PATs, so a
 fine-grained runtime token cannot read check-run status; the gate degrades (warns
 and flips to ready after a settle window) rather than failing when that read
-403s. CI logs and check summaries are
+403s. That degrade is reported as a distinct **`unverified`** outcome, never
+"green": because no check was ever consulted, the PR body and issue comment say
+CI could not be verified and to review CI before merging - they never claim the
+checks passed. CI logs and check summaries are
 semi-untrusted and enter retry prompts only inside `<untrusted-ci-output>`
 fences, length-capped, exactly like issue bodies. See
 [security.md](security.md).

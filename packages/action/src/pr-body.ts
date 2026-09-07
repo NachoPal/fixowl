@@ -18,11 +18,14 @@ export interface CiCheckFailure {
 }
 
 /**
- * How the CI-gated loop ended for a PR: its required checks went green, or the
- * try budget was exhausted with them still red / not completing in time.
+ * How the CI-gated loop ended for a PR: its checks went green, its check runs
+ * could not be read at all (`unverified` - CI never consulted, so never reported
+ * as green), or the try budget was exhausted with them still red / not
+ * completing in time.
  */
 export type CiGateSummary =
   | { state: "green"; usedFallback?: boolean }
+  | { state: "unverified" }
   | {
       state: "failed";
       reason: "red" | "timeout";
@@ -67,6 +70,14 @@ function renderCiSection(ci: CiGateSummary): string[] {
       ci.usedFallback === true
         ? `✅ All completed checks passed. (No required checks were readable for the base branch, so fixowl gated on all completed checks.)`
         : `✅ The base branch's required checks are green.`,
+    );
+    lines.push(``);
+    return lines;
+  }
+  if (ci.state === "unverified") {
+    lines.push(
+      `⚠️ CI could not be verified: the runtime token cannot read this branch's ` +
+        `check runs, so fixowl consulted **no** checks. Review CI on this PR before merging.`,
     );
     lines.push(``);
     return lines;
