@@ -7,6 +7,7 @@ import {
   getAgentAdapter,
   getUsageReader,
   guardScheduledSlot,
+  isFixowlBranchTip,
   issueBranchName,
   PROMPT_MOUNT_PATH,
   REPO_CONFIG_PATH,
@@ -266,7 +267,23 @@ async function runNightWithGit(
   // and re-select the issue).
   const withBranch = filterAlreadyAttempted(matching, await git.listRemoteIssueBranches()).skipped;
   const { attempted: skipped, orphaned } = await resolveAttemptedBranches(github, withBranch);
+  // A PR-less branch is only reset when it is provably fixowl's own work (issue
+  // #69): resetting force-deletes the remote branch, so a human's hand-pushed
+  // `issue/<n>-*` branch (or a third-party adopter's) must never be deleted.
+  // When ownership does not hold, treat the issue as attempted (skip it) and
+  // warn loudly rather than destroying someone else's commits.
   for (const item of orphaned) {
+    const tip = await git.remoteBranchTip(item.branch);
+    if (!isFixowlBranchTip(tip, item.issue.number)) {
+      const warning =
+        `issue #${item.issue.number}: branch ${item.branch} exists and is not fixowl's ` +
+        `(tip commit by ${tip.authorEmail || "unknown"}); delete it or open a PR to proceed. ` +
+        `Skipping - fixowl will not reset a branch it did not create.`;
+      warnings.push(warning);
+      log.warn(warning);
+      skipped.push(item);
+      continue;
+    }
     log.info(
       `issue #${item.issue.number}: branch ${item.branch} exists but has no PR (orphaned ` +
         `interrupted work); resetting the branch and retrying`,

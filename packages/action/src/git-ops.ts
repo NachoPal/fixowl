@@ -1,5 +1,6 @@
 import { existsSync, renameSync, rmSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
+import { type CommitTip, FIXOWL_BOT_EMAIL } from "@fixowl/core";
 import type { Exec, ExecResult } from "./deps.ts";
 
 /**
@@ -101,7 +102,7 @@ export class GitWorkspace {
 
   async configureIdentity(): Promise<void> {
     await this.git("config", "user.name", "fixowl");
-    await this.git("config", "user.email", "fixowl-bot@users.noreply.github.com");
+    await this.git("config", "user.email", FIXOWL_BOT_EMAIL);
     // Unattended commits must never wait on the host's signing setup
     // (a global commit.gpgsign with a hardware key would hang the night run).
     await this.git("config", "commit.gpgsign", "false");
@@ -131,6 +132,22 @@ export class GitWorkspace {
    */
   async fetchRemoteBranch(branch: string): Promise<void> {
     await this.git("fetch", "origin", `${branch}:refs/remotes/origin/${branch}`);
+  }
+
+  /**
+   * Read the tip commit of a remote branch (author email + subject) so the
+   * orphan-branch reset can confirm the branch is fixowl's own work before
+   * deleting it (issue #69). The branch is fetched first, so it resolves even
+   * when it was pushed after the night's checkout.
+   */
+  async remoteBranchTip(branch: string): Promise<CommitTip> {
+    await this.fetchRemoteBranch(branch);
+    const out = (await this.git("log", "-1", "--format=%ae%n%s", `refs/remotes/origin/${branch}`))
+      .stdout;
+    const newline = out.indexOf("\n");
+    const authorEmail = newline === -1 ? out : out.slice(0, newline);
+    const subject = newline === -1 ? "" : out.slice(newline + 1);
+    return { authorEmail: authorEmail.trim(), subject: subject.trim() };
   }
 
   async checkout(ref: string): Promise<void> {
@@ -177,7 +194,10 @@ export class GitWorkspace {
    * Delete a remote issue branch. Used to reset an orphaned branch - one pushed
    * by a prior night that was interrupted before its PR opened - so the retry
    * pushes a fresh branch from the base rather than hitting a non-fast-forward
-   * (issue #57). Contents:write only; deleting a ref is never a merge.
+   * (issue #57). The caller must first confirm the branch is fixowl's own work
+   * (`remoteBranchTip` + `isFixowlBranchTip`, issue #69) so a human's hand-pushed
+   * `issue/<n>-*` branch is never deleted. Contents:write only; deleting a ref
+   * is never a merge.
    */
   async deleteRemoteBranch(branch: string): Promise<void> {
     await this.git("push", "origin", "--delete", `refs/heads/${branch}`);

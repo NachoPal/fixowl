@@ -19,7 +19,11 @@ In the morning you review. **fixowl never merges.**
 
 - **One PR per issue**, branch `issue/<n>-<slug>`. The branch doubles as the
   idempotency marker: reruns never duplicate work, and deleting the branch is
-  how you ask for a retry.
+  how you ask for a retry. A PR-less `issue/<n>-*` branch is reset-and-retried
+  only when its tip commit proves it is fixowl's own work; a branch you (or
+  anyone else) pushed under that name is never deleted - fixowl skips the issue
+  and warns instead. See [docs/stacked-prs.md](docs/stacked-prs.md) (Retry
+  semantics) for the ownership rule.
 - **Dependency-aware**: two layers decide branch topology. First, fixowl reads
   the night's issues' native GitHub `blocked-by` edges and enforces them: a
   dependent stacks on and ships after its prerequisite when that prerequisite is

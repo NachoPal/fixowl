@@ -5,6 +5,12 @@ export {
   slugify,
 } from "./branch-naming.ts";
 export {
+  FIXOWL_BOT_EMAIL,
+  fixowlCommitTrailer,
+  isFixowlBranchTip,
+  type CommitTip,
+} from "./branch-ownership.ts";
+export {
   issueMatchesLabelRule,
   labelQueriesForRule,
   labelRuleSchema,
