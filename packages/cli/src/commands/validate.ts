@@ -162,6 +162,18 @@ export async function validateRuntimeCredential(
           "will degrade to a settle-then-ready no-op. Grant the App Checks: read.",
       );
     }
+    if (install.permissions?.contents !== "write") {
+      failed(
+        `runtime App is missing "Contents: write" (installation ${installationId}); ` +
+          "pushes will fail at night. Grant the App Contents: write.",
+      );
+    }
+    if (install.permissions?.pull_requests !== "write") {
+      failed(
+        `runtime App is missing "Pull requests: write" (installation ${installationId}); ` +
+          "opening PRs will fail at night. Grant the App Pull requests: write.",
+      );
+    }
   } catch (error) {
     failed(
       `runtime App installation ${installationId} (GET /app/installations/{id}): ` +

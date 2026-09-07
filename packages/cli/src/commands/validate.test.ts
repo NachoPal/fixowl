@@ -46,6 +46,8 @@ const APP_GITHUB = {
   app: { app_id: 123456, installation_id: 7890123, private_key: "pem" },
 };
 
+const FULL_PERMS = { checks: "read", contents: "write", pull_requests: "write" };
+
 describe("validateRuntimeCredential", () => {
   beforeEach(() => {
     for (const fn of Object.values(mocks)) fn.mockReset();
@@ -66,7 +68,7 @@ describe("validateRuntimeCredential", () => {
 
   it("App tier confirms identity, Checks: read, and repo access", async () => {
     mocks.getAuthenticatedApp.mockResolvedValue({ data: { slug: "fixowl", id: 123456 } });
-    mocks.getInstallation.mockResolvedValue({ data: { permissions: { checks: "read" } } });
+    mocks.getInstallation.mockResolvedValue({ data: { permissions: FULL_PERMS } });
     mocks.listReposPaginate.mockResolvedValue([{ full_name: "o/r" }]);
 
     const errors = await collect(ctxWith(APP_GITHUB));
@@ -79,7 +81,9 @@ describe("validateRuntimeCredential", () => {
 
   it("fails when the App is missing Checks: read (the CI gate would degrade)", async () => {
     mocks.getAuthenticatedApp.mockResolvedValue({ data: { slug: "fixowl", id: 123456 } });
-    mocks.getInstallation.mockResolvedValue({ data: { permissions: { contents: "write" } } });
+    mocks.getInstallation.mockResolvedValue({
+      data: { permissions: { contents: "write", pull_requests: "write" } },
+    });
     mocks.listReposPaginate.mockResolvedValue([{ full_name: "o/r" }]);
 
     const errors = await collect(ctxWith(APP_GITHUB));
@@ -87,9 +91,33 @@ describe("validateRuntimeCredential", () => {
     expect(errors.some((error) => /Checks: read/.test(error))).toBe(true);
   });
 
+  it("fails when the App is missing Contents: write (pushes would fail at night)", async () => {
+    mocks.getAuthenticatedApp.mockResolvedValue({ data: { slug: "fixowl", id: 123456 } });
+    mocks.getInstallation.mockResolvedValue({
+      data: { permissions: { checks: "read", pull_requests: "write" } },
+    });
+    mocks.listReposPaginate.mockResolvedValue([{ full_name: "o/r" }]);
+
+    const errors = await collect(ctxWith(APP_GITHUB));
+
+    expect(errors.some((error) => /Contents: write/.test(error))).toBe(true);
+  });
+
+  it("fails when the App is missing Pull requests: write (opening PRs would fail)", async () => {
+    mocks.getAuthenticatedApp.mockResolvedValue({ data: { slug: "fixowl", id: 123456 } });
+    mocks.getInstallation.mockResolvedValue({
+      data: { permissions: { checks: "read", contents: "write" } },
+    });
+    mocks.listReposPaginate.mockResolvedValue([{ full_name: "o/r" }]);
+
+    const errors = await collect(ctxWith(APP_GITHUB));
+
+    expect(errors.some((error) => /Pull requests: write/.test(error))).toBe(true);
+  });
+
   it("fails when the App is not installed on a configured repo", async () => {
     mocks.getAuthenticatedApp.mockResolvedValue({ data: { slug: "fixowl", id: 123456 } });
-    mocks.getInstallation.mockResolvedValue({ data: { permissions: { checks: "read" } } });
+    mocks.getInstallation.mockResolvedValue({ data: { permissions: FULL_PERMS } });
     mocks.listReposPaginate.mockResolvedValue([{ full_name: "other/repo" }]);
 
     const errors = await collect(ctxWith(APP_GITHUB));

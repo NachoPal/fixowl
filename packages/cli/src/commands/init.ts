@@ -361,6 +361,18 @@ async function verifyApp(
         message: `App "${slug}" authenticated, but it is missing Checks: read - the CI gate would degrade. Grant Checks: read and retry.`,
       };
     }
+    if (install.permissions?.contents !== "write") {
+      return {
+        ok: false,
+        message: `App "${slug}" authenticated, but it is missing Contents: write - pushes will fail at night. Grant Contents: write and retry.`,
+      };
+    }
+    if (install.permissions?.pull_requests !== "write") {
+      return {
+        ok: false,
+        message: `App "${slug}" authenticated, but it is missing Pull requests: write - opening PRs will fail at night. Grant Pull requests: write and retry.`,
+      };
+    }
     return {
       ok: true,
       message: `App "${slug}" authenticated; installation ${cred.installationId} has Checks: ${checks}`,
