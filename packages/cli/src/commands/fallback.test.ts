@@ -20,6 +20,7 @@ function scheduleRunToday(): WorkflowRunLite {
     id: 1,
     event: "schedule",
     status: "completed",
+    conclusion: "success",
     createdAt: "2026-09-05T05:18:00Z",
     displayTitle: "fixowl night run",
   };
@@ -64,6 +65,7 @@ describe("fixowl fallback check", () => {
       id: 2,
       event: "workflow_dispatch",
       status: "completed",
+      conclusion: "success",
       createdAt: "2026-09-05T04:00:00Z",
       displayTitle: "fixowl night run",
     };

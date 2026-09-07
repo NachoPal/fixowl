@@ -61,6 +61,14 @@ export interface WorkflowRunLite {
   event: string;
   /** "queued" | "in_progress" | "completed" | null. */
   status: string | null;
+  /**
+   * The run's outcome once `status` is "completed": "success" | "failure" |
+   * "cancelled" | "timed_out" | "action_required" | "neutral" | "skipped" |
+   * "stale" | "startup_failure" | null. Null while the run has not completed.
+   * Load-bearing for the slot guard: a completed-but-failed run did not do the
+   * night's work, so it must not consume the day's scheduled slot.
+   */
+  conclusion: string | null;
   /** ISO 8601 creation timestamp; GitHub returns these in UTC (a trailing "Z"). */
   createdAt: string;
   /** The run's display title (from `run-name`); carries the fallback marker. */
@@ -114,6 +122,27 @@ export function anchorOccurrence(cron: DailyCron, now: Date): Date {
   anchor.setUTCHours(cron.hourUtc, cron.minuteUtc, 0, 0);
   if (anchor.getTime() > now.getTime()) anchor.setUTCDate(anchor.getUTCDate() - 1);
   return anchor;
+}
+
+/**
+ * Whether an earlier scheduled-slot run genuinely *covers* the day's slot - i.e.
+ * it did (or may yet do) the night's work, so a later scheduled-slot run should
+ * stand down for it. A run covers the slot when it either succeeded, or has not
+ * completed yet (queued / in_progress): an incomplete run may still be running
+ * the night, and deferring to it avoids a concurrent double-run (the workflow's
+ * `concurrency: fixowl` group also serialises them, so this is belt-and-braces).
+ *
+ * A *completed* run whose conclusion is not "success" (failure / cancelled /
+ * timed_out / startup_failure / ...) did NOT do the work and must NOT consume
+ * the slot - GitHub reports such a run as `status: "completed", conclusion:
+ * "failure"`, so keying off status alone would wrongly count it. Re-running the
+ * slot after a failed earlier run is safe and desired: per-issue branch
+ * idempotency (`issue/<n>-*`) skips any issue the failed run already shipped, so
+ * no duplicate PRs.
+ */
+export function coversScheduledSlot(run: WorkflowRunLite): boolean {
+  if (run.status !== "completed") return true;
+  return run.conclusion === "success";
 }
 
 /**
@@ -248,8 +277,11 @@ export interface SlotGuardParams {
  * "Earliest" is decided by run id, which GitHub assigns monotonically, so the
  * decision is deterministic even when a cron run and a fallback-tagged run were
  * created within the same instant (the workflow's `concurrency` group already
- * serialises their execution). Every status counts - a queued, in-progress, or
- * completed earlier slot run all mean the slot is already covered.
+ * serialises their execution). Only an earlier slot run that actually
+ * {@link coversScheduledSlot} counts: one that succeeded, or is still
+ * queued/in-progress. A completed-but-failed (or cancelled/timed-out) earlier
+ * run did not do the night's work, so it does NOT cover the slot and the later
+ * run proceeds - re-running is idempotent-safe via per-issue branch markers.
  *
  * "The current occurrence" is the anchored window `[anchor, next occurrence)`
  * when `params.cronSchedule` is a plain daily cron, and the UTC calendar day
@@ -272,14 +304,18 @@ export function guardScheduledSlot(params: SlotGuardParams): SlotGuardResult {
       : isSameUtcDay(new Date(run.createdAt), params.now);
   const earlier = params.runs.find(
     (run) =>
-      run.id < params.currentRunId && coversOccurrence(run) && isScheduledSlotRun(run, marker),
+      run.id < params.currentRunId &&
+      coversOccurrence(run) &&
+      isScheduledSlotRun(run, marker) &&
+      coversScheduledSlot(run),
   );
   if (earlier !== undefined) {
     return {
       proceed: false,
       reason:
         `today's scheduled slot is already covered by run #${earlier.id} ` +
-        `(${earlier.event}, status ${earlier.status ?? "unknown"}); ` +
+        `(${earlier.event}, status ${earlier.status ?? "unknown"}, ` +
+        `conclusion ${earlier.conclusion ?? "none"}); ` +
         `standing down to keep the nightly run to one execution per day`,
       supersededBy: earlier,
     };

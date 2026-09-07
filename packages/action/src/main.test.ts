@@ -865,6 +865,33 @@ describe("runNight", () => {
     expect(markdown).toContain("tests: passed");
   });
 
+  describe("renderSummary empty-run reporting", () => {
+    const emptyBase = { results: [], skipped: [], deferred: [], warnings: [] };
+
+    it("says no issues matched only when selection actually ran and found nothing", () => {
+      const markdown = renderSummary("test/repo", emptyBase);
+      expect(markdown).toContain("No open issues matched the label rule. Sleep tight.");
+    });
+
+    it("reports the stand-down reason - not a false no-issues-matched - when a guard exited before selection", () => {
+      const reason = "an earlier scheduled-slot run already covered today";
+      const markdown = renderSummary("test/repo", { ...emptyBase, standDown: { reason } });
+      expect(markdown).toContain(`Stood down: ${reason}`);
+      expect(markdown).not.toContain("No open issues matched the label rule");
+    });
+
+    it("leaves a normal run with results unchanged (no empty-run line)", () => {
+      const summary = {
+        ...emptyBase,
+        results: [resultRow(1, "pr-opened")],
+      };
+      const markdown = renderSummary("test/repo", summary);
+      expect(markdown).toContain("#1");
+      expect(markdown).not.toContain("No open issues matched the label rule");
+      expect(markdown).not.toContain("Stood down:");
+    });
+  });
+
   it("a native prerequisite forces stacking even when the LLM calls the issues independent", async () => {
     const { workspaceDir, inputs } = await setup();
     const github = new FakeGitHub([issue(1, "Fix header", "x"), issue(2, "Fix footer", "y")]);
@@ -1175,6 +1202,7 @@ describe("runNight", () => {
           id: 100,
           event: "schedule",
           status: "in_progress",
+          conclusion: null,
           createdAt: new Date().toISOString(),
           displayTitle: "fixowl night run",
         },
@@ -1190,7 +1218,13 @@ describe("runNight", () => {
       expect(github.pulls).toEqual([]);
       expect(engine.runs).toEqual([]);
       expect(summary.results).toEqual([]);
-      expect(summary.warnings.some((w) => w.includes("already covered"))).toBe(true);
+      // The stand-down carries the reason (selection never ran); the summary must
+      // report it, not a false "no issues matched" (regression: run 34085702694).
+      expect(summary.standDown?.reason).toContain("already covered");
+      const markdown = renderSummary("test/repo", summary);
+      expect(markdown).toContain("Stood down:");
+      expect(markdown).toContain("already covered");
+      expect(markdown).not.toContain("No open issues matched the label rule");
     });
 
     it("proceeds for the first scheduled-slot run of the day", async () => {
@@ -1202,6 +1236,7 @@ describe("runNight", () => {
           id: 200,
           event: "schedule",
           status: "in_progress",
+          conclusion: null,
           createdAt: new Date().toISOString(),
           displayTitle: "fixowl night run",
         },
@@ -1223,6 +1258,7 @@ describe("runNight", () => {
           id: 100,
           event: "schedule",
           status: "completed",
+          conclusion: "success",
           createdAt: new Date().toISOString(),
           displayTitle: "fixowl night run",
         },

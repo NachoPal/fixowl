@@ -86017,6 +86017,10 @@ function anchorOccurrence(cron, now) {
   if (anchor2.getTime() > now.getTime()) anchor2.setUTCDate(anchor2.getUTCDate() - 1);
   return anchor2;
 }
+function coversScheduledSlot(run2) {
+  if (run2.status !== "completed") return true;
+  return run2.conclusion === "success";
+}
 function isScheduledSlotRun(run2, marker2 = SCHEDULED_FALLBACK_MARKER) {
   if (run2.event === "schedule") return true;
   return run2.event === "workflow_dispatch" && run2.displayTitle.includes(marker2);
@@ -86033,12 +86037,12 @@ function guardScheduledSlot(params) {
   const anchor2 = cronTime !== void 0 ? anchorOccurrence(cronTime, params.now) : void 0;
   const coversOccurrence = (run2) => anchor2 !== void 0 ? new Date(run2.createdAt).getTime() >= anchor2.getTime() : isSameUtcDay(new Date(run2.createdAt), params.now);
   const earlier = params.runs.find(
-    (run2) => run2.id < params.currentRunId && coversOccurrence(run2) && isScheduledSlotRun(run2, marker2)
+    (run2) => run2.id < params.currentRunId && coversOccurrence(run2) && isScheduledSlotRun(run2, marker2) && coversScheduledSlot(run2)
   );
   if (earlier !== void 0) {
     return {
       proceed: false,
-      reason: `today's scheduled slot is already covered by run #${earlier.id} (${earlier.event}, status ${earlier.status ?? "unknown"}); standing down to keep the nightly run to one execution per day`,
+      reason: `today's scheduled slot is already covered by run #${earlier.id} (${earlier.event}, status ${earlier.status ?? "unknown"}, conclusion ${earlier.conclusion ?? "none"}); standing down to keep the nightly run to one execution per day`,
       supersededBy: earlier
     };
   }
@@ -125175,6 +125179,7 @@ ${trimmed.slice(-CHECK_LOG_MAX)}`;
         id: workflowRun.id,
         event: workflowRun.event,
         status: workflowRun.status ?? null,
+        conclusion: workflowRun.conclusion ?? null,
         createdAt: workflowRun.created_at,
         displayTitle: workflowRun.display_title ?? workflowRun.name ?? ""
       }));
@@ -126434,7 +126439,13 @@ async function checkScheduledSlotBudget(deps, inputs) {
   });
   if (guard.proceed) return void 0;
   deps.log.info(`\u{1F989} fixowl: ${guard.reason}`);
-  return { results: [], skipped: [], deferred: [], warnings: [guard.reason] };
+  return {
+    results: [],
+    skipped: [],
+    deferred: [],
+    standDown: { reason: guard.reason },
+    warnings: []
+  };
 }
 async function runNightWithGit(deps, inputs, git) {
   const { github, engine, log: log3 } = deps;
@@ -126819,7 +126830,9 @@ function wipeoutFailure(summary2) {
 }
 function renderSummary(repoFullName, summary2) {
   const lines = [`# \u{1F989} fixowl night run: ${repoFullName}`, ""];
-  if (summary2.results.length === 0 && summary2.skipped.length === 0 && summary2.deferred.length === 0 && (summary2.notStarted?.length ?? 0) === 0 && summary2.budgetStop === void 0) {
+  if (summary2.standDown !== void 0) {
+    lines.push(`Stood down: ${summary2.standDown.reason}`, "");
+  } else if (summary2.results.length === 0 && summary2.skipped.length === 0 && summary2.deferred.length === 0 && (summary2.notStarted?.length ?? 0) === 0 && summary2.budgetStop === void 0) {
     lines.push("No open issues matched the label rule. Sleep tight.");
   }
   if (summary2.results.length > 0) {

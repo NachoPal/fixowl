@@ -144,6 +144,13 @@ export interface NightSummary {
   notStarted?: IssueLite[];
   /** The run-budget stop condition that ended the night early, if any. */
   budgetStop?: { condition: BudgetConditionName; reason: string };
+  /**
+   * Set when a guard stood the run down *before* issue selection ever ran - e.g.
+   * the scheduled-slot budget. It distinguishes "the run never looked for issues"
+   * from "selection ran and matched nothing", so the summary reports the actual
+   * stand-down reason instead of a false "no issues matched the label rule".
+   */
+  standDown?: { reason: string };
   warnings: string[];
 }
 
@@ -206,7 +213,15 @@ async function checkScheduledSlotBudget(
   });
   if (guard.proceed) return undefined;
   deps.log.info(`🦉 fixowl: ${guard.reason}`);
-  return { results: [], skipped: [], deferred: [], warnings: [guard.reason] };
+  // Stand-down, not a zero-match: selection never ran. Flag it so the summary
+  // reports the reason rather than the false "no issues matched the label rule".
+  return {
+    results: [],
+    skipped: [],
+    deferred: [],
+    standDown: { reason: guard.reason },
+    warnings: [],
+  };
 }
 
 async function runNightWithGit(
@@ -768,13 +783,18 @@ export function wipeoutFailure(summary: NightSummary): string | undefined {
 
 export function renderSummary(repoFullName: string, summary: NightSummary): string {
   const lines: string[] = [`# 🦉 fixowl night run: ${repoFullName}`, ""];
-  if (
+  if (summary.standDown !== undefined) {
+    // A guard stood the run down before selection ran; report the real reason
+    // instead of the false "no issues matched" claim.
+    lines.push(`Stood down: ${summary.standDown.reason}`, "");
+  } else if (
     summary.results.length === 0 &&
     summary.skipped.length === 0 &&
     summary.deferred.length === 0 &&
     (summary.notStarted?.length ?? 0) === 0 &&
     summary.budgetStop === undefined
   ) {
+    // Selection actually ran and matched nothing - the genuine quiet night.
     lines.push("No open issues matched the label rule. Sleep tight.");
   }
   if (summary.results.length > 0) {

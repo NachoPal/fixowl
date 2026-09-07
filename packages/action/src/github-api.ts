@@ -223,6 +223,7 @@ export function makeGitHubApi(
         id: workflowRun.id,
         event: workflowRun.event,
         status: workflowRun.status ?? null,
+        conclusion: workflowRun.conclusion ?? null,
         createdAt: workflowRun.created_at,
         displayTitle: workflowRun.display_title ?? workflowRun.name ?? "",
       }));

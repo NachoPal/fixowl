@@ -112,6 +112,7 @@ export {
 export { resolveRuntimeCredentialFromEnv, type RuntimeCredential } from "./runtime-credential.ts";
 export {
   anchorOccurrence,
+  coversScheduledSlot,
   decideFallbackDispatch,
   guardScheduledSlot,
   isSameUtcDay,
