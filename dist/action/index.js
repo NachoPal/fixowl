@@ -126378,7 +126378,13 @@ async function checkScheduledSlotBudget(deps, inputs) {
   });
   if (guard.proceed) return void 0;
   deps.log.info(`\u{1F989} fixowl: ${guard.reason}`);
-  return { results: [], skipped: [], deferred: [], warnings: [guard.reason] };
+  return {
+    results: [],
+    skipped: [],
+    deferred: [],
+    standDown: { reason: guard.reason },
+    warnings: []
+  };
 }
 async function runNightWithGit(deps, inputs, git) {
   const { github, engine, log: log3 } = deps;
@@ -126763,7 +126769,9 @@ function wipeoutFailure(summary2) {
 }
 function renderSummary(repoFullName, summary2) {
   const lines = [`# \u{1F989} fixowl night run: ${repoFullName}`, ""];
-  if (summary2.results.length === 0 && summary2.skipped.length === 0 && summary2.deferred.length === 0 && (summary2.notStarted?.length ?? 0) === 0 && summary2.budgetStop === void 0) {
+  if (summary2.standDown !== void 0) {
+    lines.push(`Stood down: ${summary2.standDown.reason}`, "");
+  } else if (summary2.results.length === 0 && summary2.skipped.length === 0 && summary2.deferred.length === 0 && (summary2.notStarted?.length ?? 0) === 0 && summary2.budgetStop === void 0) {
     lines.push("No open issues matched the label rule. Sleep tight.");
   }
   if (summary2.results.length > 0) {
