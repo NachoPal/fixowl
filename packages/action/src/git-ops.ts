@@ -16,10 +16,13 @@ import type { Exec, ExecResult } from "./deps.ts";
  *    execute on the host. Planted `.git` entries are deleted at every branch
  *    switch and again when the git dir is restored at the end of the night.
  *
- * 2. The credential never touches disk. The runtime PAT is injected per git
+ * 2. The credential never touches disk. The runtime token is injected per git
  *    command as an env-based `http.extraheader`, which keeps it out of argv
  *    (`ps`), out of git error messages, and out of every file in the git dir
- *    and the workspace (no remote URLs with tokens, no credential helpers).
+ *    and the workspace (no remote URLs with tokens, no credential helpers). The
+ *    token is fetched from a provider callback immediately before each git
+ *    command, not captured once, so a GitHub App installation token (which
+ *    expires in ~1h) is always current even on a push hours into the night.
  */
 
 /** Sibling path the git dir lives at while containers can see the workspace. */
@@ -58,12 +61,20 @@ export class GitWorkspace {
     private readonly exec: Exec,
     private readonly dir: string,
     private readonly gitDir: string,
-    private readonly token?: string,
+    /**
+     * Resolves the CURRENT runtime token, called immediately before each
+     * authenticated git command (never captured once). For a PAT it is a
+     * constant; for a GitHub App it asks the octokit auth strategy, which
+     * returns the cached installation token or re-mints a fresh one near expiry.
+     * Omitted in tests that push to a local remote needing no auth.
+     */
+    private readonly tokenProvider?: () => Promise<string> | string,
   ) {}
 
-  private authEnv(): Record<string, string> | undefined {
-    if (this.token === undefined) return undefined;
-    const basic = Buffer.from(`x-access-token:${this.token}`).toString("base64");
+  private async authEnv(): Promise<Record<string, string> | undefined> {
+    if (this.tokenProvider === undefined) return undefined;
+    const token = await this.tokenProvider();
+    const basic = Buffer.from(`x-access-token:${token}`).toString("base64");
     return {
       GIT_CONFIG_COUNT: "1",
       GIT_CONFIG_KEY_0: "http.https://github.com/.extraheader",
@@ -79,7 +90,7 @@ export class GitWorkspace {
   private async git(...argv: string[]): Promise<ExecResult> {
     const result = await this.exec.run([...this.baseArgv(), ...argv], {
       cwd: this.dir,
-      env: this.authEnv(),
+      env: await this.authEnv(),
     });
     if (result.code !== 0) {
       throw new Error(

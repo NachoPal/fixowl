@@ -2,7 +2,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { extractGitDir, hostGitDirFor, restoreGitDir } from "./git-ops.ts";
+import type { Exec } from "./deps.ts";
+import { extractGitDir, GitWorkspace, hostGitDirFor, restoreGitDir } from "./git-ops.ts";
 
 function makeWorkspace(): { workspaceDir: string; gitMarker: string } {
   const root = mkdtempSync(join(tmpdir(), "fixowl-gitops-"));
@@ -63,5 +64,68 @@ describe("extractGitDir / restoreGitDir", () => {
     restoreGitDir(workspaceDir, gitDir);
     expect(existsSync(join(workspaceDir, ".git", "hooks", "pre-commit"))).toBe(false);
     expect(readFileSync(join(workspaceDir, ".git", gitMarker), "utf8")).toContain("real git dir");
+  });
+});
+
+/**
+ * A fake Exec that records the env of every git command and always succeeds, so
+ * the token-provider wiring can be inspected without a real git.
+ */
+function recordingExec(): { exec: Exec; envs: Array<Record<string, string> | undefined> } {
+  const envs: Array<Record<string, string> | undefined> = [];
+  const exec: Exec = {
+    async run(_argv, options) {
+      envs.push(options?.env);
+      return { code: 0, stdout: "", stderr: "", timedOut: false };
+    },
+  };
+  return { exec, envs };
+}
+
+function tokenFromEnv(env: Record<string, string> | undefined): string {
+  const header = env?.GIT_CONFIG_VALUE_0 ?? "";
+  const basic = header.replace(/^AUTHORIZATION: basic /, "");
+  return Buffer.from(basic, "base64")
+    .toString("utf8")
+    .replace(/^x-access-token:/, "");
+}
+
+describe("GitWorkspace token provider", () => {
+  it("consults the token provider before each git command (never captured once)", async () => {
+    // The whole point of the provider: a token that expires mid-night (a GitHub
+    // App installation token) is re-read per command, so a later push uses a
+    // fresh token, not the one captured at construction.
+    const { exec, envs } = recordingExec();
+    let n = 0;
+    const ws = new GitWorkspace(exec, "/ws", "/gitdir", () => `token-${n++}`);
+
+    await ws.push("issue/1-x");
+    await ws.push("issue/1-x");
+
+    const pushEnvs = envs.filter((env) => env?.GIT_CONFIG_VALUE_0 !== undefined);
+    expect(pushEnvs.length).toBe(2);
+    expect(tokenFromEnv(pushEnvs[0])).toBe("token-0");
+    expect(tokenFromEnv(pushEnvs[1])).toBe("token-1");
+    // The provider was consulted each time, so the injected header differs.
+    expect(pushEnvs[0]?.GIT_CONFIG_VALUE_0).not.toBe(pushEnvs[1]?.GIT_CONFIG_VALUE_0);
+  });
+
+  it("awaits an async token provider and injects the resolved token", async () => {
+    const { exec, envs } = recordingExec();
+    const ws = new GitWorkspace(exec, "/ws", "/gitdir", async () => "fresh-installation-token");
+
+    await ws.push("issue/2-y");
+
+    const pushEnv = envs.find((env) => env?.GIT_CONFIG_VALUE_0 !== undefined);
+    expect(tokenFromEnv(pushEnv)).toBe("fresh-installation-token");
+  });
+
+  it("injects no auth env when no provider is given (local-remote tests)", async () => {
+    const { exec, envs } = recordingExec();
+    const ws = new GitWorkspace(exec, "/ws", "/gitdir");
+
+    await ws.push("issue/3-z");
+
+    expect(envs.every((env) => env === undefined)).toBe(true);
   });
 });

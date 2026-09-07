@@ -84,7 +84,9 @@ fixowl init          # guided setup, start to finish
 
 `init` walks through the whole thing and writes nothing until you have answered:
 
-1. the two fine-grained PATs (it verifies each one against GitHub as you paste it),
+1. the admin fine-grained PAT plus a **runtime credential** - either a
+   fine-grained PAT (fastest to try) or a GitHub App (real CI-gating); it
+   verifies each against GitHub as you paste it,
 2. the coding agent and its credential,
 3. one or more repos: schedule (local `HH:MM`, converted to a UTC cron), labels,
    and how many issues a night may take on,
@@ -111,6 +113,19 @@ Those stay available on their own for later changes, and `fixowl init
 --non-interactive` just scaffolds `~/.fixowl/{config.yaml,secrets.env}` for you
 to fill in by hand.
 
+**Two runtime-credential tiers.** The night run pushes and calls the API with one
+of two credentials, and you pick the tier in `fixowl init`:
+
+- **Tier 1 - fine-grained PAT** (`runtime_token`): ~5 min to set up. But GitHub
+  exposes no "Checks" scope to PATs, so the [CI-gated fix loop](docs/ci-fix-loop.md)
+  **cannot verify CI** and degrades (opens the PR after a settle window). Great
+  to try fixowl.
+- **Tier 2 - GitHub App** (`app`): ~15-20 min once. The installation token reads
+  Checks, so the gate is **real** (green flips a PR to ready; red keeps it a
+  draft and retries), and the ~1h token **auto-refreshes** across the whole night
+  - no 1-hour cliff, no human in the loop. Recommended for real CI-gating. See
+  [docs/app-auth.md](docs/app-auth.md).
+
 Then file an issue, label it `overnight`, and check back tomorrow. Or trigger a
 night right now:
 
@@ -130,7 +145,11 @@ referenced as `${VAR}`):
 version: 1
 github:
   admin_token: ${FIXOWL_ADMIN_TOKEN}      # setup-only; stays on your machine, revocable after provision
-  runtime_token: ${FIXOWL_RUNTIME_TOKEN}  # pushed to repos as an Actions secret
+  runtime_token: ${FIXOWL_RUNTIME_TOKEN}  # Tier 1 PAT, pushed to repos as an Actions secret
+  # app:                                  # Tier 2 GitHub App (real CI-gating); use INSTEAD of runtime_token
+  #   app_id: 123456
+  #   installation_id: 7890123
+  #   private_key: ${FIXOWL_APP_PRIVATE_KEY}   # base64 of the downloaded App .pem; see docs/app-auth.md
 defaults:
   schedule: "37 1 * * *"                  # UTC
   labels: { any: [overnight] }            # any/all combinations supported

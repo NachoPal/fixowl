@@ -2,7 +2,7 @@ import * as core from "@actions/core";
 import { Octokit } from "@octokit/rest";
 import {
   labelModelsSchema,
-  RUNTIME_TOKEN_SECRET,
+  resolveRuntimeCredentialFromEnv,
   SCHEDULED_FALLBACK_SOURCE,
   type LabelModelMap,
   type LabelRule,
@@ -13,6 +13,7 @@ import type { Logger } from "./deps.ts";
 import { makeGitHubApi } from "./github-api.ts";
 import { renderSummary, runNight, wipeoutFailure } from "./main.ts";
 import { realExec } from "./real-exec.ts";
+import { makePushTokenProvider, makeRuntimeOctokit } from "./runtime-octokit.ts";
 
 /** Real-world wiring for the action; all logic lives in main.ts behind fakes-friendly deps. */
 
@@ -105,7 +106,11 @@ async function fetchJson(url: string, headers: Record<string, string>): Promise<
 }
 
 async function run(): Promise<void> {
-  const token = requireEnv(RUNTIME_TOKEN_SECRET);
+  // The runtime credential is either a PAT (Tier 1) or a GitHub App (Tier 2),
+  // selected purely by which secrets the workflow injected. The App path builds
+  // an installation-token client that auto-refreshes near the token's ~1h expiry
+  // (see runtime-octokit.ts / runtime-credential.ts).
+  const cred = resolveRuntimeCredentialFromEnv(process.env);
   const repoFullName = requireEnv("GITHUB_REPOSITORY");
   const workspaceDir = requireEnv("GITHUB_WORKSPACE");
   const tempDir = requireEnv("RUNNER_TEMP");
@@ -133,7 +138,10 @@ async function run(): Promise<void> {
     );
   }
 
-  const octokit = new Octokit({ auth: token });
+  const octokit = makeRuntimeOctokit(cred);
+  // For the App path this provider shares the octokit auth strategy's refresh
+  // cycle, so git pushes and API calls always use a live installation token.
+  const pushTokenProvider = makePushTokenProvider(cred, octokit);
   const { data: repoData } = await octokit.repos.get({ owner, repo });
 
   // The scheduled-slot budget guard lists workflow runs (Actions: read). That
@@ -191,7 +199,7 @@ async function run(): Promise<void> {
       workspaceDir,
       tempDir,
       runUrl,
-      pushToken: token,
+      pushTokenProvider,
       env: process.env,
     },
   );

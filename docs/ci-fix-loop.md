@@ -67,16 +67,25 @@ workflow at `fixowl provision` time (`action.yml` inputs `max-ci-tries` /
 All GitHub API calls and every git push stay host-side; the coding agent stays
 credential-less, the `.git` dir never enters a container, and containers keep
 `--cap-drop ALL` and non-root. The loop only *reads* CI state, so the runtime
-token gains read-only Commit statuses / Actions / Administration on top of its
-Contents/Pull requests/Issues write - no new write, and fixowl still has no merge
-capability (`no-merge.test.ts`). Reading GitHub Actions **check runs** needs a
-"Checks" permission GitHub does not expose to fine-grained PATs, so a
-fine-grained runtime token cannot read check-run status; the gate degrades (warns
-and flips to ready after a settle window) rather than failing when that read
-403s. That degrade is reported as a distinct **`unverified`** outcome, never
-"green": because no check was ever consulted, the PR body and issue comment say
-CI could not be verified and to review CI before merging - they never claim the
-checks passed. CI logs and check summaries are
-semi-untrusted and enter retry prompts only inside `<untrusted-ci-output>`
-fences, length-capped, exactly like issue bodies. See
-[security.md](security.md).
+credential gains read-only Commit statuses / Actions / Administration on top of
+its Contents/Pull requests/Issues write - no new write, and fixowl still has no
+merge capability (`no-merge.test.ts`).
+
+**The gate is only real on a credential that can read check runs.** Reading
+GitHub Actions **check runs** needs a "Checks" permission GitHub does not expose
+to fine-grained PATs. So on the **Tier 1 runtime PAT** the check-runs read 403s
+and the gate **degrades** (warns and flips to ready after a settle window)
+rather than failing - CI is never truly verified. That degrade is reported as a
+distinct **`unverified`** outcome, never "green": because no check was ever
+consulted, the PR body and issue comment say CI could not be verified and to
+review CI before merging - they never claim the checks passed. The **Tier 2
+GitHub App** is the supported way to make the gate real: an installation with
+`Checks: read` reads check-runs where a PAT cannot, so a green head flips the
+draft PR to ready and a red one keeps it a draft. The App's installation token
+expires in ~1h but auto-refreshes across the whole night (`@octokit/auth-app`),
+so a long fix loop never breaks on a stale credential. See
+[app-auth.md](app-auth.md).
+
+CI logs and check summaries are semi-untrusted and enter retry prompts only
+inside `<untrusted-ci-output>` fences, length-capped, exactly like issue bodies.
+See [security.md](security.md).

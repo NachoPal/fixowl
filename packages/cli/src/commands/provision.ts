@@ -1,4 +1,7 @@
 import {
+  APP_ID_SECRET,
+  APP_INSTALLATION_ID_SECRET,
+  APP_PRIVATE_KEY_SECRET,
   getAgentAdapter,
   labelsInRule,
   renderFixowlWorkflow,
@@ -12,6 +15,7 @@ import {
   WORKFLOW_PATH,
 } from "@fixowl/core";
 import { ACTION_REPO, targetRepos, type CliContext } from "../context.ts";
+import { resolvePrivateKey, toPkcs8Pem } from "../github/app-key.ts";
 import {
   branchExists,
   createBranch,
@@ -67,8 +71,10 @@ export async function provisionCommand(
     ]);
     log.ok(created.length > 0 ? `labels created: ${created.join(", ")}` : "labels already present");
 
-    // 2. Secrets: runtime PAT + every agent env var, sealed client-side
-    await putRepoSecret(ctx.admin, ref, RUNTIME_TOKEN_SECRET, ctx.config.github.runtime_token);
+    // 2. Secrets: the runtime credential (a PAT, or the GitHub App trio) plus
+    // every agent env var, sealed client-side with the admin token (the only
+    // token holding Secrets: write - the admin-token-is-setup-only invariant).
+    const runtimeSecretNames = await sealRuntimeCredential(ctx, ref);
     for (const name of adapter.env) {
       const value = ctx.secrets[name] ?? process.env[name];
       if (value === undefined || value === "") {
@@ -78,7 +84,7 @@ export async function provisionCommand(
       }
       await putRepoSecret(ctx.admin, ref, name, value);
     }
-    log.ok(`secrets sealed and pushed: ${[RUNTIME_TOKEN_SECRET, ...adapter.env].join(", ")}`);
+    log.ok(`secrets sealed and pushed: ${[...runtimeSecretNames, ...adapter.env].join(", ")}`);
 
     // 3. Workflow file
     const workflow = renderFixowlWorkflow({
@@ -86,6 +92,7 @@ export async function provisionCommand(
       labels: settings.labels,
       agent: adapter.name,
       agentEnv: adapter.env,
+      appAuth: ctx.config.github.app !== undefined,
       maxIssuesPerRun: settings.maxIssuesPerRun,
       usageBudgetPercent: settings.usageBudgetPercent,
       runBudgetMinutes: settings.runBudgetMinutes,
@@ -189,6 +196,37 @@ export async function provisionCommand(
       );
     }
   }
+}
+
+/**
+ * Seal the repo's runtime credential and return the secret names sealed. The
+ * App tier normalizes the private key to PKCS#8 first (GitHub hands out PKCS#1;
+ * the action's WebCrypto-based auth needs PKCS#8) and seals the trio; the PAT
+ * tier seals the single runtime secret. The config-load XOR guarantees exactly
+ * one is configured, so the PAT branch's `runtime_token` is always set.
+ */
+async function sealRuntimeCredential(
+  ctx: CliContext,
+  ref: { owner: string; repo: string },
+): Promise<string[]> {
+  const app = ctx.config.github.app;
+  if (app !== undefined) {
+    await putRepoSecret(ctx.admin, ref, APP_ID_SECRET, String(app.app_id));
+    await putRepoSecret(ctx.admin, ref, APP_INSTALLATION_ID_SECRET, String(app.installation_id));
+    await putRepoSecret(
+      ctx.admin,
+      ref,
+      APP_PRIVATE_KEY_SECRET,
+      toPkcs8Pem(resolvePrivateKey(app.private_key)),
+    );
+    return [APP_ID_SECRET, APP_INSTALLATION_ID_SECRET, APP_PRIVATE_KEY_SECRET];
+  }
+  const pat = ctx.config.github.runtime_token;
+  if (pat === undefined) {
+    throw new Error("no runtime credential in config: set github.runtime_token or github.app");
+  }
+  await putRepoSecret(ctx.admin, ref, RUNTIME_TOKEN_SECRET, pat);
+  return [RUNTIME_TOKEN_SECRET];
 }
 
 async function openPrIfMissing(

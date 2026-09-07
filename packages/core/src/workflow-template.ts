@@ -1,4 +1,10 @@
 import type { LabelRule } from "./labels.ts";
+import {
+  APP_ID_SECRET,
+  APP_INSTALLATION_ID_SECRET,
+  APP_PRIVATE_KEY_SECRET,
+  RUNTIME_TOKEN_SECRET,
+} from "./secret-names.ts";
 
 /**
  * Renders the workflow file fixowl provisions into each target repo.
@@ -11,9 +17,6 @@ import type { LabelRule } from "./labels.ts";
 
 export const WORKFLOW_PATH = ".github/workflows/fixowl.yml";
 
-/** Name of the repo Actions secret holding the runtime PAT (never GITHUB_TOKEN: PRs made with GITHUB_TOKEN do not trigger the target repo's own CI). */
-export const RUNTIME_TOKEN_SECRET = "FIXOWL_GITHUB_TOKEN";
-
 const CHECKOUT_PIN = "actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6";
 const UPLOAD_ARTIFACT_PIN = "actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5";
 
@@ -24,6 +27,14 @@ export interface WorkflowTemplateOptions {
   agent: string;
   /** Env var names the agent adapter needs; each is wired from a same-named repo secret. */
   agentEnv: readonly string[];
+  /**
+   * When true, wire the GitHub App secret trio (FIXOWL_APP_ID /
+   * FIXOWL_APP_INSTALLATION_ID / FIXOWL_APP_PRIVATE_KEY) into the action env
+   * instead of the single runtime PAT secret (FIXOWL_GITHUB_TOKEN). The action's
+   * runtime resolver picks App auth when the trio is present. Default/false
+   * renders exactly today's PAT workflow, byte-for-byte.
+   */
+  appAuth?: boolean;
   maxIssuesPerRun: number;
   /** Usage-budget stop % (issue #21); the input is rendered only when set. */
   usageBudgetPercent?: number;
@@ -72,7 +83,14 @@ ${dispatchBlock}`
     : `on:
 ${dispatchBlock}`;
 
-  const secretEnv = [RUNTIME_TOKEN_SECRET, ...options.agentEnv]
+  // Tier 2 (App auth) wires the App secret trio; Tier 1 (PAT) the single runtime
+  // secret. A PAT (default) workflow renders exactly as before - the App branch
+  // only fires when appAuth is true - so existing provisioned repos are
+  // unaffected until re-provisioned onto the App.
+  const runtimeSecretNames = options.appAuth
+    ? [APP_ID_SECRET, APP_INSTALLATION_ID_SECRET, APP_PRIVATE_KEY_SECRET]
+    : [RUNTIME_TOKEN_SECRET];
+  const secretEnv = [...runtimeSecretNames, ...options.agentEnv]
     .map((name) => `          ${name}: \${{ secrets.${name} }}`)
     .join("\n");
 

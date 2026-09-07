@@ -84,11 +84,13 @@ export interface NightInputs {
   tempDir: string;
   runUrl?: string;
   /**
-   * Runtime PAT for authenticated fetch/push, injected per git command as an
-   * env-based http.extraheader (never argv, never the workspace). Omitted in
-   * tests that push to a local remote.
+   * Resolves the current runtime token for authenticated fetch/push, called per
+   * git command (never captured once) so an App installation token stays fresh
+   * across the night. The token is injected as an env-based http.extraheader
+   * (never argv, never the workspace). Omitted in tests that push to a local
+   * remote.
    */
-  pushToken?: string;
+  pushTokenProvider?: () => Promise<string> | string;
   /**
    * Whether this run is a scheduled-slot run (the cron, or a fallback-tagged
    * dispatch) - as opposed to a plain manual dispatch. Only scheduled-slot runs
@@ -166,7 +168,7 @@ export async function runNight(deps: NightDeps, inputs: NightInputs): Promise<Ni
   // night, so no container mount ever includes it and a `.git` a hostile
   // agent plants in the workspace is inert on the host (see git-ops.ts).
   const gitDir = extractGitDir(inputs.workspaceDir);
-  const git = new GitWorkspace(deps.exec, inputs.workspaceDir, gitDir, inputs.pushToken);
+  const git = new GitWorkspace(deps.exec, inputs.workspaceDir, gitDir, inputs.pushTokenProvider);
   try {
     return await runNightWithGit(deps, inputs, git);
   } finally {

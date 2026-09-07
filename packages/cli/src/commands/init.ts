@@ -11,7 +11,8 @@ import {
 import { CONFIG_PATH, loadSecrets, SECRETS_PATH } from "../config-load.ts";
 import { makeContext } from "../context.ts";
 import { checkDockerEngine, type EngineStatus } from "../docker/engine-check.ts";
-import { githubClient } from "../github/client.ts";
+import { resolvePrivateKey, toPkcs8Pem } from "../github/app-key.ts";
+import { appClient, githubClient } from "../github/client.ts";
 import { describeGitHubError } from "../github/errors.ts";
 import {
   parseLabels,
@@ -19,6 +20,7 @@ import {
   renderConfigYaml,
   renderSecretsEnv,
   type RepoAnswers,
+  type RuntimeCredentialAnswer,
 } from "../init/config-file.ts";
 import { log } from "../log.ts";
 import { createPrompter, maskSecret, type Prompter } from "../prompt.ts";
@@ -126,12 +128,15 @@ the questions are answered, and every answer is stored in ${dirname(configPath)}
   }
 
   const secrets = loadSecrets(secretsPath);
-  const admin = await stepTokens(prompter, secrets);
+  const { admin, runtimeCredential } = await stepTokens(prompter, secrets);
   const { agent, agentEnv } = await stepAgent(prompter, secrets);
   const repos = await stepRepos(prompter, admin, agent);
   const wantFallback = await stepFallback(prompter, secrets);
 
-  writeFileSync(configPath, renderConfigYaml({ agent, agentEnv, repos, fallback: wantFallback }));
+  writeFileSync(
+    configPath,
+    renderConfigYaml({ agent, agentEnv, repos, runtimeCredential, fallback: wantFallback }),
+  );
   log.ok(`wrote ${configPath}`);
   writeFileSync(secretsPath, renderSecretsEnv(secrets), { mode: 0o600 });
   chmodSync(secretsPath, 0o600);
@@ -183,46 +188,203 @@ Mint it at ${PAT_URL}`);
 }
 
 // ---------------------------------------------------------------------------
-// Step 1: the two GitHub tokens
+// Step 1: the admin token and the runtime credential (PAT or GitHub App)
 // ---------------------------------------------------------------------------
 
-async function stepTokens(prompter: Prompter, secrets: Record<string, string>): Promise<Octokit> {
+async function stepTokens(
+  prompter: Prompter,
+  secrets: Record<string, string>,
+): Promise<{ admin: Octokit; runtimeCredential: RuntimeCredentialAnswer }> {
   log.info(`
-Step 1/4  GitHub tokens
------------------------
-fixowl needs two fine-grained personal access tokens, each scoped to ONLY the
-repos you want it to touch:
+Step 1/4  GitHub credentials
+----------------------------
+fixowl needs an admin token (this machine only, setup-only) plus ONE runtime
+credential the night run pushes and calls the API with. Both are scoped to ONLY
+the repos you want fixowl to touch.
 
-  admin    Administration RW, Secrets RW, Contents RW, Workflows RW,
-           Issues RW, Actions RW, Pull requests RW. Stays on this machine;
-           used to provision and to register the runner. Setup-only: once
-           \`fixowl provision\` has run
-           you can REVOKE it (or downgrade it to read-only if you want
-           \`fixowl status\` to confirm the runner is online). Routine
-           \`fixowl start\` needs no admin token.
-  runtime  Contents RW, Pull requests RW, Issues RW, plus read-only Commit
-           statuses, Actions, and Administration. Pushed to each repo as an
-           Actions secret; the night run uses it to push, open PRs, and read the
-           base branch's required checks + CI logs for the CI-gated fix loop.
-           The three extra scopes are READ-only: it still never gets any write
-           beyond Contents/Pull requests/Issues. (GitHub does not expose a
-           grantable "Checks" scope for fine-grained PATs, so check-run status
-           may be unreadable; the CI gate then degrades - it warns and opens the
-           PR after a settle instead of failing.)
+  admin    fine-grained PAT: Administration RW, Secrets RW, Contents RW,
+           Workflows RW, Issues RW, Actions RW, Pull requests RW. Setup-only:
+           once \`fixowl provision\` has run you can REVOKE it (or downgrade it to
+           read-only if you want \`fixowl status\` to confirm the runner is
+           online). Routine \`fixowl start\` needs no admin token.
 
-Mint them at ${PAT_URL}`);
-  await prompter.pause("\nPress Enter once you have both tokens ready ");
+Runtime credential - you pick a tier next:
+  Tier 1  fine-grained PAT: fastest to set up. But GitHub exposes no grantable
+          "Checks" scope to PATs, so the CI-gated fix loop cannot read check-run
+          status and DEGRADES (it opens the PR after a settle instead of
+          verifying CI).
+  Tier 2  GitHub App: ~15 min once. The installation token reads Checks, so the
+          CI gate is REAL (green flips a PR to ready; red keeps it a draft), and
+          @octokit/auth-app auto-refreshes the token across the whole night, so
+          it never hits the 1-hour installation-token expiry cliff.
+
+Mint the admin PAT at ${PAT_URL}`);
+  await prompter.pause("\nPress Enter once you have the admin token ready ");
 
   const adminToken = await askToken(prompter, {
     label: "  admin token",
     existing: secrets.FIXOWL_ADMIN_TOKEN,
   });
   secrets.FIXOWL_ADMIN_TOKEN = adminToken;
-  secrets.FIXOWL_RUNTIME_TOKEN = await askToken(prompter, {
-    label: "  runtime token",
-    existing: secrets.FIXOWL_RUNTIME_TOKEN,
-  });
-  return githubClient(adminToken);
+  const runtimeCredential = await stepRuntimeCredential(prompter, secrets);
+  return { admin: githubClient(adminToken), runtimeCredential };
+}
+
+/** Pick the runtime-credential tier and collect it: a PAT, or a GitHub App. */
+async function stepRuntimeCredential(
+  prompter: Prompter,
+  secrets: Record<string, string>,
+): Promise<RuntimeCredentialAnswer> {
+  const tier = await prompter.choose("\nRuntime credential tier?", [
+    {
+      value: "pat",
+      label: "Tier 1: fine-grained PAT",
+      hint: "fastest; the CI gate degrades (a PAT cannot read checks)",
+    },
+    {
+      value: "app",
+      label: "Tier 2: GitHub App",
+      hint: "~15 min once; real CI-gating, auto-refreshing token",
+    },
+  ]);
+  if (tier === "pat") {
+    log.info(`
+The runtime PAT is scoped to ONLY your target repos: Contents RW, Pull requests
+RW, Issues RW, plus read-only Commit statuses, Actions and Administration. It
+becomes a repo Actions secret the night run pushes and opens PRs with.
+Mint it at ${PAT_URL}`);
+    await prompter.pause("\nPress Enter once you have the runtime token ready ");
+    secrets.FIXOWL_RUNTIME_TOKEN = await askToken(prompter, {
+      label: "  runtime token",
+      existing: secrets.FIXOWL_RUNTIME_TOKEN,
+    });
+    return { kind: "pat" };
+  }
+  return await stepAppCredential(prompter, secrets);
+}
+
+/**
+ * Collect and verify the GitHub App credential. The private key is stored
+ * base64-encoded (so the multi-line PEM survives secrets.env); verification
+ * confirms the App authenticates and holds Checks: read - the honest pre-flight
+ * for the whole reason to use an App - plus the write permissions the night
+ * needs (Contents: write for pushes, Pull requests: write for PRs).
+ */
+async function stepAppCredential(
+  prompter: Prompter,
+  secrets: Record<string, string>,
+): Promise<RuntimeCredentialAnswer> {
+  log.info(`
+GitHub App setup
+----------------
+1. Register an App (Settings > Developer settings > GitHub Apps > New) with
+   repository permissions: Contents RW, Pull requests RW, Issues RW,
+   Checks: READ, and Commit statuses / Actions / Administration: READ. No
+   webhook needed.
+2. Install it on your target repos (the App's "Install App" tab).
+3. Generate a private key ("Generate a private key") and download the .pem.
+4. base64-encode it so it survives secrets.env, on ONE line:
+     base64 -i app.private-key.pem | tr -d '\\n'
+   (App ID is on the App's General tab; Installation ID is the number in the
+   install settings URL .../installations/<id>.) See docs/app-auth.md.`);
+  for (;;) {
+    const appId = await prompter.ask("  App ID (numeric)", { validate: numericId });
+    const installationId = await prompter.ask("  Installation ID (numeric)", {
+      validate: numericId,
+    });
+    const privateKeyB64 = await prompter.secret("  App private key (base64 of the .pem)", {
+      existing: secrets.FIXOWL_APP_PRIVATE_KEY,
+      validate: (value) =>
+        /\s/.test(value.trim())
+          ? "paste the base64 on one line (base64 -i app.pem | tr -d '\\n')"
+          : undefined,
+    });
+    const check = await verifyApp(appId, installationId, privateKeyB64);
+    if (check.ok) {
+      secrets.FIXOWL_APP_PRIVATE_KEY = privateKeyB64;
+      log.ok(check.message);
+      return { kind: "app", appId, installationId };
+    }
+    log.warn(check.message);
+    if (!(await prompter.confirm("  Enter the App details again?", true))) {
+      // Keep what was typed; `fixowl validate` re-checks before provisioning.
+      secrets.FIXOWL_APP_PRIVATE_KEY = privateKeyB64;
+      return { kind: "app", appId, installationId };
+    }
+  }
+}
+
+/** True-returning validator for a numeric id prompt. */
+function numericId(value: string): string | undefined {
+  return /^\d+$/.test(value.trim()) ? undefined : "enter the numeric id";
+}
+
+/**
+ * Confirm a GitHub App credential authenticates and holds Checks: read (plus the
+ * Contents: write / Pull requests: write the night needs). Mirrors
+ * `fixowl validate`'s App branch so the wizard fails fast instead of at 2am.
+ */
+async function verifyApp(
+  appId: string,
+  installationId: string,
+  privateKeyB64: string,
+): Promise<{ ok: boolean; message: string }> {
+  let client;
+  let cred;
+  try {
+    cred = {
+      kind: "app" as const,
+      appId: Number(appId),
+      installationId: Number(installationId),
+      privateKey: toPkcs8Pem(resolvePrivateKey(privateKeyB64)),
+    };
+    client = appClient(cred);
+  } catch (error) {
+    return { ok: false, message: `App private key unreadable: ${describeError(error)}` };
+  }
+  let slug: string;
+  try {
+    const { data } = await client.rest.apps.getAuthenticated();
+    slug = data?.slug ?? "?";
+  } catch (error) {
+    return {
+      ok: false,
+      message: `GitHub rejected the App credentials: ${describeGitHubError(error)}`,
+    };
+  }
+  try {
+    const { data: install } = await client.rest.apps.getInstallation({
+      installation_id: cred.installationId,
+    });
+    const checks = install.permissions?.checks;
+    if (checks !== "read" && checks !== "write") {
+      return {
+        ok: false,
+        message: `App "${slug}" authenticated, but it is missing Checks: read - the CI gate would degrade. Grant Checks: read and retry.`,
+      };
+    }
+    if (install.permissions?.contents !== "write") {
+      return {
+        ok: false,
+        message: `App "${slug}" authenticated, but it is missing Contents: write - pushes will fail at night. Grant Contents: write and retry.`,
+      };
+    }
+    if (install.permissions?.pull_requests !== "write") {
+      return {
+        ok: false,
+        message: `App "${slug}" authenticated, but it is missing Pull requests: write - opening PRs will fail at night. Grant Pull requests: write and retry.`,
+      };
+    }
+    return {
+      ok: true,
+      message: `App "${slug}" authenticated; installation ${cred.installationId} has Checks: ${checks}`,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      message: `App "${slug}" authenticated, but installation ${installationId} is not reachable: ${describeGitHubError(error)}`,
+    };
+  }
 }
 
 /** Prompts for a token, checks it against GitHub, and offers a retry when it fails. */
@@ -696,7 +858,12 @@ version: 1
 
 github:
   admin_token: \${FIXOWL_ADMIN_TOKEN}      # fine-grained PAT, CLI machine only; setup-only, revocable after provision
-  runtime_token: \${FIXOWL_RUNTIME_TOKEN}  # fine-grained PAT, pushed to repos as an Actions secret
+  # --- runtime credential: choose ONE of the two tiers below ---
+  runtime_token: \${FIXOWL_RUNTIME_TOKEN}  # Tier 1: fine-grained PAT (fast to try; CI gate degrades - a PAT cannot read checks)
+  # app:                                     # Tier 2: GitHub App (real CI-gating; auto-refreshing token). See docs/app-auth.md.
+  #   app_id: 123456
+  #   installation_id: 7890123
+  #   private_key: \${FIXOWL_APP_PRIVATE_KEY} # base64 of the downloaded App .pem (normalized to PKCS#8 at provision)
   # fallback_token: \${FIXOWL_FALLBACK_TOKEN}  # optional; fine-grained PAT, Actions: write only, for the local fallback
 
 # runner:
@@ -740,6 +907,8 @@ const STARTER_SECRETS = `# chmod 600. Values referenced from config.yaml as \${V
 FIXOWL_ADMIN_TOKEN=
 FIXOWL_RUNTIME_TOKEN=
 CLAUDE_CODE_OAUTH_TOKEN=
+# --- Tier 2 (GitHub App) alternative to FIXOWL_RUNTIME_TOKEN; see docs/app-auth.md ---
+# FIXOWL_APP_PRIVATE_KEY=   # base64 of the downloaded App .pem (base64 -i app.pem | tr -d '\\n')
 # FIXOWL_FALLBACK_TOKEN=   # optional; fine-grained PAT, Actions: write only (see docs/local-fallback.md)
 `;
 
@@ -760,18 +929,22 @@ function scaffoldOnly(configPath: string, secretsPath: string): void {
 
   log.info(`
 Next steps (or re-run \`fixowl init\` on a terminal for the guided setup):
-  1. Mint two fine-grained PATs at ${PAT_URL}, scoped to ONLY your target repos:
+  1. Mint the admin fine-grained PAT at ${PAT_URL}, scoped to ONLY your target repos:
        admin   - Administration RW, Secrets RW, Contents RW, Workflows RW, Issues RW,
                  Actions RW, Pull requests RW (stays on this machine; used only to
                  provision and register the runner - revoke or downgrade to
                  read-only afterward)
-       runtime - Contents RW, Pull requests RW, Issues RW, plus read-only Commit
-                 statuses, Actions and Administration (becomes a repo Actions
-                 secret; the read scopes let the CI-gated fix loop read required
-                 checks and CI logs; GitHub exposes no grantable "Checks" scope
-                 for fine-grained PATs, so the gate degrades when check-run
-                 status is unreadable)
-     Put them in ${secretsPath}.
+     Then choose ONE runtime credential and put it in ${secretsPath}:
+       Tier 1 (runtime PAT, quick start) - Contents RW, Pull requests RW, Issues RW,
+                 plus read-only Commit statuses, Actions and Administration (becomes
+                 a repo Actions secret; GitHub exposes no grantable "Checks" scope
+                 for fine-grained PATs, so the CI gate DEGRADES when check-run status
+                 is unreadable). Keep runtime_token in the config.
+       Tier 2 (GitHub App, real CI-gating) - register an App with Checks: read (plus
+                 Contents/Pull requests/Issues: write), install it on your repos,
+                 download its private key, base64-encode it into FIXOWL_APP_PRIVATE_KEY,
+                 and uncomment the github.app block in the config. The installation
+                 token auto-refreshes across the night. See docs/app-auth.md.
   2. If using the claude agent: run \`claude setup-token\` and put the resulting
      token in ${secretsPath} as CLAUDE_CODE_OAUTH_TOKEN.
   3. Edit ${configPath}: list your repos.

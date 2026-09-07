@@ -1,12 +1,23 @@
+import { generateKeyPairSync } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Octokit } from "@octokit/rest";
 import { globalConfigSchema } from "@fixowl/core";
 import type { CliContext } from "../context.ts";
 import { provisionCommand, type ProvisionOptions } from "./provision.ts";
 
+/** A real base64-encoded PKCS#8 key so provision's toPkcs8Pem normalization runs. */
+const APP_PRIVATE_KEY_B64 = Buffer.from(
+  generateKeyPairSync("rsa", {
+    modulusLength: 2048,
+    publicKeyEncoding: { type: "spki", format: "pem" },
+    privateKeyEncoding: { type: "pkcs8", format: "pem" },
+  }).privateKey,
+).toString("base64");
+
 interface FileWrite {
   path: string;
   branch: string;
+  content: string;
 }
 
 interface PrCreate {
@@ -20,6 +31,7 @@ interface FakeOctokit {
   octokit: Octokit;
   fileWrites: FileWrite[];
   prsCreated: PrCreate[];
+  secretNames: string[];
   createRef: ReturnType<typeof vi.fn>;
 }
 
@@ -38,6 +50,7 @@ interface FakeOctokit {
 function fakeOctokit(branchExists = false): FakeOctokit {
   const fileWrites: FileWrite[] = [];
   const prsCreated: PrCreate[] = [];
+  const secretNames: string[] = [];
   const createRef = vi.fn(async () => ({}));
   const filePresent = {
     data: { type: "file", content: Buffer.from("old").toString("base64"), sha: "filesha" },
@@ -53,10 +66,16 @@ function fakeOctokit(branchExists = false): FakeOctokit {
           if (branchExists) return { data: { name: "fixowl/provision-workflow" } };
           throw notFound;
         }),
-        createOrUpdateFileContents: vi.fn(async (params: { path: string; branch: string }) => {
-          fileWrites.push({ path: params.path, branch: params.branch });
-          return {};
-        }),
+        createOrUpdateFileContents: vi.fn(
+          async (params: { path: string; branch: string; content: string }) => {
+            fileWrites.push({
+              path: params.path,
+              branch: params.branch,
+              content: Buffer.from(params.content, "base64").toString("utf8"),
+            });
+            return {};
+          },
+        ),
       },
       git: {
         getRef: vi.fn(async () => ({ data: { object: { sha: "basesha" } } })),
@@ -77,11 +96,14 @@ function fakeOctokit(branchExists = false): FakeOctokit {
         getRepoPublicKey: vi.fn(async () => ({
           data: { key: Buffer.alloc(32, 1).toString("base64"), key_id: "kid" },
         })),
-        createOrUpdateRepoSecret: vi.fn(async () => ({})),
+        createOrUpdateRepoSecret: vi.fn(async (params: { secret_name: string }) => {
+          secretNames.push(params.secret_name);
+          return {};
+        }),
       },
     },
   } as unknown as Octokit;
-  return { octokit, fileWrites, prsCreated, createRef };
+  return { octokit, fileWrites, prsCreated, secretNames, createRef };
 }
 
 function makeCtx(admin: Octokit): CliContext {
@@ -89,6 +111,21 @@ function makeCtx(admin: Octokit): CliContext {
     config: globalConfigSchema.parse({
       version: 1,
       github: { admin_token: "ghp_admin", runtime_token: "ghp_runtime" },
+      repos: [{ name: "acme/widgets" }],
+    }),
+    secrets: { CLAUDE_CODE_OAUTH_TOKEN: "oauth-token" },
+    admin,
+  } as unknown as CliContext;
+}
+
+function makeAppCtx(admin: Octokit): CliContext {
+  return {
+    config: globalConfigSchema.parse({
+      version: 1,
+      github: {
+        admin_token: "ghp_admin",
+        app: { app_id: 123456, installation_id: 7890123, private_key: APP_PRIVATE_KEY_B64 },
+      },
       repos: [{ name: "acme/widgets" }],
     }),
     secrets: { CLAUDE_CODE_OAUTH_TOKEN: "oauth-token" },
@@ -172,6 +209,41 @@ describe("fixowl provision", () => {
         repoFullName: "acme/widgets",
         ref: { owner: "acme", repo: "widgets" },
       }),
+    );
+  });
+
+  it("seals the runtime PAT secret (not App secrets) for a PAT config", async () => {
+    const { secretNames } = await runProvision();
+    expect(secretNames).toContain("FIXOWL_GITHUB_TOKEN");
+    expect(secretNames).not.toContain("FIXOWL_APP_ID");
+  });
+
+  it("seals the App secret trio and renders the App-auth workflow for an App config", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const fake = fakeOctokit();
+    await provisionCommand(makeAppCtx(fake.octokit), undefined, {
+      registerRunner: vi.fn(async () => "configured" as const),
+    });
+
+    // The App trio is sealed; the runtime PAT secret is not.
+    expect(fake.secretNames).toEqual(
+      expect.arrayContaining([
+        "FIXOWL_APP_ID",
+        "FIXOWL_APP_INSTALLATION_ID",
+        "FIXOWL_APP_PRIVATE_KEY",
+      ]),
+    );
+    expect(fake.secretNames).not.toContain("FIXOWL_GITHUB_TOKEN");
+
+    // The rendered workflow wires the App trio into the action env, not the PAT.
+    const workflow = fake.fileWrites.find((write) => write.path === WORKFLOW_PATH);
+    expect(workflow?.content).toContain("FIXOWL_APP_ID: ${{ secrets.FIXOWL_APP_ID }}");
+    expect(workflow?.content).toContain(
+      "FIXOWL_APP_PRIVATE_KEY: ${{ secrets.FIXOWL_APP_PRIVATE_KEY }}",
+    );
+    expect(workflow?.content).not.toContain(
+      "FIXOWL_GITHUB_TOKEN: ${{ secrets.FIXOWL_GITHUB_TOKEN }}",
     );
   });
 

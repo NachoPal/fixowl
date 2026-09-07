@@ -18923,7 +18923,7 @@ var require_base64 = __commonJS({
       return bytes.subarray(0, bytePos);
     }
     exports2.base64decode = base64decode;
-    function base64encode2(bytes) {
+    function base64encode3(bytes) {
       let base643 = "", groupPos = 0, b, p = 0;
       for (let i = 0; i < bytes.length; i++) {
         b = bytes[i];
@@ -18953,7 +18953,7 @@ var require_base64 = __commonJS({
       }
       return base643;
     }
-    exports2.base64encode = base64encode2;
+    exports2.base64encode = base64encode3;
   }
 });
 
@@ -24215,8 +24215,8 @@ var require_dist2 = __commonJS({
         let payload = `CONNECT ${host}:${opts.port} HTTP/1.1\r
 `;
         if (proxy.username || proxy.password) {
-          const auth2 = `${decodeURIComponent(proxy.username)}:${decodeURIComponent(proxy.password)}`;
-          headers["Proxy-Authorization"] = `Basic ${Buffer.from(auth2).toString("base64")}`;
+          const auth6 = `${decodeURIComponent(proxy.username)}:${decodeURIComponent(proxy.password)}`;
+          headers["Proxy-Authorization"] = `Basic ${Buffer.from(auth6).toString("base64")}`;
         }
         headers.Host = `${host}:${opts.port}`;
         if (!headers["Proxy-Connection"]) {
@@ -24347,8 +24347,8 @@ var require_dist3 = __commonJS({
         req.path = String(url3);
         const headers = typeof this.proxyHeaders === "function" ? this.proxyHeaders() : { ...this.proxyHeaders };
         if (proxy.username || proxy.password) {
-          const auth2 = `${decodeURIComponent(proxy.username)}:${decodeURIComponent(proxy.password)}`;
-          headers["Proxy-Authorization"] = `Basic ${Buffer.from(auth2).toString("base64")}`;
+          const auth6 = `${decodeURIComponent(proxy.username)}:${decodeURIComponent(proxy.password)}`;
+          headers["Proxy-Authorization"] = `Basic ${Buffer.from(auth6).toString("base64")}`;
         }
         if (!headers["Proxy-Connection"]) {
           headers["Proxy-Connection"] = this.keepAlive ? "Keep-Alive" : "close";
@@ -24742,9 +24742,9 @@ var require_minimatch = __commonJS({
     var star = qmark + "*?";
     var twoStarDot = "(?:(?!(?:\\/|^)(?:\\.{1,2})($|\\/)).)*?";
     var twoStarNoDot = "(?:(?!(?:\\/|^)\\.).)*?";
-    var charSet = (s) => s.split("").reduce((set2, c) => {
-      set2[c] = true;
-      return set2;
+    var charSet = (s) => s.split("").reduce((set3, c) => {
+      set3[c] = true;
+      return set3;
     }, {});
     var reSpecials = charSet("().*{}+?[]^$\\!");
     var addPatternStartSet = charSet("[.(");
@@ -24839,16 +24839,16 @@ var require_minimatch = __commonJS({
           return;
         }
         this.parseNegate();
-        let set2 = this.globSet = this.braceExpand();
+        let set3 = this.globSet = this.braceExpand();
         if (options.debug) this.debug = (...args) => console.error(...args);
-        this.debug(this.pattern, set2);
-        set2 = this.globParts = set2.map((s) => s.split(slashSplit));
-        this.debug(this.pattern, set2);
-        set2 = set2.map((s, si, set3) => s.map(this.parse, this));
-        this.debug(this.pattern, set2);
-        set2 = set2.filter((s) => s.indexOf(false) === -1);
-        this.debug(this.pattern, set2);
-        this.set = set2;
+        this.debug(this.pattern, set3);
+        set3 = this.globParts = set3.map((s) => s.split(slashSplit));
+        this.debug(this.pattern, set3);
+        set3 = set3.map((s, si, set4) => s.map(this.parse, this));
+        this.debug(this.pattern, set3);
+        set3 = set3.filter((s) => s.indexOf(false) === -1);
+        this.debug(this.pattern, set3);
+        this.set = set3;
       }
       parseNegate() {
         if (this.options.nonegate) return;
@@ -25282,22 +25282,22 @@ var require_minimatch = __commonJS({
       }
       makeRe() {
         if (this.regexp || this.regexp === false) return this.regexp;
-        const set2 = this.set;
-        if (!set2.length) {
+        const set3 = this.set;
+        if (!set3.length) {
           this.regexp = false;
           return this.regexp;
         }
         const options = this.options;
         const twoStar = options.noglobstar ? star : options.dot ? twoStarDot : twoStarNoDot;
         const flags = options.nocase ? "i" : "";
-        let re = set2.map((pattern) => {
+        let re = set3.map((pattern) => {
           pattern = pattern.map(
             (p) => typeof p === "string" ? regExpEscape(p) : p === GLOBSTAR ? GLOBSTAR : p._src
-          ).reduce((set3, p) => {
-            if (!(set3[set3.length - 1] === GLOBSTAR && p === GLOBSTAR)) {
-              set3.push(p);
+          ).reduce((set4, p) => {
+            if (!(set4[set4.length - 1] === GLOBSTAR && p === GLOBSTAR)) {
+              set4.push(p);
             }
-            return set3;
+            return set4;
           }, []);
           pattern.forEach((p, i) => {
             if (p !== GLOBSTAR || pattern[i - 1] === GLOBSTAR) {
@@ -25338,15 +25338,15 @@ var require_minimatch = __commonJS({
         }
         f = f.split(slashSplit);
         this.debug(this.pattern, "split", f);
-        const set2 = this.set;
-        this.debug(this.pattern, "set", set2);
+        const set3 = this.set;
+        this.debug(this.pattern, "set", set3);
         let filename;
         for (let i = f.length - 1; i >= 0; i--) {
           filename = f[i];
           if (filename) break;
         }
-        for (let i = 0; i < set2.length; i++) {
-          const pattern = set2[i];
+        for (let i = 0; i < set3.length; i++) {
+          const pattern = set3[i];
           let file2 = f;
           if (options.matchBase && pattern.length === 1) {
             file2 = [filename];
@@ -36299,7 +36299,7 @@ var require_pipeline = __commonJS({
           callback();
         }
       };
-      const wait = () => new Promise2((resolve3, reject) => {
+      const wait2 = () => new Promise2((resolve3, reject) => {
         if (error62) {
           reject(error62);
         } else {
@@ -36322,16 +36322,16 @@ var require_pipeline = __commonJS({
       );
       try {
         if (writable.writableNeedDrain) {
-          await wait();
+          await wait2();
         }
         for await (const chunk of iterable) {
           if (!writable.write(chunk)) {
-            await wait();
+            await wait2();
           }
         }
         if (end) {
           writable.end();
-          await wait();
+          await wait2();
         }
         finish();
       } catch (err) {
@@ -38120,9 +38120,9 @@ var require_noop = __commonJS({
 // node_modules/.pnpm/lodash@4.18.1/node_modules/lodash/_setToArray.js
 var require_setToArray = __commonJS({
   "node_modules/.pnpm/lodash@4.18.1/node_modules/lodash/_setToArray.js"(exports2, module) {
-    function setToArray(set2) {
-      var index = -1, result = Array(set2.size);
-      set2.forEach(function(value) {
+    function setToArray(set3) {
+      var index = -1, result = Array(set3.size);
+      set3.forEach(function(value) {
         result[++index] = value;
       });
       return result;
@@ -38161,9 +38161,9 @@ var require_baseUniq = __commonJS({
         isCommon = false;
         includes = arrayIncludesWith;
       } else if (length >= LARGE_ARRAY_SIZE) {
-        var set2 = iteratee ? null : createSet(array2);
-        if (set2) {
-          return setToArray(set2);
+        var set3 = iteratee ? null : createSet(array2);
+        if (set3) {
+          return setToArray(set3);
         }
         isCommon = false;
         includes = cacheHas;
@@ -39275,7 +39275,7 @@ var require_commonjs3 = __commonJS({
         const rawGlobParts = this.globSet.map((s) => this.slashSplit(s));
         this.globParts = this.preprocess(rawGlobParts);
         this.debug(this.pattern, this.globParts);
-        let set2 = this.globParts.map((s, _2, __) => {
+        let set3 = this.globParts.map((s, _2, __) => {
           if (this.isWindows && this.windowsNoMagicRoot) {
             const isUNC = s[0] === "" && s[1] === "" && (s[2] === "?" || !globMagic.test(s[2])) && !globMagic.test(s[3]);
             const isDrive = /^[a-z]:/i.test(s[0]);
@@ -39287,8 +39287,8 @@ var require_commonjs3 = __commonJS({
           }
           return s.map((ss) => this.parse(ss));
         });
-        this.debug(this.pattern, set2);
-        this.set = set2.filter((s) => s.indexOf(false) === -1);
+        this.debug(this.pattern, set3);
+        this.set = set3.filter((s) => s.indexOf(false) === -1);
         if (this.isWindows) {
           for (let i = 0; i < this.set.length; i++) {
             const p = this.set[i];
@@ -39344,19 +39344,19 @@ var require_commonjs3 = __commonJS({
       // get rid of adjascent ** and resolve .. portions
       levelOneOptimize(globParts) {
         return globParts.map((parts) => {
-          parts = parts.reduce((set2, part) => {
-            const prev = set2[set2.length - 1];
+          parts = parts.reduce((set3, part) => {
+            const prev = set3[set3.length - 1];
             if (part === "**" && prev === "**") {
-              return set2;
+              return set3;
             }
             if (part === "..") {
               if (prev && prev !== ".." && prev !== "." && prev !== "**") {
-                set2.pop();
-                return set2;
+                set3.pop();
+                return set3;
               }
             }
-            set2.push(part);
-            return set2;
+            set3.push(part);
+            return set3;
           }, []);
           return parts.length === 0 ? [""] : parts;
         });
@@ -39742,15 +39742,15 @@ var require_commonjs3 = __commonJS({
       makeRe() {
         if (this.regexp || this.regexp === false)
           return this.regexp;
-        const set2 = this.set;
-        if (!set2.length) {
+        const set3 = this.set;
+        if (!set3.length) {
           this.regexp = false;
           return this.regexp;
         }
         const options = this.options;
         const twoStar = options.noglobstar ? star : options.dot ? twoStarDot : twoStarNoDot;
         const flags = new Set(options.nocase ? ["i"] : []);
-        let re = set2.map((pattern) => {
+        let re = set3.map((pattern) => {
           const pp = pattern.map((p) => {
             if (p instanceof RegExp) {
               for (const f of p.flags.split(""))
@@ -39779,7 +39779,7 @@ var require_commonjs3 = __commonJS({
           });
           return pp.filter((p) => p !== exports2.GLOBSTAR).join("/");
         }).join("|");
-        const [open3, close] = set2.length > 1 ? ["(?:", ")"] : ["", ""];
+        const [open3, close] = set3.length > 1 ? ["(?:", ")"] : ["", ""];
         re = "^" + open3 + re + close + "$";
         if (this.negate)
           re = "^(?!" + re + ").+$";
@@ -39816,16 +39816,16 @@ var require_commonjs3 = __commonJS({
         }
         const ff = this.slashSplit(f);
         this.debug(this.pattern, "split", ff);
-        const set2 = this.set;
-        this.debug(this.pattern, "set", set2);
+        const set3 = this.set;
+        this.debug(this.pattern, "set", set3);
         let filename = ff[ff.length - 1];
         if (!filename) {
           for (let i = ff.length - 2; !filename && i >= 0; i--) {
             filename = ff[i];
           }
         }
-        for (let i = 0; i < set2.length; i++) {
-          const pattern = set2[i];
+        for (let i = 0; i < set3.length; i++) {
+          const pattern = set3[i];
           let file2 = ff;
           if (options.matchBase && pattern.length === 1) {
             file2 = [filename];
@@ -44893,16 +44893,16 @@ var require_glob = __commonJS({
           debug: !!this.opts.debug
         };
         const mms = this.pattern.map((p) => new minimatch_1.Minimatch(p, mmo));
-        const [matchSet, globParts] = mms.reduce((set2, m) => {
-          set2[0].push(...m.set);
-          set2[1].push(...m.globParts);
-          return set2;
+        const [matchSet, globParts] = mms.reduce((set3, m) => {
+          set3[0].push(...m.set);
+          set3[1].push(...m.globParts);
+          return set3;
         }, [[], []]);
-        this.patterns = matchSet.map((set2, i) => {
+        this.patterns = matchSet.map((set3, i) => {
           const g = globParts[i];
           if (!g)
             throw new Error("invalid pattern object");
-          return new pattern_js_1.Pattern(set2, g, 0, this.platform);
+          return new pattern_js_1.Pattern(set3, g, 0, this.platform);
         });
       }
       async walk() {
@@ -51308,11 +51308,11 @@ var require_buffers = __commonJS({
         bi++;
       }
     };
-    Buffers.prototype.get = function get(i) {
+    Buffers.prototype.get = function get2(i) {
       var pos = this.pos(i);
       return this.buffers[pos.buf].get(pos.offset);
     };
-    Buffers.prototype.set = function set2(i, b) {
+    Buffers.prototype.set = function set3(i, b) {
       var pos = this.pos(i);
       return this.buffers[pos.buf].set(pos.offset, b);
     };
@@ -53186,7 +53186,7 @@ var require_light = __commonJS({
           return this.check(weight, now);
         }
         async __register__(index, weight, expiration) {
-          var now, wait;
+          var now, wait2;
           await this.yieldLoop();
           now = Date.now();
           if (this.conditionsCheck(weight)) {
@@ -53194,11 +53194,11 @@ var require_light = __commonJS({
             if (this.storeOptions.reservoir != null) {
               this.storeOptions.reservoir -= weight;
             }
-            wait = Math.max(this._nextRequest - now, 0);
-            this._nextRequest = now + wait + this.storeOptions.minTime;
+            wait2 = Math.max(this._nextRequest - now, 0);
+            this._nextRequest = now + wait2 + this.storeOptions.minTime;
             return {
               success: true,
-              wait,
+              wait: wait2,
               reservoir: this.storeOptions.reservoir
             };
           } else {
@@ -53678,7 +53678,7 @@ var require_light = __commonJS({
               return this.Events.trigger("error", e);
             }
           }
-          _run(index, job, wait) {
+          _run(index, job, wait2) {
             var clearGlobalState, free, run2;
             job.doRun();
             clearGlobalState = this._clearGlobalState.bind(this, index);
@@ -53687,10 +53687,10 @@ var require_light = __commonJS({
             return this._scheduled[index] = {
               timeout: setTimeout(() => {
                 return job.doExecute(this._limiter, clearGlobalState, run2, free);
-              }, wait),
+              }, wait2),
               expiration: job.options.expiration != null ? setTimeout(function() {
                 return job.doExpire(clearGlobalState, run2, free);
-              }, wait + job.options.expiration) : void 0,
+              }, wait2 + job.options.expiration) : void 0,
               job
             };
           }
@@ -53707,7 +53707,7 @@ var require_light = __commonJS({
               }
               this.Events.trigger("debug", `Draining ${options.id}`, { args, options });
               index = this._randomIndex();
-              return this._store.__register__(index, options.weight, options.expiration).then(({ success: success2, wait, reservoir }) => {
+              return this._store.__register__(index, options.weight, options.expiration).then(({ success: success2, wait: wait2, reservoir }) => {
                 var empty;
                 this.Events.trigger("debug", `Drained ${options.id}`, { success: success2, args, options });
                 if (success2) {
@@ -53719,7 +53719,7 @@ var require_light = __commonJS({
                   if (reservoir === 0) {
                     this.Events.trigger("depleted", empty);
                   }
-                  this._run(index, next, wait);
+                  this._run(index, next, wait2);
                   return this.Promise.resolve(options.weight);
                 } else {
                   return this.Promise.resolve(null);
@@ -56965,18 +56965,18 @@ var require_set = __commonJS({
       }
       static from(schema, iterable, ctx) {
         const { replacer } = ctx;
-        const set3 = new this(schema);
+        const set4 = new this(schema);
         if (iterable && Symbol.iterator in Object(iterable))
           for (let value of iterable) {
             if (typeof replacer === "function")
               value = replacer.call(iterable, value, value);
-            set3.items.push(Pair.createPair(value, null, ctx));
+            set4.items.push(Pair.createPair(value, null, ctx));
           }
-        return set3;
+        return set4;
       }
     };
     YAMLSet.tag = "tag:yaml.org,2002:set";
-    var set2 = {
+    var set3 = {
       collection: "map",
       identify: (value) => value instanceof Set,
       nodeClass: YAMLSet,
@@ -56995,7 +56995,7 @@ var require_set = __commonJS({
       }
     };
     exports2.YAMLSet = YAMLSet;
-    exports2.set = set2;
+    exports2.set = set3;
   }
 });
 
@@ -57102,7 +57102,7 @@ var require_schema3 = __commonJS({
     var merge3 = require_merge();
     var omap = require_omap();
     var pairs = require_pairs();
-    var set2 = require_set();
+    var set3 = require_set();
     var timestamp = require_timestamp();
     var schema = [
       map2.map,
@@ -57122,7 +57122,7 @@ var require_schema3 = __commonJS({
       merge3.merge,
       omap.omap,
       pairs.pairs,
-      set2.set,
+      set3.set,
       timestamp.intTime,
       timestamp.floatTime,
       timestamp.timestamp
@@ -57149,7 +57149,7 @@ var require_tags = __commonJS({
     var omap = require_omap();
     var pairs = require_pairs();
     var schema$2 = require_schema3();
-    var set2 = require_set();
+    var set3 = require_set();
     var timestamp = require_timestamp();
     var schemas = /* @__PURE__ */ new Map([
       ["core", schema.schema],
@@ -57175,7 +57175,7 @@ var require_tags = __commonJS({
       omap: omap.omap,
       pairs: pairs.pairs,
       seq: seq.seq,
-      set: set2.set,
+      set: set3.set,
       timestamp: timestamp.timestamp
     };
     var coreKnownTags = {
@@ -57183,7 +57183,7 @@ var require_tags = __commonJS({
       "tag:yaml.org,2002:merge": merge3.merge,
       "tag:yaml.org,2002:omap": omap.omap,
       "tag:yaml.org,2002:pairs": pairs.pairs,
-      "tag:yaml.org,2002:set": set2.set,
+      "tag:yaml.org,2002:set": set3.set,
       "tag:yaml.org,2002:timestamp": timestamp.timestamp
     };
     function getTags(customTags, schemaName, addMergeTag) {
@@ -62511,18 +62511,18 @@ function register(state3, name, method, options) {
 }
 
 // node_modules/.pnpm/before-after-hook@4.0.0/node_modules/before-after-hook/lib/add.js
-function addHook(state3, kind, name, hook2) {
-  const orig = hook2;
+function addHook(state3, kind, name, hook6) {
+  const orig = hook6;
   if (!state3.registry[name]) {
     state3.registry[name] = [];
   }
   if (kind === "before") {
-    hook2 = (method, options) => {
+    hook6 = (method, options) => {
       return Promise.resolve().then(orig.bind(null, options)).then(method.bind(null, options));
     };
   }
   if (kind === "after") {
-    hook2 = (method, options) => {
+    hook6 = (method, options) => {
       let result;
       return Promise.resolve().then(method.bind(null, options)).then((result_) => {
         result = result_;
@@ -62533,14 +62533,14 @@ function addHook(state3, kind, name, hook2) {
     };
   }
   if (kind === "error") {
-    hook2 = (method, options) => {
+    hook6 = (method, options) => {
       return Promise.resolve().then(method.bind(null, options)).catch((error62) => {
         return orig(error62, options);
       });
     };
   }
   state3.registry[name].push({
-    hook: hook2,
+    hook: hook6,
     orig
   });
 }
@@ -62562,16 +62562,16 @@ function removeHook(state3, name, method) {
 // node_modules/.pnpm/before-after-hook@4.0.0/node_modules/before-after-hook/index.js
 var bind = Function.bind;
 var bindable = bind.bind(bind);
-function bindApi(hook2, state3, name) {
+function bindApi(hook6, state3, name) {
   const removeHookRef = bindable(removeHook, null).apply(
     null,
     name ? [state3, name] : [state3]
   );
-  hook2.api = { remove: removeHookRef };
-  hook2.remove = removeHookRef;
+  hook6.api = { remove: removeHookRef };
+  hook6.remove = removeHookRef;
   ["before", "error", "after", "wrap"].forEach((kind) => {
     const args = name ? [state3, kind, name] : [state3, kind];
-    hook2[kind] = hook2.api[kind] = bindable(addHook, null).apply(null, args);
+    hook6[kind] = hook6.api[kind] = bindable(addHook, null).apply(null, args);
   });
 }
 function Singular() {
@@ -62587,9 +62587,9 @@ function Collection() {
   const state3 = {
     registry: {}
   };
-  const hook2 = register.bind(null, state3);
-  bindApi(hook2, state3);
-  return hook2;
+  const hook6 = register.bind(null, state3);
+  bindApi(hook6, state3);
+  return hook6;
 }
 var before_after_hook_default = { Singular, Collection };
 
@@ -63786,13 +63786,13 @@ var Octokit = class {
     return NewOctokit;
   }
   constructor(options = {}) {
-    const hook2 = new before_after_hook_default.Collection();
+    const hook6 = new before_after_hook_default.Collection();
     const requestDefaults = {
       baseUrl: request.endpoint.DEFAULTS.baseUrl,
       headers: {},
       request: Object.assign({}, options.request, {
         // @ts-ignore internal usage only, no need to type
-        hook: hook2.bind(null, "request")
+        hook: hook6.bind(null, "request")
       }),
       mediaType: {
         previews: [],
@@ -63812,20 +63812,20 @@ var Octokit = class {
     this.request = request.defaults(requestDefaults);
     this.graphql = withCustomRequest(this.request).defaults(requestDefaults);
     this.log = createLogger(options.log);
-    this.hook = hook2;
+    this.hook = hook6;
     if (!options.authStrategy) {
       if (!options.auth) {
         this.auth = async () => ({
           type: "unauthenticated"
         });
       } else {
-        const auth2 = createTokenAuth(options.auth);
-        hook2.wrap("request", auth2.hook);
-        this.auth = auth2;
+        const auth6 = createTokenAuth(options.auth);
+        hook6.wrap("request", auth6.hook);
+        this.auth = auth6;
       }
     } else {
       const { authStrategy, ...otherOptions } = options;
-      const auth2 = authStrategy(
+      const auth6 = authStrategy(
         Object.assign(
           {
             request: this.request,
@@ -63841,8 +63841,8 @@ var Octokit = class {
           options.auth
         )
       );
-      hook2.wrap("request", auth2.hook);
-      this.auth = auth2;
+      hook6.wrap("request", auth6.hook);
+      this.auth = auth6;
     }
     const classConstructor = this.constructor;
     for (let i = 0; i < classConstructor.plugins.length; ++i) {
@@ -67139,10 +67139,10 @@ function jsonStringifyReplacer(_2, value) {
   return value;
 }
 function cached(getter) {
-  const set2 = false;
+  const set3 = false;
   return {
     get value() {
-      if (!set2) {
+      if (!set3) {
         const value = getter();
         Object.defineProperty(this, "value", { value });
         return value;
@@ -85740,17 +85740,37 @@ var repoEntrySchema = external_exports.object({
    */
   heuristic_conflict_ordering: external_exports.boolean().optional()
 });
+var githubAppSchema = external_exports.object({
+  app_id: external_exports.union([external_exports.number().int().positive(), external_exports.string().regex(/^\d+$/)]),
+  installation_id: external_exports.union([external_exports.number().int().positive(), external_exports.string().regex(/^\d+$/)]),
+  private_key: external_exports.string().min(1)
+});
 var globalConfigSchema = external_exports.object({
   version: external_exports.literal(1),
   github: external_exports.object({
     admin_token: external_exports.string().min(1),
-    runtime_token: external_exports.string().min(1),
+    /**
+     * Runtime PAT (Tier 1). Optional because the App tier (`app`) is the
+     * alternative; exactly one of the two must be set (enforced below).
+     */
+    runtime_token: external_exports.string().min(1).optional(),
+    /** GitHub App runtime credential (Tier 2); mutually exclusive with runtime_token. */
+    app: githubAppSchema.optional(),
     /**
      * Least-privilege PAT for the optional local fallback trigger: Actions:
      * write only, used solely to dispatch the workflow when the cron misses.
      * Separate from the setup-only admin token and the minimal runtime token.
      */
     fallback_token: external_exports.string().min(1).optional()
+  }).superRefine((github, ctx) => {
+    const hasPat = github.runtime_token !== void 0;
+    const hasApp = github.app !== void 0;
+    if (hasPat === hasApp) {
+      ctx.addIssue({
+        code: external_exports.ZodIssueCode.custom,
+        message: "set exactly one of github.runtime_token or github.app"
+      });
+    }
   }),
   runner: external_exports.object({
     dir: external_exports.string().min(1).optional()
@@ -85931,8 +85951,48 @@ function failedChecks(gating) {
   );
 }
 
-// packages/core/src/workflow-template.ts
+// packages/core/src/secret-names.ts
 var RUNTIME_TOKEN_SECRET = "FIXOWL_GITHUB_TOKEN";
+var APP_ID_SECRET = "FIXOWL_APP_ID";
+var APP_PRIVATE_KEY_SECRET = "FIXOWL_APP_PRIVATE_KEY";
+var APP_INSTALLATION_ID_SECRET = "FIXOWL_APP_INSTALLATION_ID";
+
+// packages/core/src/runtime-credential.ts
+function resolveRuntimeCredentialFromEnv(env) {
+  const appId = env[APP_ID_SECRET];
+  const privateKey = env[APP_PRIVATE_KEY_SECRET];
+  const installationId = env[APP_INSTALLATION_ID_SECRET];
+  const pat = env[RUNTIME_TOKEN_SECRET];
+  const hasApp = isSet(appId) && isSet(privateKey) && isSet(installationId);
+  const hasPat = isSet(pat);
+  if (hasApp && hasPat) {
+    throw new Error(
+      `both a GitHub App credential (${APP_ID_SECRET}/${APP_PRIVATE_KEY_SECRET}/${APP_INSTALLATION_ID_SECRET}) and a runtime PAT (${RUNTIME_TOKEN_SECRET}) are set in the action env; provision exactly one runtime credential`
+    );
+  }
+  if (hasApp) {
+    return {
+      kind: "app",
+      appId: parseId(appId, APP_ID_SECRET),
+      privateKey,
+      installationId: parseId(installationId, APP_INSTALLATION_ID_SECRET)
+    };
+  }
+  if (hasPat) return { kind: "pat", token: pat };
+  throw new Error(
+    `no runtime credential in the action env: set ${RUNTIME_TOKEN_SECRET} (PAT tier) or the ${APP_ID_SECRET}/${APP_PRIVATE_KEY_SECRET}/${APP_INSTALLATION_ID_SECRET} App secrets`
+  );
+}
+function isSet(value) {
+  return value !== void 0 && value !== "";
+}
+function parseId(raw, name) {
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error(`${name} must be a positive integer, got "${raw}"`);
+  }
+  return value;
+}
 
 // packages/core/src/fallback-dispatch.ts
 var SCHEDULED_FALLBACK_SOURCE = "scheduled-fallback";
@@ -93579,9 +93639,9 @@ var EntityDecoder = class {
    * @param {string} context  — used in error messages ('external' | 'input')
    * @returns {boolean}  true = accept, false = skip
    */
-  _applyRegistrationHook(hook2, name, value, context5) {
-    if (!hook2) return true;
-    const action5 = hook2(name, value);
+  _applyRegistrationHook(hook6, name, value, context5) {
+    if (!hook6) return true;
+    const action5 = hook6(name, value);
     if (action5 === ENTITY_ACTION.BLOCK) return false;
     if (action5 === ENTITY_ACTION.THROW) {
       throw new Error(
@@ -100316,12 +100376,12 @@ var NativeCRC64 = (() => {
     WrapperObject.prototype.__class__ = WrapperObject;
     WrapperObject.__cache__ = {};
     Module["WrapperObject"] = WrapperObject;
-    function getCache(__class__) {
+    function getCache2(__class__) {
       return (__class__ || WrapperObject).__cache__;
     }
-    Module["getCache"] = getCache;
+    Module["getCache"] = getCache2;
     function wrapPointer(ptr, __class__) {
-      var cache = getCache(__class__);
+      var cache = getCache2(__class__);
       var ret = cache[ptr];
       if (ret) return ret;
       ret = Object.create((__class__ || WrapperObject).prototype);
@@ -100337,7 +100397,7 @@ var NativeCRC64 = (() => {
     function destroy2(obj) {
       if (!obj["__destroy__"]) throw "Error: Cannot destroy object. (Did you create it yourself?)";
       obj["__destroy__"]();
-      delete getCache(obj.__class__)[obj.ptr];
+      delete getCache2(obj.__class__)[obj.ptr];
     }
     Module["destroy"] = destroy2;
     function compare(obj1, obj2) {
@@ -100481,7 +100541,7 @@ var NativeCRC64 = (() => {
     };
     function Crc64Hash() {
       this.ptr = _emscripten_bind_Crc64Hash_Crc64Hash_0();
-      getCache(Crc64Hash)[this.ptr] = this;
+      getCache2(Crc64Hash)[this.ptr] = this;
     }
     ;
     ;
@@ -124039,9 +124099,9 @@ var defaults = {
 var GitHub = Octokit.plugin(restEndpointMethods, paginateRest).defaults(defaults);
 function getOctokitOptions(token, options) {
   const opts = Object.assign({}, options || {});
-  const auth2 = getAuthString(token, opts);
-  if (auth2) {
-    opts.auth = auth2;
+  const auth6 = getAuthString(token, opts);
+  if (auth6) {
+    opts.auth = auth6;
   }
   const userAgent2 = getUserAgentWithOrchestrationId(opts.userAgent);
   if (userAgent2) {
@@ -125585,19 +125645,20 @@ function restoreGitDir(workspaceDir, gitDir) {
   renameSync(gitDir, inWorkspace);
 }
 var GitWorkspace = class {
-  constructor(exec, dir, gitDir, token) {
+  constructor(exec, dir, gitDir, tokenProvider) {
     this.exec = exec;
     this.dir = dir;
     this.gitDir = gitDir;
-    this.token = token;
+    this.tokenProvider = tokenProvider;
   }
   exec;
   dir;
   gitDir;
-  token;
-  authEnv() {
-    if (this.token === void 0) return void 0;
-    const basic = Buffer.from(`x-access-token:${this.token}`).toString("base64");
+  tokenProvider;
+  async authEnv() {
+    if (this.tokenProvider === void 0) return void 0;
+    const token = await this.tokenProvider();
+    const basic = Buffer.from(`x-access-token:${token}`).toString("base64");
     return {
       GIT_CONFIG_COUNT: "1",
       GIT_CONFIG_KEY_0: "http.https://github.com/.extraheader",
@@ -125611,7 +125672,7 @@ var GitWorkspace = class {
   async git(...argv) {
     const result = await this.exec.run([...this.baseArgv(), ...argv], {
       cwd: this.dir,
-      env: this.authEnv()
+      env: await this.authEnv()
     });
     if (result.code !== 0) {
       throw new Error(
@@ -126347,7 +126408,7 @@ async function runNight(deps, inputs) {
   const standDown = await checkScheduledSlotBudget(deps, inputs);
   if (standDown !== void 0) return standDown;
   const gitDir = extractGitDir(inputs.workspaceDir);
-  const git = new GitWorkspace(deps.exec, inputs.workspaceDir, gitDir, inputs.pushToken);
+  const git = new GitWorkspace(deps.exec, inputs.workspaceDir, gitDir, inputs.pushTokenProvider);
   try {
     return await runNightWithGit(deps, inputs, git);
   } finally {
@@ -126859,6 +126920,1354 @@ var realExec = {
   }
 };
 
+// node_modules/.pnpm/@octokit+oauth-methods@6.0.5/node_modules/@octokit/oauth-methods/dist-bundle/index.js
+function requestToOAuthBaseUrl(request2) {
+  const endpointDefaults = request2.endpoint.DEFAULTS;
+  if (/^https:\/\/(api\.)?github\.com$/.test(endpointDefaults.baseUrl)) {
+    return "https://github.com";
+  }
+  if (/^https:\/\/api\..*\.ghe\.com$/.test(endpointDefaults.baseUrl)) {
+    return endpointDefaults.baseUrl.replace("api.", "");
+  }
+  return endpointDefaults.baseUrl.replace("/api/v3", "");
+}
+async function oauthRequest(request2, route, parameters) {
+  const withOAuthParameters = {
+    baseUrl: requestToOAuthBaseUrl(request2),
+    headers: {
+      accept: "application/json"
+    },
+    ...parameters
+  };
+  const response = await request2(route, withOAuthParameters);
+  if ("error" in response.data) {
+    const error62 = new RequestError(
+      `${response.data.error_description} (${response.data.error}, ${response.data.error_uri})`,
+      400,
+      {
+        request: request2.endpoint.merge(
+          route,
+          withOAuthParameters
+        )
+      }
+    );
+    error62.response = response;
+    throw error62;
+  }
+  return response;
+}
+async function exchangeWebFlowCode(options) {
+  const request2 = options.request || request;
+  const response = await oauthRequest(
+    request2,
+    "POST /login/oauth/access_token",
+    {
+      client_id: options.clientId,
+      client_secret: options.clientSecret,
+      code: options.code,
+      redirect_uri: options.redirectUrl
+    }
+  );
+  const authentication = {
+    clientType: options.clientType,
+    clientId: options.clientId,
+    clientSecret: options.clientSecret,
+    token: response.data.access_token,
+    scopes: response.data.scope.split(/\s+/).filter(Boolean)
+  };
+  if (options.clientType === "github-app") {
+    if ("refresh_token" in response.data) {
+      const apiTimeInMs = new Date(response.headers.date).getTime();
+      authentication.refreshToken = response.data.refresh_token, authentication.expiresAt = toTimestamp(
+        apiTimeInMs,
+        response.data.expires_in
+      ), authentication.refreshTokenExpiresAt = toTimestamp(
+        apiTimeInMs,
+        response.data.refresh_token_expires_in
+      );
+    }
+    delete authentication.scopes;
+  }
+  return { ...response, authentication };
+}
+function toTimestamp(apiTimeInMs, expirationInSeconds) {
+  return new Date(apiTimeInMs + expirationInSeconds * 1e3).toISOString();
+}
+async function createDeviceCode(options) {
+  const request2 = options.request || request;
+  const parameters = {
+    client_id: options.clientId
+  };
+  if ("scopes" in options && Array.isArray(options.scopes)) {
+    parameters.scope = options.scopes.join(" ");
+  }
+  return oauthRequest(request2, "POST /login/device/code", parameters);
+}
+async function exchangeDeviceCode(options) {
+  const request2 = options.request || request;
+  const response = await oauthRequest(
+    request2,
+    "POST /login/oauth/access_token",
+    {
+      client_id: options.clientId,
+      device_code: options.code,
+      grant_type: "urn:ietf:params:oauth:grant-type:device_code"
+    }
+  );
+  const authentication = {
+    clientType: options.clientType,
+    clientId: options.clientId,
+    token: response.data.access_token,
+    scopes: response.data.scope.split(/\s+/).filter(Boolean)
+  };
+  if ("clientSecret" in options) {
+    authentication.clientSecret = options.clientSecret;
+  }
+  if (options.clientType === "github-app") {
+    if ("refresh_token" in response.data) {
+      const apiTimeInMs = new Date(response.headers.date).getTime();
+      authentication.refreshToken = response.data.refresh_token, authentication.expiresAt = toTimestamp2(
+        apiTimeInMs,
+        response.data.expires_in
+      ), authentication.refreshTokenExpiresAt = toTimestamp2(
+        apiTimeInMs,
+        response.data.refresh_token_expires_in
+      );
+    }
+    delete authentication.scopes;
+  }
+  return { ...response, authentication };
+}
+function toTimestamp2(apiTimeInMs, expirationInSeconds) {
+  return new Date(apiTimeInMs + expirationInSeconds * 1e3).toISOString();
+}
+async function checkToken(options) {
+  const request2 = options.request || request;
+  const response = await request2("POST /applications/{client_id}/token", {
+    headers: {
+      authorization: `basic ${btoa(
+        `${options.clientId}:${options.clientSecret}`
+      )}`
+    },
+    client_id: options.clientId,
+    access_token: options.token
+  });
+  const authentication = {
+    clientType: options.clientType,
+    clientId: options.clientId,
+    clientSecret: options.clientSecret,
+    token: options.token,
+    scopes: response.data.scopes
+  };
+  if (response.data.expires_at)
+    authentication.expiresAt = response.data.expires_at;
+  if (options.clientType === "github-app") {
+    delete authentication.scopes;
+  }
+  return { ...response, authentication };
+}
+async function refreshToken(options) {
+  const request2 = options.request || request;
+  const response = await oauthRequest(
+    request2,
+    "POST /login/oauth/access_token",
+    {
+      client_id: options.clientId,
+      client_secret: options.clientSecret,
+      grant_type: "refresh_token",
+      refresh_token: options.refreshToken
+    }
+  );
+  const apiTimeInMs = new Date(response.headers.date).getTime();
+  const authentication = {
+    clientType: "github-app",
+    clientId: options.clientId,
+    clientSecret: options.clientSecret,
+    token: response.data.access_token,
+    refreshToken: response.data.refresh_token,
+    expiresAt: toTimestamp3(apiTimeInMs, response.data.expires_in),
+    refreshTokenExpiresAt: toTimestamp3(
+      apiTimeInMs,
+      response.data.refresh_token_expires_in
+    )
+  };
+  return { ...response, authentication };
+}
+function toTimestamp3(apiTimeInMs, expirationInSeconds) {
+  return new Date(apiTimeInMs + expirationInSeconds * 1e3).toISOString();
+}
+async function resetToken(options) {
+  const request2 = options.request || request;
+  const auth6 = btoa(`${options.clientId}:${options.clientSecret}`);
+  const response = await request2(
+    "PATCH /applications/{client_id}/token",
+    {
+      headers: {
+        authorization: `basic ${auth6}`
+      },
+      client_id: options.clientId,
+      access_token: options.token
+    }
+  );
+  const authentication = {
+    clientType: options.clientType,
+    clientId: options.clientId,
+    clientSecret: options.clientSecret,
+    token: response.data.token,
+    scopes: response.data.scopes
+  };
+  if (response.data.expires_at)
+    authentication.expiresAt = response.data.expires_at;
+  if (options.clientType === "github-app") {
+    delete authentication.scopes;
+  }
+  return { ...response, authentication };
+}
+async function deleteToken(options) {
+  const request2 = options.request || request;
+  const auth6 = btoa(`${options.clientId}:${options.clientSecret}`);
+  return request2(
+    "DELETE /applications/{client_id}/token",
+    {
+      headers: {
+        authorization: `basic ${auth6}`
+      },
+      client_id: options.clientId,
+      access_token: options.token
+    }
+  );
+}
+async function deleteAuthorization(options) {
+  const request2 = options.request || request;
+  const auth6 = btoa(`${options.clientId}:${options.clientSecret}`);
+  return request2(
+    "DELETE /applications/{client_id}/grant",
+    {
+      headers: {
+        authorization: `basic ${auth6}`
+      },
+      client_id: options.clientId,
+      access_token: options.token
+    }
+  );
+}
+
+// node_modules/.pnpm/@octokit+auth-oauth-device@8.0.5/node_modules/@octokit/auth-oauth-device/dist-bundle/index.js
+async function getOAuthAccessToken(state3, options) {
+  const cachedAuthentication = getCachedAuthentication(state3, options.auth);
+  if (cachedAuthentication) return cachedAuthentication;
+  const { data: verification } = await createDeviceCode({
+    clientType: state3.clientType,
+    clientId: state3.clientId,
+    request: options.request || state3.request,
+    // @ts-expect-error the extra code to make TS happy is not worth it
+    scopes: options.auth.scopes || state3.scopes
+  });
+  await state3.onVerification(verification);
+  const authentication = await waitForAccessToken(
+    options.request || state3.request,
+    state3.clientId,
+    state3.clientType,
+    verification
+  );
+  state3.authentication = authentication;
+  return authentication;
+}
+function getCachedAuthentication(state3, auth22) {
+  if (auth22.refresh === true) return false;
+  if (!state3.authentication) return false;
+  if (state3.clientType === "github-app") {
+    return state3.authentication;
+  }
+  const authentication = state3.authentication;
+  const newScope = ("scopes" in auth22 && auth22.scopes || state3.scopes).join(
+    " "
+  );
+  const currentScope = authentication.scopes.join(" ");
+  return newScope === currentScope ? authentication : false;
+}
+async function wait(seconds) {
+  await new Promise((resolve3) => setTimeout(resolve3, seconds * 1e3));
+}
+async function waitForAccessToken(request2, clientId, clientType, verification) {
+  try {
+    const options = {
+      clientId,
+      request: request2,
+      code: verification.device_code
+    };
+    const { authentication } = clientType === "oauth-app" ? await exchangeDeviceCode({
+      ...options,
+      clientType: "oauth-app"
+    }) : await exchangeDeviceCode({
+      ...options,
+      clientType: "github-app"
+    });
+    return {
+      type: "token",
+      tokenType: "oauth",
+      ...authentication
+    };
+  } catch (error62) {
+    if (!error62.response) throw error62;
+    const errorType = error62.response.data.error;
+    if (errorType === "authorization_pending") {
+      await wait(verification.interval);
+      return waitForAccessToken(request2, clientId, clientType, verification);
+    }
+    if (errorType === "slow_down") {
+      await wait(verification.interval + 7);
+      return waitForAccessToken(request2, clientId, clientType, verification);
+    }
+    throw error62;
+  }
+}
+async function auth2(state3, authOptions) {
+  return getOAuthAccessToken(state3, {
+    auth: authOptions
+  });
+}
+async function hook2(state3, request2, route, parameters) {
+  let endpoint2 = request2.endpoint.merge(
+    route,
+    parameters
+  );
+  if (/\/login\/(oauth\/access_token|device\/code)$/.test(endpoint2.url)) {
+    return request2(endpoint2);
+  }
+  const { token } = await getOAuthAccessToken(state3, {
+    request: request2,
+    auth: { type: "oauth" }
+  });
+  endpoint2.headers.authorization = `token ${token}`;
+  return request2(endpoint2);
+}
+var VERSION10 = "0.0.0-development";
+function createOAuthDeviceAuth(options) {
+  const requestWithDefaults = options.request || request.defaults({
+    headers: {
+      "user-agent": `octokit-auth-oauth-device.js/${VERSION10} ${getUserAgent()}`
+    }
+  });
+  const { request: request2 = requestWithDefaults, ...otherOptions } = options;
+  const state3 = options.clientType === "github-app" ? {
+    ...otherOptions,
+    clientType: "github-app",
+    request: request2
+  } : {
+    ...otherOptions,
+    clientType: "oauth-app",
+    request: request2,
+    scopes: options.scopes || []
+  };
+  if (!options.clientId) {
+    throw new Error(
+      '[@octokit/auth-oauth-device] "clientId" option must be set (https://github.com/octokit/auth-oauth-device.js#usage)'
+    );
+  }
+  if (!options.onVerification) {
+    throw new Error(
+      '[@octokit/auth-oauth-device] "onVerification" option must be a function (https://github.com/octokit/auth-oauth-device.js#usage)'
+    );
+  }
+  return Object.assign(auth2.bind(null, state3), {
+    hook: hook2.bind(null, state3)
+  });
+}
+
+// node_modules/.pnpm/@octokit+auth-oauth-user@6.0.4/node_modules/@octokit/auth-oauth-user/dist-bundle/index.js
+var VERSION11 = "0.0.0-development";
+async function getAuthentication(state3) {
+  if ("code" in state3.strategyOptions) {
+    const { authentication } = await exchangeWebFlowCode({
+      clientId: state3.clientId,
+      clientSecret: state3.clientSecret,
+      clientType: state3.clientType,
+      onTokenCreated: state3.onTokenCreated,
+      ...state3.strategyOptions,
+      request: state3.request
+    });
+    return {
+      type: "token",
+      tokenType: "oauth",
+      ...authentication
+    };
+  }
+  if ("onVerification" in state3.strategyOptions) {
+    const deviceAuth = createOAuthDeviceAuth({
+      clientType: state3.clientType,
+      clientId: state3.clientId,
+      onTokenCreated: state3.onTokenCreated,
+      ...state3.strategyOptions,
+      request: state3.request
+    });
+    const authentication = await deviceAuth({
+      type: "oauth"
+    });
+    return {
+      clientSecret: state3.clientSecret,
+      ...authentication
+    };
+  }
+  if ("token" in state3.strategyOptions) {
+    return {
+      type: "token",
+      tokenType: "oauth",
+      clientId: state3.clientId,
+      clientSecret: state3.clientSecret,
+      clientType: state3.clientType,
+      onTokenCreated: state3.onTokenCreated,
+      ...state3.strategyOptions
+    };
+  }
+  throw new Error("[@octokit/auth-oauth-user] Invalid strategy options");
+}
+async function auth3(state3, options = {}) {
+  if (!state3.authentication) {
+    state3.authentication = state3.clientType === "oauth-app" ? await getAuthentication(state3) : await getAuthentication(state3);
+  }
+  if (state3.authentication.invalid) {
+    throw new Error("[@octokit/auth-oauth-user] Token is invalid");
+  }
+  const currentAuthentication = state3.authentication;
+  if ("expiresAt" in currentAuthentication) {
+    if (options.type === "refresh" || new Date(currentAuthentication.expiresAt) < /* @__PURE__ */ new Date()) {
+      const { authentication } = await refreshToken({
+        clientType: "github-app",
+        clientId: state3.clientId,
+        clientSecret: state3.clientSecret,
+        refreshToken: currentAuthentication.refreshToken,
+        request: state3.request
+      });
+      state3.authentication = {
+        tokenType: "oauth",
+        type: "token",
+        ...authentication
+      };
+    }
+  }
+  if (options.type === "refresh") {
+    if (state3.clientType === "oauth-app") {
+      throw new Error(
+        "[@octokit/auth-oauth-user] OAuth Apps do not support expiring tokens"
+      );
+    }
+    if (!currentAuthentication.hasOwnProperty("expiresAt")) {
+      throw new Error("[@octokit/auth-oauth-user] Refresh token missing");
+    }
+    await state3.onTokenCreated?.(state3.authentication, {
+      type: options.type
+    });
+  }
+  if (options.type === "check" || options.type === "reset") {
+    const method = options.type === "check" ? checkToken : resetToken;
+    try {
+      const { authentication } = await method({
+        // @ts-expect-error making TS happy would require unnecessary code so no
+        clientType: state3.clientType,
+        clientId: state3.clientId,
+        clientSecret: state3.clientSecret,
+        token: state3.authentication.token,
+        request: state3.request
+      });
+      state3.authentication = {
+        tokenType: "oauth",
+        type: "token",
+        // @ts-expect-error TBD
+        ...authentication
+      };
+      if (options.type === "reset") {
+        await state3.onTokenCreated?.(state3.authentication, {
+          type: options.type
+        });
+      }
+      return state3.authentication;
+    } catch (error62) {
+      if (error62.status === 404) {
+        error62.message = "[@octokit/auth-oauth-user] Token is invalid";
+        state3.authentication.invalid = true;
+      }
+      throw error62;
+    }
+  }
+  if (options.type === "delete" || options.type === "deleteAuthorization") {
+    const method = options.type === "delete" ? deleteToken : deleteAuthorization;
+    try {
+      await method({
+        // @ts-expect-error making TS happy would require unnecessary code so no
+        clientType: state3.clientType,
+        clientId: state3.clientId,
+        clientSecret: state3.clientSecret,
+        token: state3.authentication.token,
+        request: state3.request
+      });
+    } catch (error62) {
+      if (error62.status !== 404) throw error62;
+    }
+    state3.authentication.invalid = true;
+    return state3.authentication;
+  }
+  return state3.authentication;
+}
+var ROUTES_REQUIRING_BASIC_AUTH = /\/applications\/[^/]+\/(token|grant)s?/;
+function requiresBasicAuth(url3) {
+  return url3 && ROUTES_REQUIRING_BASIC_AUTH.test(url3);
+}
+async function hook3(state3, request2, route, parameters = {}) {
+  const endpoint2 = request2.endpoint.merge(
+    route,
+    parameters
+  );
+  if (/\/login\/(oauth\/access_token|device\/code)$/.test(endpoint2.url)) {
+    return request2(endpoint2);
+  }
+  if (requiresBasicAuth(endpoint2.url)) {
+    const credentials = btoa(`${state3.clientId}:${state3.clientSecret}`);
+    endpoint2.headers.authorization = `basic ${credentials}`;
+    return request2(endpoint2);
+  }
+  const { token } = state3.clientType === "oauth-app" ? await auth3({ ...state3, request: request2 }) : await auth3({ ...state3, request: request2 });
+  endpoint2.headers.authorization = "token " + token;
+  return request2(endpoint2);
+}
+function createOAuthUserAuth({
+  clientId,
+  clientSecret,
+  clientType = "oauth-app",
+  request: request2 = request.defaults({
+    headers: {
+      "user-agent": `octokit-auth-oauth-app.js/${VERSION11} ${getUserAgent()}`
+    }
+  }),
+  onTokenCreated,
+  ...strategyOptions
+}) {
+  const state3 = Object.assign({
+    clientType,
+    clientId,
+    clientSecret,
+    onTokenCreated,
+    strategyOptions,
+    request: request2
+  });
+  return Object.assign(auth3.bind(null, state3), {
+    // @ts-expect-error not worth the extra code needed to appease TS
+    hook: hook3.bind(null, state3)
+  });
+}
+createOAuthUserAuth.VERSION = VERSION11;
+
+// node_modules/.pnpm/@octokit+auth-oauth-app@9.0.5/node_modules/@octokit/auth-oauth-app/dist-bundle/index.js
+async function auth4(state3, authOptions) {
+  if (authOptions.type === "oauth-app") {
+    return {
+      type: "oauth-app",
+      clientId: state3.clientId,
+      clientSecret: state3.clientSecret,
+      clientType: state3.clientType,
+      headers: {
+        authorization: `basic ${btoa(
+          `${state3.clientId}:${state3.clientSecret}`
+        )}`
+      }
+    };
+  }
+  if ("factory" in authOptions) {
+    const { type, ...options } = {
+      ...authOptions,
+      ...state3
+    };
+    return authOptions.factory(options);
+  }
+  const common = {
+    clientId: state3.clientId,
+    clientSecret: state3.clientSecret,
+    request: state3.request,
+    ...authOptions
+  };
+  const userAuth = state3.clientType === "oauth-app" ? await createOAuthUserAuth({
+    ...common,
+    clientType: state3.clientType
+  }) : await createOAuthUserAuth({
+    ...common,
+    clientType: state3.clientType
+  });
+  return userAuth();
+}
+async function hook4(state3, request2, route, parameters) {
+  let endpoint2 = request2.endpoint.merge(
+    route,
+    parameters
+  );
+  if (/\/login\/(oauth\/access_token|device\/code)$/.test(endpoint2.url)) {
+    return request2(endpoint2);
+  }
+  if (state3.clientType === "github-app" && !requiresBasicAuth(endpoint2.url)) {
+    throw new Error(
+      `[@octokit/auth-oauth-app] GitHub Apps cannot use their client ID/secret for basic authentication for endpoints other than "/applications/{client_id}/**". "${endpoint2.method} ${endpoint2.url}" is not supported.`
+    );
+  }
+  const credentials = btoa(`${state3.clientId}:${state3.clientSecret}`);
+  endpoint2.headers.authorization = `basic ${credentials}`;
+  try {
+    return await request2(endpoint2);
+  } catch (error62) {
+    if (error62.status !== 401) throw error62;
+    error62.message = `[@octokit/auth-oauth-app] "${endpoint2.method} ${endpoint2.url}" does not support clientId/clientSecret basic authentication.`;
+    throw error62;
+  }
+}
+var VERSION12 = "0.0.0-development";
+function createOAuthAppAuth(options) {
+  const state3 = Object.assign(
+    {
+      request: request.defaults({
+        headers: {
+          "user-agent": `octokit-auth-oauth-app.js/${VERSION12} ${getUserAgent()}`
+        }
+      }),
+      clientType: "oauth-app"
+    },
+    options
+  );
+  return Object.assign(auth4.bind(null, state3), {
+    hook: hook4.bind(null, state3)
+  });
+}
+
+// node_modules/.pnpm/universal-github-app-jwt@2.2.2/node_modules/universal-github-app-jwt/lib/utils.js
+function isPkcs1(privateKey) {
+  return privateKey.includes("-----BEGIN RSA PRIVATE KEY-----");
+}
+function isOpenSsh(privateKey) {
+  return privateKey.includes("-----BEGIN OPENSSH PRIVATE KEY-----");
+}
+function string2ArrayBuffer(str) {
+  const buf = new ArrayBuffer(str.length);
+  const bufView = new Uint8Array(buf);
+  for (let i = 0, strLen = str.length; i < strLen; i++) {
+    bufView[i] = str.charCodeAt(i);
+  }
+  return buf;
+}
+function getDERfromPEM(pem) {
+  const pemB64 = pem.trim().split("\n").slice(1, -1).join("");
+  const decoded = atob(pemB64);
+  return string2ArrayBuffer(decoded);
+}
+function getEncodedMessage(header, payload) {
+  return `${base64encodeJSON(header)}.${base64encodeJSON(payload)}`;
+}
+function base64encode2(buffer2) {
+  var binary = "";
+  var bytes = new Uint8Array(buffer2);
+  var len = bytes.byteLength;
+  for (var i = 0; i < len; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return fromBase64(btoa(binary));
+}
+function fromBase64(base643) {
+  return base643.replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
+}
+function base64encodeJSON(obj) {
+  return fromBase64(btoa(JSON.stringify(obj)));
+}
+
+// node_modules/.pnpm/universal-github-app-jwt@2.2.2/node_modules/universal-github-app-jwt/lib/crypto-node.js
+import { subtle } from "node:crypto";
+import { createPrivateKey } from "node:crypto";
+function convertPrivateKey(privateKey) {
+  if (!isPkcs1(privateKey)) return privateKey;
+  return createPrivateKey(privateKey).export({
+    type: "pkcs8",
+    format: "pem"
+  });
+}
+
+// node_modules/.pnpm/universal-github-app-jwt@2.2.2/node_modules/universal-github-app-jwt/lib/get-token.js
+async function getToken({ privateKey, payload }) {
+  const convertedPrivateKey = convertPrivateKey(privateKey);
+  if (isPkcs1(convertedPrivateKey)) {
+    throw new Error(
+      "[universal-github-app-jwt] Private Key is in PKCS#1 format, but only PKCS#8 is supported. See https://github.com/gr2m/universal-github-app-jwt#private-key-formats"
+    );
+  }
+  if (isOpenSsh(convertedPrivateKey)) {
+    throw new Error(
+      "[universal-github-app-jwt] Private Key is in OpenSSH format, but only PKCS#8 is supported. See https://github.com/gr2m/universal-github-app-jwt#private-key-formats"
+    );
+  }
+  const algorithm = {
+    name: "RSASSA-PKCS1-v1_5",
+    hash: { name: "SHA-256" }
+  };
+  const header = { alg: "RS256", typ: "JWT" };
+  const privateKeyDER = getDERfromPEM(convertedPrivateKey);
+  const importedKey = await subtle.importKey(
+    "pkcs8",
+    privateKeyDER,
+    algorithm,
+    false,
+    ["sign"]
+  );
+  const encodedMessage = getEncodedMessage(header, payload);
+  const encodedMessageArrBuf = string2ArrayBuffer(encodedMessage);
+  const signatureArrBuf = await subtle.sign(
+    algorithm.name,
+    importedKey,
+    encodedMessageArrBuf
+  );
+  const encodedSignature = base64encode2(signatureArrBuf);
+  return `${encodedMessage}.${encodedSignature}`;
+}
+
+// node_modules/.pnpm/universal-github-app-jwt@2.2.2/node_modules/universal-github-app-jwt/index.js
+async function githubAppJwt({
+  id,
+  privateKey,
+  now = Math.floor(Date.now() / 1e3)
+}) {
+  const privateKeyWithNewlines = privateKey.replace(/\\n/g, "\n");
+  const nowWithSafetyMargin = now - 30;
+  const expiration = nowWithSafetyMargin + 60 * 10;
+  const payload = {
+    iat: nowWithSafetyMargin,
+    // Issued at time
+    exp: expiration,
+    iss: id
+  };
+  const token = await getToken({
+    privateKey: privateKeyWithNewlines,
+    payload
+  });
+  return {
+    appId: id,
+    expiration,
+    token
+  };
+}
+
+// node_modules/.pnpm/toad-cache@3.7.4/node_modules/toad-cache/dist/toad-cache.mjs
+function validateCacheParams(max, ttlInMsecs) {
+  if (typeof max !== "number" || !Number.isInteger(max) || max < 0) {
+    throw new Error("Invalid max value");
+  }
+  if (typeof ttlInMsecs !== "number" || !Number.isInteger(ttlInMsecs) || ttlInMsecs < 0) {
+    throw new Error("Invalid ttl value");
+  }
+}
+var LruObject = class {
+  constructor(max = 1e3, ttlInMsecs = 0) {
+    validateCacheParams(max, ttlInMsecs);
+    this.first = null;
+    this.items = /* @__PURE__ */ Object.create(null);
+    this.last = null;
+    this.size = 0;
+    this.max = max;
+    this.ttl = ttlInMsecs;
+  }
+  bumpLru(item) {
+    if (this.last === item) {
+      return;
+    }
+    const last = this.last;
+    const next = item.next;
+    const prev = item.prev;
+    if (this.first === item) {
+      this.first = next;
+    }
+    item.next = null;
+    item.prev = last;
+    last.next = item;
+    if (prev !== null) {
+      prev.next = next;
+    }
+    if (next !== null) {
+      next.prev = prev;
+    }
+    this.last = item;
+  }
+  clear() {
+    this.items = /* @__PURE__ */ Object.create(null);
+    this.first = null;
+    this.last = null;
+    this.size = 0;
+  }
+  delete(key) {
+    const item = this.items[key];
+    if (item !== void 0) {
+      delete this.items[key];
+      this.size--;
+      if (item.prev !== null) {
+        item.prev.next = item.next;
+      }
+      if (item.next !== null) {
+        item.next.prev = item.prev;
+      }
+      if (this.first === item) {
+        this.first = item.next;
+      }
+      if (this.last === item) {
+        this.last = item.prev;
+      }
+    }
+  }
+  deleteMany(keys) {
+    for (var i = 0; i < keys.length; i++) {
+      this.delete(keys[i]);
+    }
+  }
+  evict() {
+    if (this.size > 0) {
+      const item = this.first;
+      delete this.items[item.key];
+      if (--this.size === 0) {
+        this.first = null;
+        this.last = null;
+      } else {
+        this.first = item.next;
+        this.first.prev = null;
+      }
+    }
+  }
+  expiresAt(key) {
+    const item = this.items[key];
+    if (item !== void 0) {
+      return item.expiry;
+    }
+  }
+  get(key) {
+    const item = this.items[key];
+    if (item !== void 0) {
+      if (this.ttl > 0 && item.expiry <= Date.now()) {
+        this.delete(key);
+        return;
+      }
+      this.bumpLru(item);
+      return item.value;
+    }
+  }
+  getMany(keys) {
+    const result = new Array(keys.length);
+    for (var i = 0; i < keys.length; i++) {
+      result[i] = this.get(keys[i]);
+    }
+    return result;
+  }
+  keys() {
+    return Object.keys(this.items);
+  }
+  set(key, value) {
+    const existing = this.items[key];
+    if (existing !== void 0) {
+      existing.value = value;
+      existing.expiry = this.ttl > 0 ? Date.now() + this.ttl : this.ttl;
+      this.bumpLru(existing);
+      return;
+    }
+    if (this.max > 0 && this.size >= this.max) {
+      this.evict();
+    }
+    const item = {
+      expiry: this.ttl > 0 ? Date.now() + this.ttl : this.ttl,
+      key,
+      prev: this.last,
+      next: null,
+      value
+    };
+    this.items[key] = item;
+    if (++this.size === 1) {
+      this.first = item;
+    } else {
+      this.last.next = item;
+    }
+    this.last = item;
+  }
+};
+
+// node_modules/.pnpm/@octokit+auth-app@8.3.1/node_modules/@octokit/auth-app/dist-node/index.js
+async function getAppAuthentication({
+  appId,
+  privateKey,
+  timeDifference,
+  createJwt
+}) {
+  try {
+    if (createJwt) {
+      const { jwt: jwt2, expiresAt } = await createJwt(appId, timeDifference);
+      return {
+        type: "app",
+        token: jwt2,
+        appId,
+        expiresAt
+      };
+    }
+    const authOptions = {
+      id: appId,
+      privateKey
+    };
+    if (timeDifference) {
+      Object.assign(authOptions, {
+        now: Math.floor(Date.now() / 1e3) + timeDifference
+      });
+    }
+    const appAuthentication = await githubAppJwt(authOptions);
+    return {
+      type: "app",
+      token: appAuthentication.token,
+      appId: appAuthentication.appId,
+      expiresAt: new Date(appAuthentication.expiration * 1e3).toISOString()
+    };
+  } catch (error62) {
+    if (privateKey === "-----BEGIN RSA PRIVATE KEY-----") {
+      throw new Error(
+        "The 'privateKey` option contains only the first line '-----BEGIN RSA PRIVATE KEY-----'. If you are setting it using a `.env` file, make sure it is set on a single line with newlines replaced by '\n'"
+      );
+    } else {
+      throw error62;
+    }
+  }
+}
+function getCache() {
+  return new LruObject(
+    // cache max. 15000 tokens, that will use less than 10mb memory
+    15e3,
+    // Cache for 1 minute less than GitHub expiry
+    1e3 * 60 * 59
+  );
+}
+async function get(cache, options) {
+  const cacheKey = optionsToCacheKey(options);
+  const result = await cache.get(cacheKey);
+  if (!result) {
+    return;
+  }
+  const [
+    token,
+    createdAt,
+    expiresAt,
+    repositorySelection,
+    permissionsString,
+    singleFileName
+  ] = result.split("|");
+  const permissions = options.permissions || permissionsString.split(/,/).reduce((permissions2, string4) => {
+    if (/!$/.test(string4)) {
+      permissions2[string4.slice(0, -1)] = "write";
+    } else {
+      permissions2[string4] = "read";
+    }
+    return permissions2;
+  }, {});
+  return {
+    token,
+    createdAt,
+    expiresAt,
+    permissions,
+    repositoryIds: options.repositoryIds,
+    repositoryNames: options.repositoryNames,
+    singleFileName,
+    repositorySelection
+  };
+}
+async function set2(cache, options, data) {
+  const key = optionsToCacheKey(options);
+  const permissionsString = options.permissions ? "" : Object.keys(data.permissions).map(
+    (name) => `${name}${data.permissions[name] === "write" ? "!" : ""}`
+  ).join(",");
+  const value = [
+    data.token,
+    data.createdAt,
+    data.expiresAt,
+    data.repositorySelection,
+    permissionsString,
+    data.singleFileName
+  ].join("|");
+  await cache.set(key, value);
+}
+function optionsToCacheKey({
+  installationId,
+  permissions = {},
+  repositoryIds = [],
+  repositoryNames = []
+}) {
+  const permissionsString = Object.keys(permissions).sort().map((name) => permissions[name] === "read" ? name : `${name}!`).join(",");
+  const repositoryIdsString = repositoryIds.sort().join(",");
+  const repositoryNamesString = repositoryNames.join(",");
+  return [
+    installationId,
+    repositoryIdsString,
+    repositoryNamesString,
+    permissionsString
+  ].filter(Boolean).join("|");
+}
+function toTokenAuthentication({
+  installationId,
+  token,
+  createdAt,
+  expiresAt,
+  repositorySelection,
+  permissions,
+  repositoryIds,
+  repositoryNames,
+  singleFileName
+}) {
+  return Object.assign(
+    {
+      type: "token",
+      tokenType: "installation",
+      token,
+      installationId,
+      permissions,
+      createdAt,
+      expiresAt,
+      repositorySelection
+    },
+    repositoryIds ? { repositoryIds } : null,
+    repositoryNames ? { repositoryNames } : null,
+    singleFileName ? { singleFileName } : null
+  );
+}
+async function getInstallationAuthentication(state3, options, customRequest) {
+  const installationId = Number(options.installationId || state3.installationId);
+  if (!installationId) {
+    throw new Error(
+      "[@octokit/auth-app] installationId option is required for installation authentication."
+    );
+  }
+  if (options.factory) {
+    const { type, factory, oauthApp, ...factoryAuthOptions } = {
+      ...state3,
+      ...options
+    };
+    return factory(factoryAuthOptions);
+  }
+  const request2 = customRequest || state3.request;
+  return getInstallationAuthenticationConcurrently(
+    state3,
+    { ...options, installationId },
+    request2
+  );
+}
+var pendingPromises = /* @__PURE__ */ new Map();
+function getInstallationAuthenticationConcurrently(state3, options, request2) {
+  const cacheKey = optionsToCacheKey(options);
+  if (pendingPromises.has(cacheKey)) {
+    return pendingPromises.get(cacheKey);
+  }
+  const promise2 = getInstallationAuthenticationImpl(
+    state3,
+    options,
+    request2
+  ).finally(() => pendingPromises.delete(cacheKey));
+  pendingPromises.set(cacheKey, promise2);
+  return promise2;
+}
+async function getInstallationAuthenticationImpl(state3, options, request2) {
+  if (!options.refresh) {
+    const result = await get(state3.cache, options);
+    if (result) {
+      const {
+        token: token2,
+        createdAt: createdAt2,
+        expiresAt: expiresAt2,
+        permissions: permissions2,
+        repositoryIds: repositoryIds2,
+        repositoryNames: repositoryNames2,
+        singleFileName: singleFileName2,
+        repositorySelection: repositorySelection2
+      } = result;
+      return toTokenAuthentication({
+        installationId: options.installationId,
+        token: token2,
+        createdAt: createdAt2,
+        expiresAt: expiresAt2,
+        permissions: permissions2,
+        repositorySelection: repositorySelection2,
+        repositoryIds: repositoryIds2,
+        repositoryNames: repositoryNames2,
+        singleFileName: singleFileName2
+      });
+    }
+  }
+  const appAuthentication = await getAppAuthentication(state3);
+  const payload = {
+    installation_id: options.installationId,
+    mediaType: {
+      previews: ["machine-man"]
+    },
+    headers: {
+      authorization: `bearer ${appAuthentication.token}`
+    }
+  };
+  if (options.repositoryIds) {
+    Object.assign(payload, { repository_ids: options.repositoryIds });
+  }
+  if (options.repositoryNames) {
+    Object.assign(payload, {
+      repositories: options.repositoryNames
+    });
+  }
+  if (options.permissions) {
+    Object.assign(payload, { permissions: options.permissions });
+  }
+  const {
+    data: {
+      token,
+      expires_at: expiresAt,
+      repositories,
+      permissions: permissionsOptional,
+      repository_selection: repositorySelectionOptional,
+      single_file: singleFileName
+    }
+  } = await request2(
+    "POST /app/installations/{installation_id}/access_tokens",
+    payload
+  );
+  const permissions = permissionsOptional || {};
+  const repositorySelection = repositorySelectionOptional || "all";
+  const repositoryIds = repositories ? repositories.map((r) => r.id) : void 0;
+  const repositoryNames = repositories ? repositories.map((repo) => repo.name) : void 0;
+  const createdAt = (/* @__PURE__ */ new Date()).toISOString();
+  const cacheOptions = {
+    token,
+    createdAt,
+    expiresAt,
+    repositorySelection,
+    permissions,
+    repositoryIds,
+    repositoryNames
+  };
+  if (singleFileName) {
+    Object.assign(payload, { singleFileName });
+  }
+  await set2(state3.cache, options, cacheOptions);
+  const cacheData = {
+    installationId: options.installationId,
+    token,
+    createdAt,
+    expiresAt,
+    repositorySelection,
+    permissions,
+    repositoryIds,
+    repositoryNames
+  };
+  if (singleFileName) {
+    Object.assign(cacheData, { singleFileName });
+  }
+  return toTokenAuthentication(cacheData);
+}
+async function auth5(state3, authOptions) {
+  switch (authOptions.type) {
+    case "app":
+      return getAppAuthentication(state3);
+    case "oauth-app":
+      return state3.oauthApp({ type: "oauth-app" });
+    case "installation":
+      authOptions;
+      return getInstallationAuthentication(state3, {
+        ...authOptions,
+        type: "installation"
+      });
+    case "oauth-user":
+      return state3.oauthApp(authOptions);
+    default:
+      throw new Error(`Invalid auth type: ${authOptions.type}`);
+  }
+}
+var PATHS = [
+  "/app",
+  "/app/hook/config",
+  "/app/hook/deliveries",
+  "/app/hook/deliveries/{delivery_id}",
+  "/app/hook/deliveries/{delivery_id}/attempts",
+  "/app/installations",
+  "/app/installations/{installation_id}",
+  "/app/installations/{installation_id}/access_tokens",
+  "/app/installations/{installation_id}/suspended",
+  "/app/installation-requests",
+  "/marketplace_listing/accounts/{account_id}",
+  "/marketplace_listing/plan",
+  "/marketplace_listing/plans",
+  "/marketplace_listing/plans/{plan_id}/accounts",
+  "/marketplace_listing/stubbed/accounts/{account_id}",
+  "/marketplace_listing/stubbed/plan",
+  "/marketplace_listing/stubbed/plans",
+  "/marketplace_listing/stubbed/plans/{plan_id}/accounts",
+  "/orgs/{org}/installation",
+  "/repos/{owner}/{repo}/installation",
+  "/users/{username}/installation",
+  "/enterprises/{enterprise}/installation"
+];
+function routeMatcher(paths) {
+  const regexes = paths.map(
+    (p) => p.split("/").map((c) => c.startsWith("{") ? "(?:.+?)" : c).join("/")
+  );
+  const regex = `^(?:${regexes.map((r) => `(?:${r})`).join("|")})$`;
+  return new RegExp(regex, "i");
+}
+var REGEX = routeMatcher(PATHS);
+function requiresAppAuth(url3) {
+  return !!url3 && REGEX.test(url3.split("?")[0]);
+}
+var FIVE_SECONDS_IN_MS = 5 * 1e3;
+function isNotTimeSkewError(error62) {
+  return !(error62.message.match(
+    /'Expiration time' claim \('exp'\) is too far in the future/
+  ) || error62.message.match(
+    /'Expiration time' claim \('exp'\) must be a numeric value representing the future time at which the assertion expires/
+  ) || error62.message.match(
+    /'Issued at' claim \('iat'\) must be an Integer representing the time that the assertion was issued/
+  ));
+}
+async function hook5(state3, request2, route, parameters) {
+  const endpoint2 = request2.endpoint.merge(route, parameters);
+  const url3 = endpoint2.url;
+  if (/\/login\/oauth\/access_token$/.test(url3)) {
+    return request2(endpoint2);
+  }
+  if (requiresAppAuth(url3.replace(request2.endpoint.DEFAULTS.baseUrl, ""))) {
+    const { token: token2 } = await getAppAuthentication(state3);
+    endpoint2.headers.authorization = `bearer ${token2}`;
+    let response;
+    try {
+      response = await request2(endpoint2);
+    } catch (error62) {
+      if (isNotTimeSkewError(error62)) {
+        throw error62;
+      }
+      if (typeof error62.response.headers.date === "undefined") {
+        throw error62;
+      }
+      const diff = Math.floor(
+        (Date.parse(error62.response.headers.date) - Date.parse((/* @__PURE__ */ new Date()).toString())) / 1e3
+      );
+      state3.log.warn(error62.message);
+      state3.log.warn(
+        `[@octokit/auth-app] GitHub API time and system time are different by ${diff} seconds. Retrying request with the difference accounted for.`
+      );
+      const { token: token3 } = await getAppAuthentication({
+        ...state3,
+        timeDifference: diff
+      });
+      endpoint2.headers.authorization = `bearer ${token3}`;
+      return request2(endpoint2);
+    }
+    return response;
+  }
+  if (requiresBasicAuth(url3)) {
+    const authentication = await state3.oauthApp({ type: "oauth-app" });
+    endpoint2.headers.authorization = authentication.headers.authorization;
+    return request2(endpoint2);
+  }
+  const { token, createdAt } = await getInstallationAuthentication(
+    state3,
+    // @ts-expect-error TBD
+    {},
+    request2.defaults({ baseUrl: endpoint2.baseUrl })
+  );
+  endpoint2.headers.authorization = `token ${token}`;
+  return sendRequestWithRetries(
+    state3,
+    request2,
+    endpoint2,
+    createdAt
+  );
+}
+async function sendRequestWithRetries(state3, request2, options, createdAt, retries = 0) {
+  const timeSinceTokenCreationInMs = +/* @__PURE__ */ new Date() - +new Date(createdAt);
+  try {
+    return await request2(options);
+  } catch (error62) {
+    if (error62.status !== 401) {
+      throw error62;
+    }
+    if (timeSinceTokenCreationInMs >= FIVE_SECONDS_IN_MS) {
+      if (retries > 0) {
+        error62.message = `After ${retries} retries within ${timeSinceTokenCreationInMs / 1e3}s of creating the installation access token, the response remains 401. At this point, the cause may be an authentication problem or a system outage. Please check https://www.githubstatus.com for status information`;
+      }
+      throw error62;
+    }
+    ++retries;
+    const awaitTime = retries * 1e3;
+    state3.log.warn(
+      `[@octokit/auth-app] Retrying after 401 response to account for token replication delay (retry: ${retries}, wait: ${awaitTime / 1e3}s)`
+    );
+    await new Promise((resolve3) => setTimeout(resolve3, awaitTime));
+    return sendRequestWithRetries(state3, request2, options, createdAt, retries);
+  }
+}
+var VERSION13 = "8.3.1";
+function createAppAuth(options) {
+  if (!options.appId) {
+    throw new Error("[@octokit/auth-app] appId option is required");
+  }
+  if (!options.privateKey && !options.createJwt) {
+    throw new Error("[@octokit/auth-app] privateKey option is required");
+  } else if (options.privateKey && options.createJwt) {
+    throw new Error(
+      "[@octokit/auth-app] privateKey and createJwt options are mutually exclusive"
+    );
+  }
+  if ("installationId" in options && !options.installationId) {
+    throw new Error(
+      "[@octokit/auth-app] installationId is set to a falsy value"
+    );
+  }
+  const log3 = options.log || {};
+  if (typeof log3.warn !== "function") {
+    log3.warn = console.warn.bind(console);
+  }
+  const request2 = options.request || request.defaults({
+    headers: {
+      "user-agent": `octokit-auth-app.js/${VERSION13} ${getUserAgent()}`
+    }
+  });
+  const state3 = Object.assign(
+    {
+      request: request2,
+      cache: getCache()
+    },
+    options,
+    options.installationId ? { installationId: Number(options.installationId) } : {},
+    {
+      log: log3,
+      oauthApp: createOAuthAppAuth({
+        clientType: "github-app",
+        clientId: options.clientId || "",
+        clientSecret: options.clientSecret || "",
+        request: request2
+      })
+    }
+  );
+  return Object.assign(auth5.bind(null, state3), {
+    hook: hook5.bind(null, state3)
+  });
+}
+
+// packages/action/src/runtime-octokit.ts
+function makeRuntimeOctokit(cred) {
+  if (cred.kind === "pat") return new Octokit2({ auth: cred.token });
+  return new Octokit2({
+    authStrategy: createAppAuth,
+    auth: {
+      appId: cred.appId,
+      privateKey: cred.privateKey,
+      installationId: cred.installationId
+    }
+  });
+}
+function makePushTokenProvider(cred, octokit) {
+  if (cred.kind === "pat") {
+    const token = cred.token;
+    return () => Promise.resolve(token);
+  }
+  return async () => {
+    const auth6 = await octokit.auth({ type: "installation" });
+    return auth6.token;
+  };
+}
+
 // packages/action/src/entry.ts
 var log2 = {
   info: (message) => info(message),
@@ -126927,7 +128336,7 @@ async function fetchJson(url3, headers) {
   return response.json();
 }
 async function run() {
-  const token = requireEnv(RUNTIME_TOKEN_SECRET);
+  const cred = resolveRuntimeCredentialFromEnv(process.env);
   const repoFullName = requireEnv("GITHUB_REPOSITORY");
   const workspaceDir = requireEnv("GITHUB_WORKSPACE");
   const tempDir = requireEnv("RUNNER_TEMP");
@@ -126948,7 +128357,8 @@ async function run() {
       `agent "script" executes issue bodies as shell and is for fixowl's own tests; set FIXOWL_UNSAFE_SCRIPT_AGENT=1 in the workflow env if you really mean it`
     );
   }
-  const octokit = new Octokit2({ auth: token });
+  const octokit = makeRuntimeOctokit(cred);
+  const pushTokenProvider = makePushTokenProvider(cred, octokit);
   const { data: repoData } = await octokit.repos.get({ owner, repo });
   const guardToken = process.env.GITHUB_TOKEN;
   const runsOctokit = guardToken !== void 0 && guardToken !== "" ? new Octokit2({ auth: guardToken }) : void 0;
@@ -126986,7 +128396,7 @@ async function run() {
       workspaceDir,
       tempDir,
       runUrl,
-      pushToken: token,
+      pushTokenProvider,
       env: process.env
     }
   );
@@ -127096,4 +128506,32 @@ content-type/dist/index.js:
 
 @octokit/graphql/dist-bundle/index.js:
   (* v8 ignore if -- @preserve *)
+
+@octokit/oauth-methods/dist-bundle/index.js:
+  (* v8 ignore next: we always pass a custom request in tests -- @preserve *)
+
+@octokit/auth-oauth-device/dist-bundle/index.js:
+  (* v8 ignore next 2 -- @preserve *)
+
+@octokit/auth-oauth-user/dist-bundle/index.js:
+  (* v8 ignore if -- @preserve *)
+  (* v8 ignore next -- @preserve *)
+
+@octokit/auth-oauth-app/dist-bundle/index.js:
+  (* v8 ignore next -- @preserve *)
+
+toad-cache/dist/toad-cache.mjs:
+  (**
+   * toad-cache
+   *
+   * @copyright 2026 Igor Savin <kibertoad@gmail.com>
+   * @license MIT
+   * @version 3.7.3
+   *)
+
+@octokit/auth-app/dist-node/index.js:
+  (* v8 ignore next - permissions are optional per OpenAPI spec, but we think that is incorrect -- @preserve *)
+  (* v8 ignore next - repositorySelection are optional per OpenAPI spec, but we think that is incorrect -- @preserve *)
+  (* v8 ignore start - due to skipped tests, see https://github.com/octokit/auth-app.js/pull/580 -- @preserve *)
+  (* v8 ignore end -- @preserve *)
 */

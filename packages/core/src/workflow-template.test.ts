@@ -110,6 +110,29 @@ describe("renderFixowlWorkflow", () => {
     expect(JSON.parse(yamlScalar)).toEqual({ heavy: { model: "opus", effort: "max" } });
   });
 
+  it("wires the App secret trio (and omits the runtime PAT) when appAuth is on", () => {
+    const rendered = renderFixowlWorkflow({ ...baseOptions, appAuth: true });
+    expect(rendered).toContain("FIXOWL_APP_ID: ${{ secrets.FIXOWL_APP_ID }}");
+    expect(rendered).toContain(
+      "FIXOWL_APP_INSTALLATION_ID: ${{ secrets.FIXOWL_APP_INSTALLATION_ID }}",
+    );
+    expect(rendered).toContain("FIXOWL_APP_PRIVATE_KEY: ${{ secrets.FIXOWL_APP_PRIVATE_KEY }}");
+    // The single runtime PAT secret is not wired in the App workflow.
+    expect(rendered).not.toContain("FIXOWL_GITHUB_TOKEN: ${{ secrets.FIXOWL_GITHUB_TOKEN }}");
+    // The ephemeral guard token is unchanged; agent env still wired.
+    expect(rendered).toContain("GITHUB_TOKEN: ${{ github.token }}");
+    expect(rendered).toContain("CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}");
+  });
+
+  it("renders the PAT workflow byte-for-byte when appAuth is off (default)", () => {
+    // The App branch must be inert unless explicitly enabled, so a PAT repo is
+    // unaffected until re-provisioned.
+    const base = renderFixowlWorkflow(baseOptions);
+    expect(renderFixowlWorkflow({ ...baseOptions, appAuth: false })).toBe(base);
+    expect(base).toContain("FIXOWL_GITHUB_TOKEN: ${{ secrets.FIXOWL_GITHUB_TOKEN }}");
+    expect(base).not.toContain("FIXOWL_APP_ID");
+  });
+
   it("passes actionlint when available", () => {
     try {
       execFileSync("actionlint", ["--version"], { stdio: "ignore" });
@@ -127,6 +150,7 @@ describe("renderFixowlWorkflow", () => {
       ["scheduled.yml", baseOptions],
       ["dispatch-only.yml", { ...baseOptions, schedule: null }],
       ["cloud.yml", { ...baseOptions, runsOn: "ubuntu-latest" }],
+      ["app-auth.yml", { ...baseOptions, appAuth: true }],
     ] as const) {
       const file = join(wfDir, name);
       writeFileSync(file, renderFixowlWorkflow(options));
