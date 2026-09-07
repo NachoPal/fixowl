@@ -105,6 +105,7 @@ export {
 } from "./workflow-template.ts";
 export {
   anchorOccurrence,
+  coversScheduledSlot,
   decideFallbackDispatch,
   guardScheduledSlot,
   isSameUtcDay,

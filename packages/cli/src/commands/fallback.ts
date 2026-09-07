@@ -64,6 +64,7 @@ export function realFallbackCheckDeps(ctx: CliContext): FallbackCheckDeps {
         id: run.id,
         event: run.event,
         status: run.status ?? null,
+        conclusion: run.conclusion ?? null,
         createdAt: run.created_at,
         displayTitle: run.display_title ?? run.name ?? "",
       }));
