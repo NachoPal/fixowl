@@ -66,11 +66,12 @@ export function isFailureConclusion(conclusion: CheckStatusLite["conclusion"]): 
  * itself failed because the runtime token cannot access the check-runs API - a
  * fine-grained PAT cannot be granted that scope (GitHub does not expose a
  * grantable "Checks" permission), so the read returns HTTP 403. An unreadable
- * result degrades the CI gate the same way an unreadable required set does: the
- * poll loop warns loudly that CI could not be verified and flips the draft PR to
- * ready after the settle window, rather than failing the issue (captain 7.2).
- * When `readable` is true, `checks` is the full, de-duplicated set on the ref
- * (possibly empty when no CI is configured).
+ * result shares the unreadable-required-set fallback's *behaviour* - the poll
+ * loop warns loudly that CI could not be verified and flips the draft PR to
+ * ready after the settle window, rather than failing the issue (captain 7.2) -
+ * but reports a distinct `unverified` outcome (never green), because zero checks
+ * were consulted: see ci-poll.ts. When `readable` is true, `checks` is the full,
+ * de-duplicated set on the ref (possibly empty when no CI is configured).
  */
 export interface ChecksForRef {
   readable: boolean;
