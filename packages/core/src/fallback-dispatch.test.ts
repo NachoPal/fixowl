@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   anchorOccurrence,
+  coversScheduledSlot,
   decideFallbackDispatch,
   guardScheduledSlot,
   isSameUtcDay,
@@ -16,6 +17,7 @@ function run(overrides: Partial<WorkflowRunLite> = {}): WorkflowRunLite {
     id: 1,
     event: "schedule",
     status: "completed",
+    conclusion: "success",
     createdAt: "2026-09-05T05:18:03Z",
     displayTitle: "fixowl night run",
     ...overrides,
@@ -214,6 +216,23 @@ describe("decideFallbackDispatch", () => {
   });
 });
 
+describe("coversScheduledSlot", () => {
+  it("counts a completed successful run", () => {
+    expect(coversScheduledSlot(run({ status: "completed", conclusion: "success" }))).toBe(true);
+  });
+
+  it("does not count a completed failed/cancelled/timed-out run", () => {
+    for (const conclusion of ["failure", "cancelled", "timed_out", "startup_failure"]) {
+      expect(coversScheduledSlot(run({ status: "completed", conclusion }))).toBe(false);
+    }
+  });
+
+  it("counts a run that has not completed yet (queued/in_progress)", () => {
+    expect(coversScheduledSlot(run({ status: "queued", conclusion: null }))).toBe(true);
+    expect(coversScheduledSlot(run({ status: "in_progress", conclusion: null }))).toBe(true);
+  });
+});
+
 describe("guardScheduledSlot", () => {
   const base = { now: NOW, marker: SCHEDULED_FALLBACK_MARKER };
 
@@ -299,6 +318,67 @@ describe("guardScheduledSlot", () => {
     expect(
       guardScheduledSlot({ ...base, runs, currentRunId: 101, selfIsScheduledSlot: true }).proceed,
     ).toBe(false);
+  });
+
+  it("does NOT stand down for an earlier scheduled-slot run that completed with a failure", () => {
+    // Regression for the real incident: a fallback dispatch that FAILED at job
+    // setup (GitHub reports status=completed, conclusion=failure) must not
+    // consume the day's slot, so the later cron run proceeds and the night runs.
+    const result = guardScheduledSlot({
+      ...base,
+      runs: [
+        fallbackRun({ id: 100, status: "completed", conclusion: "failure" }),
+        run({ id: 200, event: "schedule" }),
+      ],
+      currentRunId: 200,
+      selfIsScheduledSlot: true,
+    });
+    expect(result.proceed).toBe(true);
+    expect(result.reason).toContain("first scheduled-slot run");
+  });
+
+  it("does NOT stand down for an earlier scheduled-slot run that was cancelled", () => {
+    const result = guardScheduledSlot({
+      ...base,
+      runs: [
+        fallbackRun({ id: 100, status: "completed", conclusion: "cancelled" }),
+        run({ id: 200, event: "schedule" }),
+      ],
+      currentRunId: 200,
+      selfIsScheduledSlot: true,
+    });
+    expect(result.proceed).toBe(true);
+  });
+
+  it("stands down for an earlier scheduled-slot run that completed successfully", () => {
+    const result = guardScheduledSlot({
+      ...base,
+      runs: [
+        fallbackRun({ id: 100, status: "completed", conclusion: "success" }),
+        run({ id: 200, event: "schedule" }),
+      ],
+      currentRunId: 200,
+      selfIsScheduledSlot: true,
+    });
+    expect(result.proceed).toBe(false);
+    expect(result.supersededBy?.id).toBe(100);
+    expect(result.reason).toContain("conclusion success");
+  });
+
+  it("stands down for an earlier scheduled-slot run still in progress (no conclusion yet)", () => {
+    // An incomplete earlier run may still do the night's work; defer to it to
+    // avoid a concurrent double-run.
+    const result = guardScheduledSlot({
+      ...base,
+      runs: [
+        fallbackRun({ id: 100, status: "in_progress", conclusion: null }),
+        run({ id: 200, event: "schedule" }),
+      ],
+      currentRunId: 200,
+      selfIsScheduledSlot: true,
+    });
+    expect(result.proceed).toBe(false);
+    expect(result.supersededBy?.id).toBe(100);
   });
 
   describe("anchored occurrence window (cronSchedule passed)", () => {

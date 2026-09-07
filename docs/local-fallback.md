@@ -31,6 +31,17 @@ never both - while manual runs stay unrestricted. Two pure, unit-tested pieces
    dispatch is never a scheduled-slot run and is never guarded, so you can run
    the workflow by hand as often as you like.
 
+   Only an earlier run that actually did (or may yet do) the night's work counts
+   as covering the slot: one that **succeeded**, or is still **queued/in-progress**
+   (GitHub reports both `status` and `conclusion`; the guard keys off both). An
+   earlier scheduled-slot run that **completed but failed** (or was cancelled or
+   timed out) did *not* run the night, so it does **not** consume the slot - the
+   later run proceeds and the night runs. Re-running after a failed slot run is
+   safe: per-issue branch idempotency (`issue/<n>-*`) skips any issue the failed
+   run already shipped, so no duplicate PRs. (Before this rule a fallback that
+   crashed at job setup would wrongly consume the slot and stand the real cron
+   down, skipping the whole night.)
+
 The fallback tags its dispatch with the `source: scheduled-fallback`
 workflow input, surfaced in the run-name as `[scheduled-fallback]`, so:
 
