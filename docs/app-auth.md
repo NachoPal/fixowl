@@ -65,10 +65,12 @@ minted after the first expires.
 6. **`fixowl init`** and choose the **GitHub App** tier. It asks for the App ID
    (App > General), the Installation ID (the number in the install settings URL,
    `.../installations/<id>`), and the base64 key; it verifies the App
-   authenticates and holds `Checks: read` before writing the config. Or edit the
-   config by hand (see below).
-7. **`fixowl validate`** re-checks the App identity, `Checks: read`, and that the
-   App is installed on each configured repo.
+   authenticates and holds `Checks: read` (plus `Contents: write` and
+   `Pull requests: write`, without which pushes/PRs fail at night) before writing
+   the config. Or edit the config by hand (see below).
+7. **`fixowl validate`** re-checks the App identity, `Checks: read`,
+   `Contents: write`, `Pull requests: write`, and that the App is installed on
+   each configured repo.
 8. **`fixowl provision`** seals `FIXOWL_APP_ID` / `FIXOWL_APP_INSTALLATION_ID` /
    `FIXOWL_APP_PRIVATE_KEY` as repo Actions secrets (the private key normalized
    to PKCS#8, see below) and renders a workflow whose fixowl step env carries the

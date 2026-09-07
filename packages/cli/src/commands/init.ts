@@ -267,7 +267,8 @@ Mint it at ${PAT_URL}`);
  * Collect and verify the GitHub App credential. The private key is stored
  * base64-encoded (so the multi-line PEM survives secrets.env); verification
  * confirms the App authenticates and holds Checks: read - the honest pre-flight
- * for the whole reason to use an App.
+ * for the whole reason to use an App - plus the write permissions the night
+ * needs (Contents: write for pushes, Pull requests: write for PRs).
  */
 async function stepAppCredential(
   prompter: Prompter,
@@ -319,7 +320,8 @@ function numericId(value: string): string | undefined {
 }
 
 /**
- * Confirm a GitHub App credential authenticates and holds Checks: read. Mirrors
+ * Confirm a GitHub App credential authenticates and holds Checks: read (plus the
+ * Contents: write / Pull requests: write the night needs). Mirrors
  * `fixowl validate`'s App branch so the wizard fails fast instead of at 2am.
  */
 async function verifyApp(

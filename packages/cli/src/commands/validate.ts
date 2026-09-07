@@ -105,7 +105,9 @@ export async function validateCommand(ctx: CliContext): Promise<boolean> {
  * token has no user), so it branches to the App's own identity (`GET /app`),
  * confirms the installation exists, and - the honest pre-flight for the whole
  * reason to use an App - confirms it holds `Checks: read` (else the CI gate
- * silently degrades at 2am) and is installed on each configured repo.
+ * silently degrades at 2am) plus the write permissions the night needs
+ * (`Contents: write` for pushes, `Pull requests: write` for PRs), and is
+ * installed on each configured repo.
  */
 export async function validateRuntimeCredential(
   ctx: CliContext,
