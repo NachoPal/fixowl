@@ -167,8 +167,15 @@ ${withLines.join("\n")}
           GITHUB_TOKEN: \${{ github.token }} # Actions: read, for the once-a-day budget guard
 ${secretEnv}
 
+      # Best-effort combined upload. Per-issue \`fixowl-evidence-issue-<n>\`
+      # artifacts (uploaded progressively as each issue finishes) are the
+      # primary mechanism; this end-of-job combined artifact is only a
+      # convenience fallback for a fully-successful night. Its FinalizeArtifact
+      # step intermittently 403s (a cancelled-job runner reconnect, or a
+      # transient artifact-service error), so it must never fail the whole run.
       - uses: ${UPLOAD_ARTIFACT_PIN}
         if: always()
+        continue-on-error: true
         with:
           name: fixowl-evidence
           path: \${{ runner.temp }}/fixowl-evidence/

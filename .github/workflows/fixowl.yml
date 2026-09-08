@@ -59,8 +59,15 @@ jobs:
           FIXOWL_APP_PRIVATE_KEY: ${{ secrets.FIXOWL_APP_PRIVATE_KEY }}
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 
+      # Best-effort combined upload. Per-issue `fixowl-evidence-issue-<n>`
+      # artifacts (uploaded progressively as each issue finishes) are the
+      # primary mechanism; this end-of-job combined artifact is only a
+      # convenience fallback for a fully-successful night. Its FinalizeArtifact
+      # step intermittently 403s (a cancelled-job runner reconnect, or a
+      # transient artifact-service error), so it must never fail the whole run.
       - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         if: always()
+        continue-on-error: true
         with:
           name: fixowl-evidence
           path: ${{ runner.temp }}/fixowl-evidence/
