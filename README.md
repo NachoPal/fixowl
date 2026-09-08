@@ -85,8 +85,9 @@ fixowl init          # guided setup, start to finish
 `init` walks through the whole thing and writes nothing until you have answered:
 
 1. the admin fine-grained PAT plus the **GitHub App** the night run
-   authenticates as (~15 min to create once; it verifies each against GitHub as
-   you paste it),
+   authenticates as - created for you in **one browser click** via GitHub's App
+   Manifest flow (permissions pre-filled and explained, credentials captured
+   automatically; a headless variant covers SSH hosts),
 2. the coding agent and its credential,
 3. one or more repos: schedule (local `HH:MM`, converted to a UTC cron), labels,
    and how many issues a night may take on,

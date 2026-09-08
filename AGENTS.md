@@ -87,6 +87,15 @@ See [docs/releasing.md](docs/releasing.md).
 
 ## Conventions
 
+- App onboarding (`fixowl init`) is GitHub's App Manifest one-click flow: pure
+  manifest + rationale logic in `packages/cli/src/github/app-manifest.ts` (its
+  permissions must stay in lockstep with init's `verifyApp`, `fixowl validate`,
+  and the rationale table in docs/app-auth.md), the loopback code catcher in
+  `manifest-server.ts`, and Installation-ID auto-detection in
+  `app-installations.ts`. Manual App creation is only an advanced footnote in
+  docs/app-auth.md - never reintroduce it as a second co-equal onboarding path
+  (the Tier-1 lesson), and there is no API for the App avatar (manual upload of
+  `assets/fixowl-app-avatar.png`, optional).
 - The container name format (`fixowl-<repo>-<issue|classify>-<purpose>`) is owned by
   `packages/core/src/container-naming.ts` (`containerName`, `containerNamePrefix`,
   `parseContainerName`). The action re-exports `containerName` from `container-exec.ts`;

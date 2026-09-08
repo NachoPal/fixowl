@@ -25,6 +25,20 @@ export function githubClient(token: string): Octokit {
  * @octokit/auth-app picks the right auth per endpoint. `privateKey` must be a
  * PKCS#8 PEM (normalize with `toPkcs8Pem` first).
  */
+/**
+ * An App client authenticated with only the App JWT (no installation bound
+ * yet): what `fixowl init` uses right after the manifest flow to list the
+ * App's installations and auto-detect the Installation ID. `privateKey` must
+ * be a PKCS#8 PEM (normalize with `toPkcs8Pem` first).
+ */
+export function appJwtClient(appId: number, privateKey: string): Octokit {
+  return new Octokit({
+    authStrategy: createAppAuth,
+    auth: { appId, privateKey },
+    log: QUIET,
+  });
+}
+
 export function appClient(cred: RuntimeCredential): Octokit {
   return new Octokit({
     authStrategy: createAppAuth,
