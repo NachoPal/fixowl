@@ -1,10 +1,11 @@
 import { mkdtempSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { getAgentAdapter } from "@fixowl/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { parseSecretsEnv } from "../config-load.ts";
 import type { EngineStatus } from "../docker/engine-check.ts";
-import { initCommand } from "./init.ts";
+import { AGENT_CHOICES, AGENT_SECRET_HELP, initCommand } from "./init.ts";
 
 const stubEngine = async (): Promise<EngineStatus> => ({
   ok: true,
@@ -59,6 +60,38 @@ describe("fixowl init --non-interactive", () => {
     await initCommand({ configPath, nonInteractive: true, checkEngine: stubEngine });
 
     expect(readFileSync(configPath, "utf8")).toBe(before);
+  });
+});
+
+describe("fixowl init agent picker (step 2/4)", () => {
+  it("offers claude, codex, and aider - not just claude", () => {
+    expect(AGENT_CHOICES.map((choice) => choice.value)).toEqual(["claude", "codex", "aider"]);
+  });
+
+  it("carries an env allowlist the core adapter accepts for every choice", () => {
+    for (const choice of AGENT_CHOICES) {
+      // getAgentAdapter throws on an unknown agent or a forbidden env var, so a
+      // clean call proves the wizard's choice is a real, safe adapter override.
+      const adapter = getAgentAdapter(choice.value, choice.env);
+      expect(adapter.env).toEqual([...choice.env]);
+    }
+  });
+
+  it("pairs codex with OPENAI_API_KEY and aider with ANTHROPIC_API_KEY", () => {
+    const byValue = Object.fromEntries(AGENT_CHOICES.map((c) => [c.value, c.env]));
+    expect(byValue.claude).toEqual(["CLAUDE_CODE_OAUTH_TOKEN"]);
+    expect(byValue.codex).toEqual(["OPENAI_API_KEY"]);
+    expect(byValue.aider).toEqual(["ANTHROPIC_API_KEY"]);
+  });
+
+  it("provides real credential guidance for every agent's env var", () => {
+    for (const choice of AGENT_CHOICES) {
+      for (const name of choice.env) {
+        expect(AGENT_SECRET_HELP[name], `missing help for ${name}`).toBeTruthy();
+      }
+    }
+    expect(AGENT_SECRET_HELP.OPENAI_API_KEY).toContain("platform.openai.com");
+    expect(AGENT_SECRET_HELP.ANTHROPIC_API_KEY).toContain("console.anthropic.com");
   });
 });
 

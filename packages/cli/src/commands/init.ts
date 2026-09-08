@@ -54,20 +54,45 @@ const PAT_URL = "https://github.com/settings/personal-access-tokens/new";
 /** Homepage the manifest pre-fills - required by GitHub, not used functionally. */
 const FIXOWL_HOMEPAGE = "https://github.com/NachoPal/fixowl";
 
-/** Agents offered by the wizard. Test-only and paid-API adapters stay out of it. */
-const AGENT_CHOICES = [
+/**
+ * Agents offered by the wizard, each carrying the env var(s) the operator must
+ * supply. The test-only `script` adapter stays out. codex and aider each need a
+ * paid API key, which their core adapters keep OUT of the default allowlist
+ * (`env: []`) so it is opted in only deliberately; the wizard opts it in here by
+ * naming the env var, and it is written as `agents: { <agent>: { env: [...] } }`.
+ */
+export const AGENT_CHOICES = [
   {
     value: "claude",
     label: "claude",
     hint: "Claude Code, driven by your Claude subscription token",
+    env: ["CLAUDE_CODE_OAUTH_TOKEN"],
+  },
+  {
+    value: "codex",
+    label: "codex",
+    hint: "OpenAI Codex CLI, driven by your OpenAI API key (billed as API usage)",
+    env: ["OPENAI_API_KEY"],
+  },
+  {
+    value: "aider",
+    label: "aider",
+    hint: "aider, driven by your Anthropic API key (billed as API usage)",
+    env: ["ANTHROPIC_API_KEY"],
   },
 ] as const;
 
 /** How to obtain each agent credential, keyed by the adapter's env var. */
-const AGENT_SECRET_HELP: Record<string, string> = {
+export const AGENT_SECRET_HELP: Record<string, string> = {
   CLAUDE_CODE_OAUTH_TOKEN:
     "Run `claude setup-token` in another terminal. It opens a browser and prints a\n" +
     "  long-lived token tied to your Claude subscription.",
+  OPENAI_API_KEY:
+    "Create an API key at https://platform.openai.com/api-keys. codex bills this\n" +
+    "  as OpenAI API usage, separate from any ChatGPT subscription.",
+  ANTHROPIC_API_KEY:
+    "Create an API key at https://console.anthropic.com/settings/keys. aider bills\n" +
+    "  this as Anthropic API usage.",
 };
 
 export interface InitOptions {
@@ -688,8 +713,15 @@ async function stepAgent(
   log.info(`
 Step 2/4  Coding agent
 ----------------------`);
-  const agent = await prompter.choose("Which agent should fix your issues?", [...AGENT_CHOICES]);
-  const adapter = getAgentAdapter(agent);
+  const agent = await prompter.choose(
+    "Which agent should fix your issues?",
+    AGENT_CHOICES.map(({ value, label, hint }) => ({ value, label, hint })),
+  );
+  // The chosen agent's env allowlist. For claude this matches the adapter's
+  // built-in default; for codex/aider the adapter keeps its default empty on
+  // purpose, so the wizard opts the paid key in via this override.
+  const choice = AGENT_CHOICES.find((c) => c.value === agent);
+  const adapter = getAgentAdapter(agent, choice?.env);
 
   for (const name of adapter.env) {
     const help = AGENT_SECRET_HELP[name];
