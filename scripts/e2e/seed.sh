@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
-# Seed the E2E sandbox with a fresh, throwaway fixture: two `for: agent` issues
+# Seed the E2E sandbox with a fresh, throwaway fixture: two `for: ci-e2e` issues
 # (A, then B) joined by one native `blocked_by` edge (B is blocked_by A). This is
 # what exercises fixowl Layer-1 dependency ordering + stacking (B's PR stacks on
 # A's branch).
+#
+# `for: ci-e2e` is a dedicated selector label separate from the product's
+# `for: agent`, so a run's fixtures are the only issues it can ever select -
+# pre-existing `for: agent` (or other) issues in the shared sandbox can no
+# longer starve or flake the run (see issue #97).
 #
 # The issue bodies differ by tier:
 #   E2E_MODE=paid  -> natural-language edit instructions for the real claude agent
@@ -25,7 +30,7 @@ R="$SANDBOX_REPO"
 
 # Belt-and-suspenders: make sure the selector labels exist before we tag issues
 # with them, so a missing label never fails the seed. --force is idempotent.
-gh label create "for: agent" -R "$R" --color 5319e7 --force >/dev/null 2>&1 || true
+gh label create "for: ci-e2e" -R "$R" --color 0e8a16 --force >/dev/null 2>&1 || true
 gh label create "effort: high" -R "$R" --color b60205 --force >/dev/null 2>&1 || true
 
 if [ "$E2E_MODE" = "free" ]; then
@@ -40,11 +45,11 @@ else
   BODY_B="Append a single new line \`<!-- WORLD $RUN_TAG -->\` to the very end of README.md. Change nothing else."
 fi
 
-# Prerequisite A (plain for: agent).
+# Prerequisite A (plain for: ci-e2e).
 A=$(gh api "repos/$R/issues" \
   -f title="[$RUN_TAG] add HELLO note to README" \
   -f body="$BODY_A" \
-  -f 'labels[]=for: agent' \
+  -f 'labels[]=for: ci-e2e' \
   --jq .number)
 
 # Dependent B, additionally tagged effort: high. With label-models empty the
@@ -52,7 +57,7 @@ A=$(gh api "repos/$R/issues" \
 B=$(gh api "repos/$R/issues" \
   -f title="[$RUN_TAG] add WORLD note to README" \
   -f body="$BODY_B" \
-  -f 'labels[]=for: agent' \
+  -f 'labels[]=for: ci-e2e' \
   -f 'labels[]=effort: high' \
   --jq .number)
 
@@ -66,7 +71,7 @@ echo "seeded [$RUN_TAG] in $R: A=$A (blocker) B=$B (blocked_by A)"
 
 # Read-after-write race: GitHub's label-filtered issue list is eventually
 # consistent, so a just-created labeled issue can be absent from
-# `GET /issues?state=open&labels=for: agent` for a few seconds. That is the exact
+# `GET /issues?state=open&labels=for: ci-e2e` for a few seconds. That is the exact
 # query fixowl selects with (packages/action/src/entry.ts listOpenIssuesWithLabels,
 # minus pull requests). If the "Run fixowl" step fires into that lag it sees zero
 # matching issues -> "nothing to do tonight" -> no PR -> a false E2E failure.
@@ -78,12 +83,12 @@ echo "seeded [$RUN_TAG] in $R: A=$A (blocker) B=$B (blocked_by A)"
 WAIT_TIMEOUT_SECS="${SEED_WAIT_TIMEOUT_SECS:-60}"
 WAIT_INTERVAL_SECS="${SEED_WAIT_INTERVAL_SECS:-3}"
 deadline=$(( $(date +%s) + WAIT_TIMEOUT_SECS ))
-echo "waiting for issues $A and $B to be visible to the 'for: agent' selection query..."
+echo "waiting for issues $A and $B to be visible to the 'for: ci-e2e' selection query..."
 while :; do
-  # Same shape fixowl uses: state=open, labels="for: agent", drop pull requests.
+  # Same shape fixowl uses: state=open, labels="for: ci-e2e", drop pull requests.
   visible=$(gh api -X GET "repos/$R/issues" \
     -f state=open \
-    -f "labels=for: agent" \
+    -f "labels=for: ci-e2e" \
     -f per_page=100 \
     --paginate \
     --jq '.[] | select(.pull_request == null) | .number' 2>/dev/null | tr '\n' ' ')
@@ -92,7 +97,7 @@ while :; do
     break
   fi
   if [ "$(date +%s)" -ge "$deadline" ]; then
-    echo "ERROR: issues $A and $B not visible to 'for: agent' selection query after ${WAIT_TIMEOUT_SECS}s" >&2
+    echo "ERROR: issues $A and $B not visible to 'for: ci-e2e' selection query after ${WAIT_TIMEOUT_SECS}s" >&2
     echo "       last visible set: [$visible]" >&2
     exit 1
   fi

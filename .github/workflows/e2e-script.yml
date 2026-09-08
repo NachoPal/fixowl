@@ -110,7 +110,7 @@ jobs:
         env:
           FIXOWL_GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
           FIXOWL_UNSAFE_SCRIPT_AGENT: "1" # the script adapter is refused without this
-          INPUT_LABELS-ANY: "for: agent"
+          INPUT_LABELS-ANY: "for: ci-e2e"
           INPUT_AGENT: script
           INPUT_MAX-ISSUES-PER-RUN: "3"
           INPUT_ISSUE-TIMEOUT-MINUTES: "15"
