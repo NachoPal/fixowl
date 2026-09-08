@@ -148,9 +148,8 @@ loop could never verify check runs on one. A config that still sets the old
   **transparently re-mints it near expiry** on every later API call, and the git
   edge asks that same strategy for the current token before each fetch/push. So
   the token is refreshed for the whole night with zero human action and no
-  in-workflow re-mint step (`actions/create-github-app-token`, which mints once
-  and auto-revokes at job end, is a documented escape hatch only, with its
-  1-hour ceiling; see [app-auth.md](app-auth.md)).
+  in-workflow re-mint step (`actions/create-github-app-token` would mint once at
+  job start and auto-revoke at job end, capping the night at its 1-hour token).
 - **`fixowl[bot]` attribution.** App-authored PRs and comments come from the
   App's bot identity, not a human. Unlike `GITHUB_TOKEN`, an installation
   token's PRs **do** trigger the target repo's own CI.
