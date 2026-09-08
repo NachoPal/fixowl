@@ -30,6 +30,23 @@ import { startCommand } from "./start.ts";
 import { validateCommand } from "./validate.ts";
 
 const PAT_URL = "https://github.com/settings/personal-access-tokens/new";
+const APP_URL = "https://github.com/settings/apps/new";
+
+/** The App's repository permissions, shared by the App-setup step and help text. */
+const APP_PERMISSIONS = [
+  "Contents: Read and write",
+  "Pull requests: Read and write",
+  "Issues: Read and write",
+  "Checks: Read-only",
+  "Commit statuses: Read-only",
+  "Actions: Read-only",
+  "Administration: Read-only",
+] as const;
+
+/** Renders APP_PERMISSIONS as one bullet per line, each prefixed with `indent`. */
+function appPermissionsBullets(indent: string): string {
+  return APP_PERMISSIONS.map((permission) => `${indent}- ${permission}`).join("\n");
+}
 
 /** Agents offered by the wizard. Test-only and paid-API adapters stay out of it. */
 const AGENT_CHOICES = [
@@ -202,11 +219,17 @@ fixowl needs an admin token (this machine only, setup-only) plus ONE runtime
 credential the night run pushes and calls the API with. Both are scoped to ONLY
 the repos you want fixowl to touch.
 
-  admin    fine-grained PAT: Administration RW, Secrets RW, Contents RW,
-           Workflows RW, Issues RW, Actions RW, Pull requests RW. Setup-only:
-           once \`fixowl provision\` has run you can REVOKE it (or downgrade it to
-           read-only if you want \`fixowl status\` to confirm the runner is
-           online). Routine \`fixowl start\` needs no admin token.
+  admin    fine-grained PAT with:
+             - Administration: Read and write
+             - Secrets: Read and write
+             - Contents: Read and write
+             - Workflows: Read and write
+             - Issues: Read and write
+             - Actions: Read and write
+             - Pull requests: Read and write
+           Setup-only: once \`fixowl provision\` has run you can REVOKE it (or
+           downgrade it to read-only if you want \`fixowl status\` to confirm
+           the runner is online). Routine \`fixowl start\` needs no admin token.
 
 Runtime credential - you pick a tier next:
   Tier 1  fine-grained PAT: fastest to set up. But GitHub exposes no grantable
@@ -249,9 +272,14 @@ async function stepRuntimeCredential(
   ]);
   if (tier === "pat") {
     log.info(`
-The runtime PAT is scoped to ONLY your target repos: Contents RW, Pull requests
-RW, Issues RW, plus read-only Commit statuses, Actions and Administration. It
-becomes a repo Actions secret the night run pushes and opens PRs with.
+The runtime PAT is scoped to ONLY your target repos, with:
+  - Contents: Read and write
+  - Pull requests: Read and write
+  - Issues: Read and write
+  - Commit statuses: Read-only
+  - Actions: Read-only
+  - Administration: Read-only
+It becomes a repo Actions secret the night run pushes and opens PRs with.
 Mint it at ${PAT_URL}`);
     await prompter.pause("\nPress Enter once you have the runtime token ready ");
     secrets.FIXOWL_RUNTIME_TOKEN = await askToken(prompter, {
@@ -277,16 +305,37 @@ async function stepAppCredential(
   log.info(`
 GitHub App setup
 ----------------
-1. Register an App (Settings > Developer settings > GitHub Apps > New) with
-   repository permissions: Contents RW, Pull requests RW, Issues RW,
-   Checks: READ, and Commit statuses / Actions / Administration: READ. No
-   webhook needed.
-2. Install it on your target repos (the App's "Install App" tab).
-3. Generate a private key ("Generate a private key") and download the .pem.
+1. Create the App at ${APP_URL}
+   Fill in the form:
+   - GitHub App name: any unique name, e.g. fixowl-<your-username> (must be
+     unique across all of GitHub).
+   - Homepage URL (required by GitHub, not used functionally): any valid URL
+     works - your target repo's URL or your GitHub profile URL are fine.
+   - Description, Callback URL / Setup URL, "Request user authorization
+     (OAuth) during installation": leave blank / unchecked.
+   - Webhook: UNCHECK "Active" (no webhook needed; leave URL and secret blank).
+   - Repository permissions - set exactly:
+${appPermissionsBullets("     ")}
+     (leave every other permission at "No access")
+   - Account permissions / Subscribe to events: none.
+   - "Where can this GitHub App be installed?": "Only on this account" is
+     fine for personal use.
+   - Click "Create GitHub App".
+2. Install the App on your target repo(s) - a SEPARATE step, in the App's
+   own settings, not the repo settings:
+   - Go to https://github.com/settings/apps -> click your App.
+   - In the left sidebar, click "Install App".
+   - Click the green "Install" button next to your account.
+   - Choose "Only select repositories" -> pick your target repo(s) -> Install.
+   - Note: https://github.com/settings/installations looks empty until you
+     do this - that is expected.
+3. Generate a private key: the App's General tab -> "Generate a private key"
+   -> download the .pem.
 4. base64-encode it so it survives secrets.env, on ONE line:
      base64 -i app.private-key.pem | tr -d '\\n'
-   (App ID is on the App's General tab; Installation ID is the number in the
-   install settings URL .../installations/<id>.) See docs/app-auth.md.`);
+   App ID is on the App's General tab. Installation ID is the number in the
+   install URL: https://github.com/settings/installations/<id>. See
+   docs/app-auth.md.`);
   for (;;) {
     const appId = await prompter.ask("  App ID (numeric)", { validate: numericId });
     const installationId = await prompter.ask("  Installation ID (numeric)", {
@@ -782,9 +831,15 @@ listed above (edit that file or re-run \`fixowl init\`), then continue with:
     log.error(describeError(error));
     log.info(`
 Provisioning stopped. The usual causes are an admin token missing a permission
-(Administration, Secrets, Contents, Workflows, Issues, Actions or Pull
-requests, all read and write) or a repo it was never granted. Fix that and
-re-run:
+(all read and write) or a repo it was never granted:
+  - Administration
+  - Secrets
+  - Contents
+  - Workflows
+  - Issues
+  - Actions
+  - Pull requests
+Fix that and re-run:
 
   fixowl provision`);
     process.exitCode = 1;
@@ -930,21 +985,54 @@ function scaffoldOnly(configPath: string, secretsPath: string): void {
   log.info(`
 Next steps (or re-run \`fixowl init\` on a terminal for the guided setup):
   1. Mint the admin fine-grained PAT at ${PAT_URL}, scoped to ONLY your target repos:
-       admin   - Administration RW, Secrets RW, Contents RW, Workflows RW, Issues RW,
-                 Actions RW, Pull requests RW (stays on this machine; used only to
-                 provision and register the runner - revoke or downgrade to
-                 read-only afterward)
+       admin - stays on this machine; used only to provision and register the
+               runner (revoke or downgrade to read-only afterward):
+         - Administration: Read and write
+         - Secrets: Read and write
+         - Contents: Read and write
+         - Workflows: Read and write
+         - Issues: Read and write
+         - Actions: Read and write
+         - Pull requests: Read and write
      Then choose ONE runtime credential and put it in ${secretsPath}:
-       Tier 1 (runtime PAT, quick start) - Contents RW, Pull requests RW, Issues RW,
-                 plus read-only Commit statuses, Actions and Administration (becomes
-                 a repo Actions secret; GitHub exposes no grantable "Checks" scope
-                 for fine-grained PATs, so the CI gate DEGRADES when check-run status
-                 is unreadable). Keep runtime_token in the config.
-       Tier 2 (GitHub App, real CI-gating) - register an App with Checks: read (plus
-                 Contents/Pull requests/Issues: write), install it on your repos,
-                 download its private key, base64-encode it into FIXOWL_APP_PRIVATE_KEY,
-                 and uncomment the github.app block in the config. The installation
-                 token auto-refreshes across the night. See docs/app-auth.md.
+       Tier 1 (runtime PAT, quick start) - mint it at ${PAT_URL} with:
+         - Contents: Read and write
+         - Pull requests: Read and write
+         - Issues: Read and write
+         - Commit statuses: Read-only
+         - Actions: Read-only
+         - Administration: Read-only
+         Becomes a repo Actions secret; GitHub exposes no grantable "Checks"
+         scope for fine-grained PATs, so the CI gate DEGRADES when check-run
+         status is unreadable. Keep runtime_token in the config.
+       Tier 2 (GitHub App, real CI-gating):
+         a. Create the App at ${APP_URL}
+            - GitHub App name: any unique name, e.g. fixowl-<your-username>.
+            - Homepage URL (required by GitHub, not used functionally): any
+              valid URL works - your target repo's URL or your profile URL.
+            - Description, Callback URL / Setup URL, "Request user
+              authorization (OAuth) during installation": leave blank/unchecked.
+            - Webhook: UNCHECK "Active".
+            - Repository permissions - set exactly:
+${appPermissionsBullets("              ")}
+              (leave every other permission at "No access")
+            - "Where can this GitHub App be installed?": "Only on this
+              account" is fine for personal use.
+            - Click "Create GitHub App".
+         b. Install it (a SEPARATE step, in the App's own settings):
+            go to https://github.com/settings/apps -> click your App ->
+            "Install App" (left sidebar) -> green "Install" next to your
+            account -> "Only select repositories" -> pick your repo(s) ->
+            Install. (https://github.com/settings/installations looks empty
+            until you do this - that is expected.)
+         c. Generate a private key (App's General tab -> "Generate a private
+            key" -> download the .pem), then base64-encode it onto one line:
+              base64 -i app.private-key.pem | tr -d '\\n'
+            and put it in ${secretsPath} as FIXOWL_APP_PRIVATE_KEY. App ID is
+            on the App's General tab; Installation ID is the number in the
+            install URL: https://github.com/settings/installations/<id>.
+         d. Uncomment the github.app block in the config. The installation
+            token auto-refreshes across the night. See docs/app-auth.md.
   2. If using the claude agent: run \`claude setup-token\` and put the resulting
      token in ${secretsPath} as CLAUDE_CODE_OAUTH_TOKEN.
   3. Edit ${configPath}: list your repos.
