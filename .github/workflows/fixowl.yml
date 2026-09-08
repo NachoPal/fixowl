@@ -38,7 +38,7 @@ jobs:
 
       - uses: NachoPal/fixowl@aa009e44ffacb0a17b597ab52a91ae225a19200a # main @ 2026-09-08
         with:
-          labels-any: "for: agents"
+          labels-any: "for: agent"
           labels-all: ""
           agent: claude
           agent-env: "CLAUDE_CODE_OAUTH_TOKEN"
