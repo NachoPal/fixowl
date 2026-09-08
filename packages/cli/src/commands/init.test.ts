@@ -82,7 +82,9 @@ describe("fixowl init agent picker (step 2/4)", () => {
       const yaml = renderConfigYaml({
         agent: choice.value,
         agentEnv,
-        repos: [{ name: "owner/repo", schedule: "37 1 * * *", labels: ["fix"], maxIssuesPerRun: 3 }],
+        repos: [
+          { name: "owner/repo", schedule: "37 1 * * *", labels: ["fix"], maxIssuesPerRun: 3 },
+        ],
         app: { appId: "123", installationId: "456" },
       });
 
