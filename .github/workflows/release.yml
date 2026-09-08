@@ -206,7 +206,7 @@ jobs:
 
   # Real-call end-to-end smoke test of the just-built action against a dedicated,
   # persistent sandbox repo (NachoPal/fixowl-e2e-sandbox). It seeds throwaway
-  # `for: agent` issues with one native blocked_by edge, runs the freshly-built
+  # `for: ci-e2e` issues with one native blocked_by edge, runs the freshly-built
   # dist/action/index.js retargeted at the sandbox with a forced-cheap model
   # (sonnet/medium for EVERY issue), asserts loosely that PRs landed on the
   # expected issue/<n>-* branches with the dependency order respected and CI
@@ -289,7 +289,7 @@ jobs:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # Action inputs (read by @actions/core.getInput as INPUT_<NAME
           # upper-cased, spaces->_, hyphens kept>).
-          INPUT_LABELS-ANY: "for: agent"
+          INPUT_LABELS-ANY: "for: ci-e2e"
           INPUT_AGENT: claude
           INPUT_AGENT-ENV: CLAUDE_CODE_OAUTH_TOKEN
           INPUT_DEFAULT-MODEL: sonnet
