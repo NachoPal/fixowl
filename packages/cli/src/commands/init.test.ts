@@ -1,10 +1,12 @@
 import { mkdtempSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { getAgentAdapter } from "@fixowl/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { parseSecretsEnv } from "../config-load.ts";
 import type { EngineStatus } from "../docker/engine-check.ts";
-import { initCommand } from "./init.ts";
+import { renderConfigYaml } from "../init/config-file.ts";
+import { AGENT_CHOICES, AGENT_SECRET_HELP, initCommand } from "./init.ts";
 
 const stubEngine = async (): Promise<EngineStatus> => ({
   ok: true,
@@ -59,6 +61,44 @@ describe("fixowl init --non-interactive", () => {
     await initCommand({ configPath, nonInteractive: true, checkEngine: stubEngine });
 
     expect(readFileSync(configPath, "utf8")).toBe(before);
+  });
+});
+
+describe("fixowl init agent picker (step 2/4)", () => {
+  it("carries an env allowlist the core adapter accepts for every choice", () => {
+    for (const choice of AGENT_CHOICES) {
+      // getAgentAdapter throws on an unknown agent or a forbidden env var, so a
+      // clean call proves the wizard's choice is a real, safe adapter override.
+      const adapter = getAgentAdapter(choice.value, choice.env);
+      expect(adapter.env).toEqual([...choice.env]);
+    }
+  });
+
+  it("flows each picker choice into a correct agents block in the written config", () => {
+    for (const choice of AGENT_CHOICES) {
+      // Mirror stepAgent: the choice's env is opted into the adapter allowlist,
+      // then rendered into config.yaml. Assert on the emitted, parsed config.
+      const agentEnv = getAgentAdapter(choice.value, choice.env).env;
+      const yaml = renderConfigYaml({
+        agent: choice.value,
+        agentEnv,
+        repos: [
+          { name: "owner/repo", schedule: "37 1 * * *", labels: ["fix"], maxIssuesPerRun: 3 },
+        ],
+        app: { appId: "123", installationId: "456" },
+      });
+
+      const agentsBlock = yaml.slice(yaml.indexOf("\nagents:\n"));
+      expect(agentsBlock).toContain(`${choice.value}: { env: [${agentEnv.join(", ")}] }`);
+    }
+  });
+
+  it("provides real credential guidance for every agent's env var", () => {
+    for (const choice of AGENT_CHOICES) {
+      for (const name of choice.env) {
+        expect(AGENT_SECRET_HELP[name], `missing help for ${name}`).toBeTruthy();
+      }
+    }
   });
 });
 
