@@ -224,7 +224,7 @@ jobs:
     timeout-minutes: 30
     continue-on-error: true # report-only to start; see the ADR
     permissions:
-      contents: read # checkout only; the sandbox is reached with its own PAT
+      contents: read # checkout only; the sandbox is reached with its own App token
     # Serialize every workflow that touches the one shared sandbox (this job and
     # the free script-adapter E2E) so runs never race on branches/issues.
     concurrency:
@@ -235,11 +235,12 @@ jobs:
       E2E_MODE: paid
       RUN_TAG: paid-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
-      # Mint a GitHub App installation token scoped to the sandbox only. Unlike a
-      # fine-grained PAT (which has no "Checks" permission and makes fixowl's CI
-      # gate a silent no-op), an App token can read Actions check-runs, so the
-      # gate actually verifies green/red. The token is job-scoped and expires in
-      # ~1h, which comfortably outlasts this short job. See docs/adr/0001-*.
+      # Mint a GitHub App installation token scoped to the sandbox only, for the
+      # fixture gh calls and the sandbox checkout (job-scoped, ~1h expiry, which
+      # comfortably outlasts this short job). The action itself gets the App
+      # trio below and mints its own auto-refreshing token, exactly as a
+      # provisioned repo does; this step also resolves the installation id the
+      # trio needs. See docs/adr/0001-*.
       - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
         id: app-token
         with:
@@ -285,7 +286,11 @@ jobs:
       - name: Run fixowl against the sandbox (real sonnet call)
         id: run
         env:
-          FIXOWL_GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          # The App runtime credential, as `fixowl provision` seals it. The key
+          # is GitHub's PKCS#1 download; the action's auth converts it on Node.
+          FIXOWL_APP_ID: ${{ secrets.FIXOWL_E2E_APP_ID }}
+          FIXOWL_APP_INSTALLATION_ID: ${{ steps.app-token.outputs.installation-id }}
+          FIXOWL_APP_PRIVATE_KEY: ${{ secrets.FIXOWL_E2E_APP_PRIVATE_KEY }}
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # Action inputs (read by @actions/core.getInput as INPUT_<NAME
           # upper-cased, spaces->_, hyphens kept>).

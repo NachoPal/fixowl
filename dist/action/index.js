@@ -85442,7 +85442,9 @@ var script = {
 };
 var ADAPTERS = { claude, aider, codex, script };
 var FORBIDDEN_AGENT_ENV = [
-  "FIXOWL_GITHUB_TOKEN",
+  "FIXOWL_APP_PRIVATE_KEY",
+  "FIXOWL_APP_ID",
+  "FIXOWL_APP_INSTALLATION_ID",
   "GITHUB_TOKEN",
   "GH_TOKEN"
 ];
@@ -85745,32 +85747,21 @@ var githubAppSchema = external_exports.object({
   installation_id: external_exports.union([external_exports.number().int().positive(), external_exports.string().regex(/^\d+$/)]),
   private_key: external_exports.string().min(1)
 });
+var RUNTIME_TOKEN_REMOVED_MESSAGE = "github.runtime_token (the runtime PAT) was removed: fixowl authenticates the night run only as a GitHub App. Delete runtime_token, add the github.app block (app_id, installation_id, private_key), and re-run `fixowl provision`; see docs/app-auth.md";
 var globalConfigSchema = external_exports.object({
   version: external_exports.literal(1),
   github: external_exports.object({
     admin_token: external_exports.string().min(1),
-    /**
-     * Runtime PAT (Tier 1). Optional because the App tier (`app`) is the
-     * alternative; exactly one of the two must be set (enforced below).
-     */
-    runtime_token: external_exports.string().min(1).optional(),
-    /** GitHub App runtime credential (Tier 2); mutually exclusive with runtime_token. */
-    app: githubAppSchema.optional(),
+    /** The GitHub App runtime credential; required (see docs/app-auth.md). */
+    app: githubAppSchema,
+    /** Rejected loudly: the runtime-PAT credential no longer exists. */
+    runtime_token: external_exports.undefined({ error: RUNTIME_TOKEN_REMOVED_MESSAGE }).optional(),
     /**
      * Least-privilege PAT for the optional local fallback trigger: Actions:
      * write only, used solely to dispatch the workflow when the cron misses.
-     * Separate from the setup-only admin token and the minimal runtime token.
+     * Separate from the setup-only admin token and the App runtime credential.
      */
     fallback_token: external_exports.string().min(1).optional()
-  }).superRefine((github, ctx) => {
-    const hasPat = github.runtime_token !== void 0;
-    const hasApp = github.app !== void 0;
-    if (hasPat === hasApp) {
-      ctx.addIssue({
-        code: external_exports.ZodIssueCode.custom,
-        message: "set exactly one of github.runtime_token or github.app"
-      });
-    }
   }),
   runner: external_exports.object({
     dir: external_exports.string().min(1).optional()
@@ -85952,36 +85943,26 @@ function failedChecks(gating) {
 }
 
 // packages/core/src/secret-names.ts
-var RUNTIME_TOKEN_SECRET = "FIXOWL_GITHUB_TOKEN";
 var APP_ID_SECRET = "FIXOWL_APP_ID";
 var APP_PRIVATE_KEY_SECRET = "FIXOWL_APP_PRIVATE_KEY";
 var APP_INSTALLATION_ID_SECRET = "FIXOWL_APP_INSTALLATION_ID";
+var LEGACY_RUNTIME_TOKEN_SECRET = "FIXOWL_GITHUB_TOKEN";
 
 // packages/core/src/runtime-credential.ts
+var APP_SECRET_NAMES = [APP_ID_SECRET, APP_INSTALLATION_ID_SECRET, APP_PRIVATE_KEY_SECRET];
 function resolveRuntimeCredentialFromEnv(env) {
-  const appId = env[APP_ID_SECRET];
-  const privateKey = env[APP_PRIVATE_KEY_SECRET];
-  const installationId = env[APP_INSTALLATION_ID_SECRET];
-  const pat = env[RUNTIME_TOKEN_SECRET];
-  const hasApp = isSet(appId) && isSet(privateKey) && isSet(installationId);
-  const hasPat = isSet(pat);
-  if (hasApp && hasPat) {
+  const missing = APP_SECRET_NAMES.filter((name) => !isSet(env[name]));
+  if (missing.length > 0) {
+    const legacyHint = isSet(env[LEGACY_RUNTIME_TOKEN_SECRET]) ? ` ${LEGACY_RUNTIME_TOKEN_SECRET} (the removed runtime PAT) is set but is no longer a runtime credential: fixowl authenticates the night run only as a GitHub App. Re-run \`fixowl provision\` to seal the App secrets and update the workflow; see docs/app-auth.md.` : "";
     throw new Error(
-      `both a GitHub App credential (${APP_ID_SECRET}/${APP_PRIVATE_KEY_SECRET}/${APP_INSTALLATION_ID_SECRET}) and a runtime PAT (${RUNTIME_TOKEN_SECRET}) are set in the action env; provision exactly one runtime credential`
+      `no GitHub App runtime credential in the action env: missing ${missing.join(", ")}.` + legacyHint
     );
   }
-  if (hasApp) {
-    return {
-      kind: "app",
-      appId: parseId(appId, APP_ID_SECRET),
-      privateKey,
-      installationId: parseId(installationId, APP_INSTALLATION_ID_SECRET)
-    };
-  }
-  if (hasPat) return { kind: "pat", token: pat };
-  throw new Error(
-    `no runtime credential in the action env: set ${RUNTIME_TOKEN_SECRET} (PAT tier) or the ${APP_ID_SECRET}/${APP_PRIVATE_KEY_SECRET}/${APP_INSTALLATION_ID_SECRET} App secrets`
-  );
+  return {
+    appId: parseId(env[APP_ID_SECRET] ?? "", APP_ID_SECRET),
+    privateKey: env[APP_PRIVATE_KEY_SECRET] ?? "",
+    installationId: parseId(env[APP_INSTALLATION_ID_SECRET] ?? "", APP_INSTALLATION_ID_SECRET)
+  };
 }
 function isSet(value) {
   return value !== void 0 && value !== "";
@@ -125903,7 +125884,7 @@ function renderCiSection(ci) {
   }
   if (ci.state === "unverified") {
     lines.push(
-      `\u26A0\uFE0F CI could not be verified: the runtime token cannot read this branch's check runs, so fixowl consulted **no** checks. Review CI on this PR before merging.`
+      `\u26A0\uFE0F CI could not be verified: the runtime credential cannot read this branch's check runs, so fixowl consulted **no** checks. Review CI on this PR before merging.`
     );
     lines.push(``);
     return lines;
@@ -126247,7 +126228,7 @@ ${agentResult.stderr}`.trim();
           ci: summary2
         })
       );
-      const comment = ci.outcome === "unverified" ? `\u{1F989} fixowl opened ${pr.url} for this issue and flipped it to ready, but CI could not be verified: the runtime token cannot read this branch's check runs, so no checks were consulted. Review CI on the PR before merging.` : `\u{1F989} fixowl opened ${pr.url} for this issue; its required checks are green and it is ready for review.`;
+      const comment = ci.outcome === "unverified" ? `\u{1F989} fixowl opened ${pr.url} for this issue and flipped it to ready, but CI could not be verified: the runtime credential cannot read this branch's check runs, so no checks were consulted. Review CI on the PR before merging.` : `\u{1F989} fixowl opened ${pr.url} for this issue; its required checks are green and it is ready for review.`;
       log3.info(
         ci.outcome === "unverified" ? `issue #${issue3.number}: CI unverified (checks unreadable); PR #${pr.number} flipped to ready` : `issue #${issue3.number}: required checks green; PR #${pr.number} ready for review`
       );
@@ -128247,7 +128228,6 @@ function createAppAuth(options) {
 
 // packages/action/src/runtime-octokit.ts
 function makeRuntimeOctokit(cred) {
-  if (cred.kind === "pat") return new Octokit2({ auth: cred.token });
   return new Octokit2({
     authStrategy: createAppAuth,
     auth: {
@@ -128257,11 +128237,7 @@ function makeRuntimeOctokit(cred) {
     }
   });
 }
-function makePushTokenProvider(cred, octokit) {
-  if (cred.kind === "pat") {
-    const token = cred.token;
-    return () => Promise.resolve(token);
-  }
+function makePushTokenProvider(octokit) {
   return async () => {
     const auth6 = await octokit.auth({ type: "installation" });
     return auth6.token;
@@ -128358,7 +128334,7 @@ async function run() {
     );
   }
   const octokit = makeRuntimeOctokit(cred);
-  const pushTokenProvider = makePushTokenProvider(cred, octokit);
+  const pushTokenProvider = makePushTokenProvider(octokit);
   const { data: repoData } = await octokit.repos.get({ owner, repo });
   const guardToken = process.env.GITHUB_TOKEN;
   const runsOctokit = guardToken !== void 0 && guardToken !== "" ? new Octokit2({ auth: guardToken }) : void 0;

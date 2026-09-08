@@ -50,7 +50,8 @@ fixowl init          # guided setup, start to finish
 
 `init` walks through the whole thing and writes nothing until you have answered:
 
-1. the two fine-grained PATs (it verifies each one against GitHub as you paste it),
+1. the admin fine-grained PAT plus the GitHub App the night run authenticates as
+   (it verifies each against GitHub as you paste it),
 2. the coding agent and its credential,
 3. one or more repos: schedule (local `HH:MM`, converted to a UTC cron), labels,
    and how many issues a night may take on,
@@ -125,7 +126,9 @@ jobs:
           max-issues-per-run: "4"
           issue-timeout-minutes: "45"
         env:
-          FIXOWL_GITHUB_TOKEN: ${{ secrets.FIXOWL_GITHUB_TOKEN }}
+          FIXOWL_APP_ID: ${{ secrets.FIXOWL_APP_ID }}
+          FIXOWL_APP_INSTALLATION_ID: ${{ secrets.FIXOWL_APP_INSTALLATION_ID }}
+          FIXOWL_APP_PRIVATE_KEY: ${{ secrets.FIXOWL_APP_PRIVATE_KEY }}
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 ```
 
@@ -158,7 +161,10 @@ to fill in by hand.
 version: 1
 github:
   admin_token: ${FIXOWL_ADMIN_TOKEN} # setup-only; stays on your machine, revocable after provision
-  runtime_token: ${FIXOWL_RUNTIME_TOKEN} # pushed to repos as an Actions secret
+  app: # the GitHub App the night run authenticates as; see docs/app-auth.md
+    app_id: 123456
+    installation_id: 7890123
+    private_key: ${FIXOWL_APP_PRIVATE_KEY} # base64 of the downloaded App .pem
 defaults:
   schedule: "37 1 * * *" # UTC
   labels: { any: [overnight] } # any/all combinations supported
@@ -178,13 +184,16 @@ repos:
       quick: { model: haiku, effort: low }
 ```
 
-fixowl uses **two fine-grained GitHub PATs**, both scoped to only the target
-repos:
+fixowl uses two GitHub credentials, both scoped to only the target repos:
 
-- an **admin** token used for provisioning, which stays on your machine
-  (`~/.fixowl/secrets.env`);
-- a **runtime** token that is sealed client-side and pushed to each repo as the
-  Actions secret `FIXOWL_GITHUB_TOKEN`, used on the runner to author PRs.
+- an **admin** fine-grained PAT used for provisioning, which stays on your
+  machine (`~/.fixowl/secrets.env`);
+- a **GitHub App** whose id, installation id, and private key are sealed
+  client-side and pushed to each repo as the Actions secrets `FIXOWL_APP_ID` /
+  `FIXOWL_APP_INSTALLATION_ID` / `FIXOWL_APP_PRIVATE_KEY`. The runner mints an
+  auto-refreshing installation token from them to author PRs and read CI; a PAT
+  is not accepted here because it cannot read check runs (see
+  [docs/app-auth.md](https://github.com/NachoPal/fixowl/blob/main/docs/app-auth.md)).
 
 The coding agent never holds a GitHub token: only the env vars in its adapter's
 allowlist (for `claude`, `CLAUDE_CODE_OAUTH_TOKEN`) ever enter the per-issue

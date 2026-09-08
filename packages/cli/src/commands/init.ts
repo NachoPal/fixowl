@@ -19,8 +19,8 @@ import {
   parseSchedule,
   renderConfigYaml,
   renderSecretsEnv,
+  type AppCredentialAnswer,
   type RepoAnswers,
-  type RuntimeCredentialAnswer,
 } from "../init/config-file.ts";
 import { log } from "../log.ts";
 import { createPrompter, maskSecret, type Prompter } from "../prompt.ts";
@@ -122,9 +122,10 @@ async function runWizard(
   log.info(`
 🦉 fixowl setup
 
-This walks you through the whole thing: GitHub tokens, the coding agent, the
-repos to watch, then validates and provisions them. Nothing is written until
-the questions are answered, and every answer is stored in ${dirname(configPath)}.`);
+This walks you through the whole thing: the admin token and the GitHub App the
+night run authenticates as, the coding agent, the repos to watch, then validates
+and provisions them. Nothing is written until the questions are answered, and
+every answer is stored in ${dirname(configPath)}.`);
 
   await reportEngineStatus(checkEngine);
 
@@ -145,14 +146,14 @@ the questions are answered, and every answer is stored in ${dirname(configPath)}
   }
 
   const secrets = loadSecrets(secretsPath);
-  const { admin, runtimeCredential } = await stepTokens(prompter, secrets);
+  const { admin, app } = await stepTokens(prompter, secrets);
   const { agent, agentEnv } = await stepAgent(prompter, secrets);
   const repos = await stepRepos(prompter, admin, agent);
   const wantFallback = await stepFallback(prompter, secrets);
 
   writeFileSync(
     configPath,
-    renderConfigYaml({ agent, agentEnv, repos, runtimeCredential, fallback: wantFallback }),
+    renderConfigYaml({ agent, agentEnv, repos, app, fallback: wantFallback }),
   );
   log.ok(`wrote ${configPath}`);
   writeFileSync(secretsPath, renderSecretsEnv(secrets), { mode: 0o600 });
@@ -168,7 +169,7 @@ the questions are answered, and every answer is stored in ${dirname(configPath)}
 
 /**
  * Opt-in setup of the local fallback trigger. Collects its own least-privilege
- * token (Actions: write only), kept separate from the admin and runtime tokens
+ * token (Actions: write only), kept separate from the admin token and the App
  * so the admin token stays revocable. Returns whether the fallback was enabled.
  */
 async function stepFallback(prompter: Prompter, secrets: Record<string, string>): Promise<boolean> {
@@ -187,9 +188,9 @@ macOS-only for now (launchd).`);
   }
 
   log.info(`
-Dispatching the workflow needs a token with Actions: write, which the admin and
-runtime tokens deliberately do not provide for routine use. Mint a THIRD
-fine-grained PAT, scoped to ONLY your target repos, granting exactly:
+Dispatching the workflow needs a token with Actions: write, which the admin
+token and the GitHub App deliberately do not provide for routine use. Mint a
+SECOND fine-grained PAT, scoped to ONLY your target repos, granting exactly:
 
   Actions: Read and write   (nothing else)
 
@@ -205,19 +206,19 @@ Mint it at ${PAT_URL}`);
 }
 
 // ---------------------------------------------------------------------------
-// Step 1: the admin token and the runtime credential (PAT or GitHub App)
+// Step 1: the admin token and the GitHub App runtime credential
 // ---------------------------------------------------------------------------
 
 async function stepTokens(
   prompter: Prompter,
   secrets: Record<string, string>,
-): Promise<{ admin: Octokit; runtimeCredential: RuntimeCredentialAnswer }> {
+): Promise<{ admin: Octokit; app: AppCredentialAnswer }> {
   log.info(`
 Step 1/4  GitHub credentials
 ----------------------------
-fixowl needs an admin token (this machine only, setup-only) plus ONE runtime
-credential the night run pushes and calls the API with. Both are scoped to ONLY
-the repos you want fixowl to touch.
+fixowl needs an admin token (this machine only, setup-only) plus a GitHub App,
+the identity the night run pushes and calls the API with. Both are scoped to
+ONLY the repos you want fixowl to touch.
 
   admin    fine-grained PAT with:
              - Administration: Read and write
@@ -231,15 +232,10 @@ the repos you want fixowl to touch.
            downgrade it to read-only if you want \`fixowl status\` to confirm
            the runner is online). Routine \`fixowl start\` needs no admin token.
 
-Runtime credential - you pick a tier next:
-  Tier 1  fine-grained PAT: fastest to set up. But GitHub exposes no grantable
-          "Checks" scope to PATs, so the CI-gated fix loop cannot read check-run
-          status and DEGRADES (it opens the PR after a settle instead of
-          verifying CI).
-  Tier 2  GitHub App: ~15 min once. The installation token reads Checks, so the
-          CI gate is REAL (green flips a PR to ready; red keeps it a draft), and
-          @octokit/auth-app auto-refreshes the token across the whole night, so
-          it never hits the 1-hour installation-token expiry cliff.
+  App      GitHub App, ~15 min once (set up next). Its installation token reads
+           Checks, so the CI-gated fix loop is REAL (green flips a PR to ready;
+           red keeps it a draft), and @octokit/auth-app auto-refreshes the token
+           across the whole night, so it never hits the 1-hour expiry cliff.
 
 Mint the admin PAT at ${PAT_URL}`);
   await prompter.pause("\nPress Enter once you have the admin token ready ");
@@ -249,46 +245,8 @@ Mint the admin PAT at ${PAT_URL}`);
     existing: secrets.FIXOWL_ADMIN_TOKEN,
   });
   secrets.FIXOWL_ADMIN_TOKEN = adminToken;
-  const runtimeCredential = await stepRuntimeCredential(prompter, secrets);
-  return { admin: githubClient(adminToken), runtimeCredential };
-}
-
-/** Pick the runtime-credential tier and collect it: a PAT, or a GitHub App. */
-async function stepRuntimeCredential(
-  prompter: Prompter,
-  secrets: Record<string, string>,
-): Promise<RuntimeCredentialAnswer> {
-  const tier = await prompter.choose("\nRuntime credential tier?", [
-    {
-      value: "pat",
-      label: "Tier 1: fine-grained PAT",
-      hint: "fastest; the CI gate degrades (a PAT cannot read checks)",
-    },
-    {
-      value: "app",
-      label: "Tier 2: GitHub App",
-      hint: "~15 min once; real CI-gating, auto-refreshing token",
-    },
-  ]);
-  if (tier === "pat") {
-    log.info(`
-The runtime PAT is scoped to ONLY your target repos, with:
-  - Contents: Read and write
-  - Pull requests: Read and write
-  - Issues: Read and write
-  - Commit statuses: Read-only
-  - Actions: Read-only
-  - Administration: Read-only
-It becomes a repo Actions secret the night run pushes and opens PRs with.
-Mint it at ${PAT_URL}`);
-    await prompter.pause("\nPress Enter once you have the runtime token ready ");
-    secrets.FIXOWL_RUNTIME_TOKEN = await askToken(prompter, {
-      label: "  runtime token",
-      existing: secrets.FIXOWL_RUNTIME_TOKEN,
-    });
-    return { kind: "pat" };
-  }
-  return await stepAppCredential(prompter, secrets);
+  const app = await stepAppCredential(prompter, secrets);
+  return { admin: githubClient(adminToken), app };
 }
 
 /**
@@ -301,7 +259,7 @@ Mint it at ${PAT_URL}`);
 async function stepAppCredential(
   prompter: Prompter,
   secrets: Record<string, string>,
-): Promise<RuntimeCredentialAnswer> {
+): Promise<AppCredentialAnswer> {
   log.info(`
 GitHub App setup
 ----------------
@@ -354,13 +312,13 @@ ${appPermissionsBullets("     ")}
     if (check.ok) {
       secrets.FIXOWL_APP_PRIVATE_KEY = privateKeyB64;
       log.ok(check.message);
-      return { kind: "app", appId, installationId };
+      return { appId, installationId };
     }
     log.warn(check.message);
     if (!(await prompter.confirm("  Enter the App details again?", true))) {
       // Keep what was typed; `fixowl validate` re-checks before provisioning.
       secrets.FIXOWL_APP_PRIVATE_KEY = privateKeyB64;
-      return { kind: "app", appId, installationId };
+      return { appId, installationId };
     }
   }
 }
@@ -384,7 +342,6 @@ async function verifyApp(
   let cred;
   try {
     cred = {
-      kind: "app" as const,
       appId: Number(appId),
       installationId: Number(installationId),
       privateKey: toPkcs8Pem(resolvePrivateKey(privateKeyB64)),
@@ -915,12 +872,10 @@ version: 1
 
 github:
   admin_token: \${FIXOWL_ADMIN_TOKEN}      # fine-grained PAT, CLI machine only; setup-only, revocable after provision
-  # --- runtime credential: choose ONE of the two tiers below ---
-  runtime_token: \${FIXOWL_RUNTIME_TOKEN}  # Tier 1: fine-grained PAT (fast to try; CI gate degrades - a PAT cannot read checks)
-  # app:                                     # Tier 2: GitHub App (real CI-gating; auto-refreshing token). See docs/app-auth.md.
-  #   app_id: 123456
-  #   installation_id: 7890123
-  #   private_key: \${FIXOWL_APP_PRIVATE_KEY} # base64 of the downloaded App .pem (normalized to PKCS#8 at provision)
+  app:                                     # GitHub App: the night run's only credential (real CI-gating; auto-refreshing token). See docs/app-auth.md.
+    app_id: 123456                         # App settings page, "About" section
+    installation_id: 7890123               # the number in https://github.com/settings/installations/<id>
+    private_key: \${FIXOWL_APP_PRIVATE_KEY} # base64 of the downloaded App .pem (normalized to PKCS#8 at provision)
   # fallback_token: \${FIXOWL_FALLBACK_TOKEN}  # optional; fine-grained PAT, Actions: write only, for the local fallback
 
 # runner:
@@ -962,10 +917,10 @@ repos:
 const STARTER_SECRETS = `# chmod 600. Values referenced from config.yaml as \${VAR}, and agent env vars
 # provisioned into repos as Actions secrets are read from here too.
 FIXOWL_ADMIN_TOKEN=
-FIXOWL_RUNTIME_TOKEN=
+FIXOWL_APP_PRIVATE_KEY=
 CLAUDE_CODE_OAUTH_TOKEN=
-# --- Tier 2 (GitHub App) alternative to FIXOWL_RUNTIME_TOKEN; see docs/app-auth.md ---
-# FIXOWL_APP_PRIVATE_KEY=   # base64 of the downloaded App .pem (base64 -i app.pem | tr -d '\\n')
+# FIXOWL_APP_PRIVATE_KEY is the base64 of the downloaded App .pem, on ONE line
+# (base64 -i app.pem | tr -d '\\n'); see docs/app-auth.md.
 # FIXOWL_FALLBACK_TOKEN=   # optional; fine-grained PAT, Actions: write only (see docs/local-fallback.md)
 `;
 
@@ -996,18 +951,8 @@ Next steps (or re-run \`fixowl init\` on a terminal for the guided setup):
          - Issues: Read and write
          - Actions: Read and write
          - Pull requests: Read and write
-     Then choose ONE runtime credential and put it in ${secretsPath}:
-       Tier 1 (runtime PAT, quick start) - mint it at ${PAT_URL} with:
-         - Contents: Read and write
-         - Pull requests: Read and write
-         - Issues: Read and write
-         - Commit statuses: Read-only
-         - Actions: Read-only
-         - Administration: Read-only
-         Becomes a repo Actions secret; GitHub exposes no grantable "Checks"
-         scope for fine-grained PATs, so the CI gate DEGRADES when check-run
-         status is unreadable. Keep runtime_token in the config.
-       Tier 2 (GitHub App, real CI-gating):
+     Then set up the GitHub App the night run authenticates as (its
+     installation token reads Checks, which makes the CI gate real):
          a. Create the App at ${APP_URL}
             - GitHub App name: any unique name, e.g. fixowl-<your-username>.
             - Homepage URL (required by GitHub, not used functionally): any
@@ -1037,13 +982,14 @@ ${appPermissionsBullets("              ")}
             (https://github.com/settings/apps/<your-app-name>), near the top
             in the "About" section. Installation ID is the number in the
             install URL: https://github.com/settings/installations/<id>.
-         d. Uncomment the github.app block in the config. The installation
-            token auto-refreshes across the night. See docs/app-auth.md.
+         d. Put the App ID and Installation ID in the github.app block of the
+            config. The installation token auto-refreshes across the night.
+            See docs/app-auth.md.
   2. If using the claude agent: run \`claude setup-token\` and put the resulting
      token in ${secretsPath} as CLAUDE_CODE_OAUTH_TOKEN.
   3. Edit ${configPath}: list your repos.
   4. Run \`fixowl validate\`, then \`fixowl provision\` and \`fixowl start\`.
-  5. Optional: to back up GitHub's flaky cron, mint a THIRD fine-grained PAT with
+  5. Optional: to back up GitHub's flaky cron, mint a SECOND fine-grained PAT with
      ONLY Actions: write on your repos, put it in ${secretsPath} as
      FIXOWL_FALLBACK_TOKEN, uncomment github.fallback_token in the config, then
      run \`fixowl fallback install\` (macOS). See docs/local-fallback.md.`);

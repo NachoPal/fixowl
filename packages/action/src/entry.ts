@@ -106,10 +106,9 @@ async function fetchJson(url: string, headers: Record<string, string>): Promise<
 }
 
 async function run(): Promise<void> {
-  // The runtime credential is either a PAT (Tier 1) or a GitHub App (Tier 2),
-  // selected purely by which secrets the workflow injected. The App path builds
-  // an installation-token client that auto-refreshes near the token's ~1h expiry
-  // (see runtime-octokit.ts / runtime-credential.ts).
+  // The runtime credential is the GitHub App trio the workflow injects; from it
+  // the action builds an installation-token client that auto-refreshes near the
+  // token's ~1h expiry (see runtime-octokit.ts / runtime-credential.ts).
   const cred = resolveRuntimeCredentialFromEnv(process.env);
   const repoFullName = requireEnv("GITHUB_REPOSITORY");
   const workspaceDir = requireEnv("GITHUB_WORKSPACE");
@@ -139,13 +138,13 @@ async function run(): Promise<void> {
   }
 
   const octokit = makeRuntimeOctokit(cred);
-  // For the App path this provider shares the octokit auth strategy's refresh
-  // cycle, so git pushes and API calls always use a live installation token.
-  const pushTokenProvider = makePushTokenProvider(cred, octokit);
+  // The provider shares the octokit auth strategy's refresh cycle, so git
+  // pushes and API calls always use a live installation token.
+  const pushTokenProvider = makePushTokenProvider(octokit);
   const { data: repoData } = await octokit.repos.get({ owner, repo });
 
   // The scheduled-slot budget guard lists workflow runs (Actions: read). That
-  // uses the ephemeral GITHUB_TOKEN the workflow injects, never the runtime PAT,
+  // uses the ephemeral GITHUB_TOKEN the workflow injects, never the App token,
   // so the most-exposed credential stays minimal. A workflow provisioned before
   // this feature passes no GITHUB_TOKEN; the guard then fails open (see main.ts).
   const guardToken = process.env.GITHUB_TOKEN;

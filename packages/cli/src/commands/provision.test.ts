@@ -110,18 +110,6 @@ function makeCtx(admin: Octokit): CliContext {
   return {
     config: globalConfigSchema.parse({
       version: 1,
-      github: { admin_token: "ghp_admin", runtime_token: "ghp_runtime" },
-      repos: [{ name: "acme/widgets" }],
-    }),
-    secrets: { CLAUDE_CODE_OAUTH_TOKEN: "oauth-token" },
-    admin,
-  } as unknown as CliContext;
-}
-
-function makeAppCtx(admin: Octokit): CliContext {
-  return {
-    config: globalConfigSchema.parse({
-      version: 1,
       github: {
         admin_token: "ghp_admin",
         app: { app_id: 123456, installation_id: 7890123, private_key: APP_PRIVATE_KEY_B64 },
@@ -212,39 +200,30 @@ describe("fixowl provision", () => {
     );
   });
 
-  it("seals the runtime PAT secret (not App secrets) for a PAT config", async () => {
-    const { secretNames } = await runProvision();
-    expect(secretNames).toContain("FIXOWL_GITHUB_TOKEN");
-    expect(secretNames).not.toContain("FIXOWL_APP_ID");
-  });
+  it("seals the App secret trio (plus agent env) and renders the App workflow", async () => {
+    const fake = await runProvision();
 
-  it("seals the App secret trio and renders the App-auth workflow for an App config", async () => {
-    vi.spyOn(console, "log").mockImplementation(() => {});
-    vi.spyOn(console, "warn").mockImplementation(() => {});
-    const fake = fakeOctokit();
-    await provisionCommand(makeAppCtx(fake.octokit), undefined, {
-      registerRunner: vi.fn(async () => "configured" as const),
-    });
-
-    // The App trio is sealed; the runtime PAT secret is not.
+    // The App trio and the agent credential are sealed; nothing PAT-shaped is.
     expect(fake.secretNames).toEqual(
       expect.arrayContaining([
         "FIXOWL_APP_ID",
         "FIXOWL_APP_INSTALLATION_ID",
         "FIXOWL_APP_PRIVATE_KEY",
+        "CLAUDE_CODE_OAUTH_TOKEN",
       ]),
     );
     expect(fake.secretNames).not.toContain("FIXOWL_GITHUB_TOKEN");
 
-    // The rendered workflow wires the App trio into the action env, not the PAT.
+    // The rendered workflow wires the App trio into the action env.
     const workflow = fake.fileWrites.find((write) => write.path === WORKFLOW_PATH);
     expect(workflow?.content).toContain("FIXOWL_APP_ID: ${{ secrets.FIXOWL_APP_ID }}");
     expect(workflow?.content).toContain(
+      "FIXOWL_APP_INSTALLATION_ID: ${{ secrets.FIXOWL_APP_INSTALLATION_ID }}",
+    );
+    expect(workflow?.content).toContain(
       "FIXOWL_APP_PRIVATE_KEY: ${{ secrets.FIXOWL_APP_PRIVATE_KEY }}",
     );
-    expect(workflow?.content).not.toContain(
-      "FIXOWL_GITHUB_TOKEN: ${{ secrets.FIXOWL_GITHUB_TOKEN }}",
-    );
+    expect(workflow?.content).not.toContain("FIXOWL_GITHUB_TOKEN");
   });
 
   it("skips registration with --no-register (for provisioning off the runner host)", async () => {

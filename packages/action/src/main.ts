@@ -187,7 +187,7 @@ export async function runNight(deps: NightDeps, inputs: NightInputs): Promise<Ni
  * summary when this run should stand down, or undefined to proceed. Only
  * scheduled-slot runs (cron or fallback-tagged dispatch) are considered; a plain
  * manual dispatch always proceeds. Listing runs needs Actions: read, provided by
- * the ephemeral `GITHUB_TOKEN` and not the runtime PAT; when that token (or the
+ * the ephemeral `GITHUB_TOKEN` and not the App token; when that token (or the
  * run id) is unavailable - e.g. a workflow provisioned before this feature - the
  * guard fails open with a warning rather than skipping the night.
  */

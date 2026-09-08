@@ -63,7 +63,7 @@ export interface GitHubApi {
   /**
    * Recent runs of this workflow, newest first, for the scheduled-slot budget
    * guard. Backed by a token with Actions: read (the ephemeral `GITHUB_TOKEN`,
-   * not the runtime PAT), so listing runs never widens the most-exposed
+   * not the App token), so listing runs never widens the most-exposed
    * credential. Returns an empty list when no read token is available.
    */
   listRecentWorkflowRuns(): Promise<WorkflowRunLite[]>;
@@ -94,10 +94,10 @@ export interface GitHubApi {
   /**
    * All checks on a commit: GitHub Actions check runs plus legacy commit
    * statuses, normalized to `CheckStatusLite` and de-duplicated by name. Returns
-   * `readable: false` (never throws) when the runtime token cannot read the
-   * check-runs API - a fine-grained PAT cannot be granted that scope, so the read
-   * 403s; the CI gate then degrades to the settle-then-ready fallback instead of
-   * failing the issue (captain 7.2).
+   * `readable: false` (never throws) when the runtime credential cannot read the
+   * check-runs API - an App installation missing Checks: read is 403'd; the CI
+   * gate then degrades to the settle-then-ready fallback instead of failing the
+   * issue (captain 7.2).
    */
   getChecksForRef(sha: string): Promise<ChecksForRef>;
   /**

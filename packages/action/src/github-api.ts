@@ -26,11 +26,11 @@ interface GraphqlIssueNode {
 
 /**
  * True when a GitHub read failed because the token is genuinely not permitted to
- * make it - the check-runs API needs a "Checks" permission GitHub does not
- * expose to fine-grained PATs, so a fine-grained runtime token 403s with
- * "Resource not accessible by personal access token" (or the App-token variant
- * "Resource not accessible by integration"). We degrade the CI gate on this
- * permission-denial class only. A transient 403 (primary/secondary rate limit,
+ * make it - the check-runs API needs the App's "Checks" permission, so an
+ * under-scoped installation token 403s with "Resource not accessible by
+ * integration" (a personal token gets the "by personal access token" variant).
+ * We degrade the CI gate on this permission-denial class only. A transient 403
+ * (primary/secondary rate limit,
  * abuse detection), a 404 (wrong/nonexistent ref), and any other failure
  * (network, 5xx) still propagate so they surface and retry instead of silently
  * settling the gate to green.
@@ -105,7 +105,7 @@ export function makeGitHubApi(
     async getRequiredChecks(baseBranch): Promise<RequiredChecks> {
       // The branch-rules endpoint surfaces required status checks from both
       // classic branch protection and rulesets, and is readable with the
-      // runtime token's Administration: read. Any failure (no protection,
+      // App's Administration: read. Any failure (no protection,
       // insufficient scope) degrades to the "gate on all checks" fallback.
       try {
         const { data } = await octokit.repos.getBranchRules({ owner, repo, branch: baseBranch });
@@ -124,10 +124,10 @@ export function makeGitHubApi(
     },
     async getChecksForRef(sha): Promise<ChecksForRef> {
       const byName = new Map<string, CheckStatusLite>();
-      // Reading check runs needs a "Checks" permission GitHub does not expose to
-      // fine-grained PATs, so a fine-grained runtime token 403s here. Treat that
-      // as "checks unreadable" (mirrors getRequiredChecks) so the poll loop
-      // degrades to the settle-then-ready fallback instead of failing the issue.
+      // Reading check runs needs the App's "Checks" permission, so an
+      // installation missing Checks: read 403s here. Treat that as "checks
+      // unreadable" (mirrors getRequiredChecks) so the poll loop degrades to the
+      // settle-then-ready fallback instead of failing the issue.
       const runs = await octokit
         .paginate(octokit.checks.listForRef, { owner, repo, ref: sha, per_page: 100 })
         .catch((error: unknown) => {

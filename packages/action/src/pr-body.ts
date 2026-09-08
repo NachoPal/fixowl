@@ -76,7 +76,7 @@ function renderCiSection(ci: CiGateSummary): string[] {
   }
   if (ci.state === "unverified") {
     lines.push(
-      `⚠️ CI could not be verified: the runtime token cannot read this branch's ` +
+      `⚠️ CI could not be verified: the runtime credential cannot read this branch's ` +
         `check runs, so fixowl consulted **no** checks. Review CI on this PR before merging.`,
     );
     lines.push(``);

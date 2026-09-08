@@ -125,8 +125,8 @@ describe("waitForRequiredChecks", () => {
   });
 
   it("degrades to settle->unverified with a loud warning when the checks cannot be read (403), never throwing", async () => {
-    // Reproduces the bug: a fine-grained runtime PAT cannot read the check-runs
-    // API, so the read edge returns readable:false. The gate must NOT throw or
+    // Reproduces the bug: a runtime credential without Checks: read cannot read
+    // the check-runs API, so the read edge returns readable:false. The gate must NOT throw or
     // fail the issue; it must warn loudly that CI was not verified and flip to
     // ready after the settle window. The outcome is a DISTINCT `unverified` (not
     // green): zero checks were consulted, so the PR must never be reported green.

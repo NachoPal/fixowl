@@ -77,8 +77,8 @@ export class FakeGitHub implements GitHubApi {
   checksForRef: (sha: string) => CheckStatusLite[] = () => [];
   /**
    * Whether the ref's checks can be read at all. Default true; set false to
-   * simulate the real 403 a fine-grained runtime token gets from the check-runs
-   * API, which the read edge (github-api.ts::getChecksForRef) swallows into
+   * simulate the real 403 an App installation without Checks: read gets from
+   * the check-runs API, which the read edge (github-api.ts::getChecksForRef) swallows into
    * `readable: false` so the CI gate degrades gracefully.
    */
   checksReadable = true;

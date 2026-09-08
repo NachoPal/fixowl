@@ -8,7 +8,7 @@ import type { Octokit } from "@octokit/rest";
 import type { CliContext } from "../context.ts";
 import { checkDockerEngine } from "../docker/engine-check.ts";
 import { resolvePrivateKey, toPkcs8Pem } from "../github/app-key.ts";
-import { appClient, githubClient } from "../github/client.ts";
+import { appClient } from "../github/client.ts";
 import { describeGitHubError } from "../github/errors.ts";
 import { splitRepoFullName } from "../github/repo-provisioning.ts";
 import { log } from "../log.ts";
@@ -100,39 +100,23 @@ export async function validateCommand(ctx: CliContext): Promise<boolean> {
 }
 
 /**
- * Validate the runtime credential's identity. The PAT tier authenticates with
- * `GET /user` as before. The App tier CANNOT call `GET /user` (an installation
- * token has no user), so it branches to the App's own identity (`GET /app`),
- * confirms the installation exists, and - the honest pre-flight for the whole
- * reason to use an App - confirms it holds `Checks: read` (else the CI gate
- * silently degrades at 2am) plus the write permissions the night needs
- * (`Contents: write` for pushes, `Pull requests: write` for PRs), and is
- * installed on each configured repo.
+ * Validate the GitHub App runtime credential. An installation token has no
+ * user, so this checks the App's own identity (`GET /app`), confirms the
+ * installation exists, and - the honest pre-flight for the whole reason to use
+ * an App - confirms it holds `Checks: read` (else the CI gate silently degrades
+ * at 2am) plus the write permissions the night needs (`Contents: write` for
+ * pushes, `Pull requests: write` for PRs), and is installed on each configured
+ * repo.
  */
 export async function validateRuntimeCredential(
   ctx: CliContext,
   failed: (message: string) => void,
 ): Promise<void> {
   const appConfig = ctx.config.github.app;
-  if (appConfig === undefined) {
-    const pat = ctx.config.github.runtime_token;
-    if (pat === undefined) {
-      failed("no runtime credential configured: set github.runtime_token or github.app");
-      return;
-    }
-    try {
-      const { data } = await githubClient(pat).rest.users.getAuthenticated();
-      log.ok(`runtime token: authenticated as ${data.login}`);
-    } catch (error) {
-      failed(`runtime token: ${describeGitHubError(error)}`);
-    }
-    return;
-  }
 
   let client: Octokit;
   try {
     client = appClient({
-      kind: "app",
       appId: Number(appConfig.app_id),
       installationId: Number(appConfig.installation_id),
       privateKey: toPkcs8Pem(resolvePrivateKey(appConfig.private_key)),

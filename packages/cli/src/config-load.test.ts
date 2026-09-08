@@ -50,18 +50,44 @@ describe("loadConfig", () => {
         "version: 1",
         "github:",
         "  admin_token: ${FIXOWL_ADMIN_TOKEN}",
+        "  app:",
+        "    app_id: 123456",
+        "    installation_id: 7890123",
+        "    private_key: ${FIXOWL_APP_PRIVATE_KEY}",
+        "repos:",
+        "  - name: NachoPal/storyengine",
+      ].join("\n"),
+    );
+    writeFileSync(secretsPath, "FIXOWL_ADMIN_TOKEN=aaa\nFIXOWL_APP_PRIVATE_KEY=pem\n", {
+      mode: 0o644,
+    });
+    const { config, warnings } = loadConfig(configPath, secretsPath);
+    expect(config.github.admin_token).toBe("aaa");
+    expect(config.github.app.private_key).toBe("pem");
+    expect(warnings.some((w) => w.includes("chmod 600"))).toBe(true);
+  });
+
+  it("rejects a legacy runtime_token config with a migration message", () => {
+    const dir = mkdtempSync(join(tmpdir(), "fixowl-config-"));
+    const configPath = join(dir, "config.yaml");
+    const secretsPath = join(dir, "secrets.env");
+    writeFileSync(
+      configPath,
+      [
+        "version: 1",
+        "github:",
+        "  admin_token: ${FIXOWL_ADMIN_TOKEN}",
         "  runtime_token: ${FIXOWL_RUNTIME_TOKEN}",
         "repos:",
         "  - name: NachoPal/storyengine",
       ].join("\n"),
     );
     writeFileSync(secretsPath, "FIXOWL_ADMIN_TOKEN=aaa\nFIXOWL_RUNTIME_TOKEN=rrr\n", {
-      mode: 0o644,
+      mode: 0o600,
     });
-    const { config, warnings } = loadConfig(configPath, secretsPath);
-    expect(config.github.admin_token).toBe("aaa");
-    expect(config.github.runtime_token).toBe("rrr");
-    expect(warnings.some((w) => w.includes("chmod 600"))).toBe(true);
+    expect(() => loadConfig(configPath, secretsPath)).toThrow(
+      /runtime_token \(the runtime PAT\) was removed[\s\S]*docs\/app-auth\.md/,
+    );
   });
 
   it("errors when the config is missing", () => {

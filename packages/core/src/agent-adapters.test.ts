@@ -194,7 +194,7 @@ describe("agent adapters", () => {
     expect(() => getAgentAdapter("claude", ["ANTHROPIC_API_KEY", "gh_token"])).toThrow(
       /never holds a GitHub token/,
     );
-    expect(FORBIDDEN_AGENT_ENV).toContain("FIXOWL_GITHUB_TOKEN");
+    expect(FORBIDDEN_AGENT_ENV).toContain("FIXOWL_APP_PRIVATE_KEY");
   });
 
   it("unknown adapter throws with the known list", () => {

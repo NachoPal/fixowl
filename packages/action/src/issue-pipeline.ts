@@ -218,7 +218,7 @@ export async function processIssue(
       const comment =
         ci.outcome === "unverified"
           ? `🦉 fixowl opened ${pr.url} for this issue and flipped it to ready, but CI could ` +
-            `not be verified: the runtime token cannot read this branch's check runs, so no ` +
+            `not be verified: the runtime credential cannot read this branch's check runs, so no ` +
             `checks were consulted. Review CI on the PR before merging.`
           : `🦉 fixowl opened ${pr.url} for this issue; its required checks are green and it is ready for review.`;
       log.info(

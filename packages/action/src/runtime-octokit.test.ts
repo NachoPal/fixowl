@@ -41,35 +41,14 @@ function fakeMinter(): { request: (route: string) => Promise<unknown>; mints: ()
 }
 
 describe("makeRuntimeOctokit", () => {
-  it("builds a plain client for a PAT and an app-strategy client for an App", () => {
-    const pat = makeRuntimeOctokit({ kind: "pat", token: "ghp_runtime" });
-    expect(typeof pat.auth).toBe("function");
-
-    const app = makeRuntimeOctokit({
-      kind: "app",
-      appId: APP_ID,
-      privateKey,
-      installationId: INSTALLATION_ID,
-    });
+  it("builds an app-strategy client from the App credential", () => {
+    const app = makeRuntimeOctokit({ appId: APP_ID, privateKey, installationId: INSTALLATION_ID });
     // Constructing the App client must not throw and must expose the auth strategy.
     expect(typeof app.auth).toBe("function");
   });
 });
 
 describe("makePushTokenProvider", () => {
-  it("returns the static token for a PAT without calling auth", async () => {
-    const provider = makePushTokenProvider(
-      { kind: "pat", token: "ghp_runtime" },
-      {
-        auth: () => {
-          throw new Error("PAT provider must not consult octokit.auth");
-        },
-      },
-    );
-    await expect(provider()).resolves.toBe("ghp_runtime");
-    await expect(provider()).resolves.toBe("ghp_runtime");
-  });
-
   afterEach(() => {
     vi.useRealTimers();
   });
@@ -89,10 +68,7 @@ describe("makePushTokenProvider", () => {
       installationId: INSTALLATION_ID,
       request: minter.request as never,
     });
-    const provider = makePushTokenProvider(
-      { kind: "app", appId: APP_ID, privateKey, installationId: INSTALLATION_ID },
-      { auth: appAuth as never },
-    );
+    const provider = makePushTokenProvider({ auth: appAuth as never });
 
     // t=0: first call mints t0.
     expect(await provider()).toBe("t0");
@@ -113,5 +89,12 @@ describe("makePushTokenProvider", () => {
     vi.setSystemTime(new Date("2026-01-01T02:10:00Z"));
     expect(await provider()).toBe("t2");
     expect(minter.mints()).toBe(3);
+  });
+
+  it("propagates a refresh failure instead of pushing unauthenticated", async () => {
+    const provider = makePushTokenProvider({
+      auth: () => Promise.reject(new Error("mint failed")),
+    });
+    await expect(provider()).rejects.toThrow(/mint failed/);
   });
 });

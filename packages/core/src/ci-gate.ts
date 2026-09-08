@@ -63,9 +63,9 @@ export function isFailureConclusion(conclusion: CheckStatusLite["conclusion"]): 
 
 /**
  * The result of reading a ref's checks. `readable` is false only when the read
- * itself failed because the runtime token cannot access the check-runs API - a
- * fine-grained PAT cannot be granted that scope (GitHub does not expose a
- * grantable "Checks" permission), so the read returns HTTP 403. An unreadable
+ * itself failed because the runtime credential cannot access the check-runs
+ * API - an App installation missing "Checks: read" is refused with HTTP 403
+ * (`fixowl validate` catches that before the night). An unreadable
  * result shares the unreadable-required-set fallback's *behaviour* - the poll
  * loop warns loudly that CI could not be verified and flips the draft PR to
  * ready after the settle window, rather than failing the issue (captain 7.2) -

@@ -7,7 +7,6 @@ import {
   renderFixowlWorkflow,
   resolveRepoSettings,
   runnerBaseDir,
-  RUNTIME_TOKEN_SECRET,
   STARTER_ISSUE_TEMPLATE,
   STARTER_ISSUE_TEMPLATE_PATH,
   STARTER_REPO_CONFIG,
@@ -71,9 +70,9 @@ export async function provisionCommand(
     ]);
     log.ok(created.length > 0 ? `labels created: ${created.join(", ")}` : "labels already present");
 
-    // 2. Secrets: the runtime credential (a PAT, or the GitHub App trio) plus
-    // every agent env var, sealed client-side with the admin token (the only
-    // token holding Secrets: write - the admin-token-is-setup-only invariant).
+    // 2. Secrets: the GitHub App runtime-credential trio plus every agent env
+    // var, sealed client-side with the admin token (the only token holding
+    // Secrets: write - the admin-token-is-setup-only invariant).
     const runtimeSecretNames = await sealRuntimeCredential(ctx, ref);
     for (const name of adapter.env) {
       const value = ctx.secrets[name] ?? process.env[name];
@@ -92,7 +91,6 @@ export async function provisionCommand(
       labels: settings.labels,
       agent: adapter.name,
       agentEnv: adapter.env,
-      appAuth: ctx.config.github.app !== undefined,
       maxIssuesPerRun: settings.maxIssuesPerRun,
       usageBudgetPercent: settings.usageBudgetPercent,
       runBudgetMinutes: settings.runBudgetMinutes,
@@ -199,34 +197,24 @@ export async function provisionCommand(
 }
 
 /**
- * Seal the repo's runtime credential and return the secret names sealed. The
- * App tier normalizes the private key to PKCS#8 first (GitHub hands out PKCS#1;
- * the action's WebCrypto-based auth needs PKCS#8) and seals the trio; the PAT
- * tier seals the single runtime secret. The config-load XOR guarantees exactly
- * one is configured, so the PAT branch's `runtime_token` is always set.
+ * Seal the repo's GitHub App runtime credential and return the secret names
+ * sealed. The private key is normalized to PKCS#8 first (GitHub hands out
+ * PKCS#1; the action's WebCrypto-based auth needs PKCS#8).
  */
 async function sealRuntimeCredential(
   ctx: CliContext,
   ref: { owner: string; repo: string },
 ): Promise<string[]> {
   const app = ctx.config.github.app;
-  if (app !== undefined) {
-    await putRepoSecret(ctx.admin, ref, APP_ID_SECRET, String(app.app_id));
-    await putRepoSecret(ctx.admin, ref, APP_INSTALLATION_ID_SECRET, String(app.installation_id));
-    await putRepoSecret(
-      ctx.admin,
-      ref,
-      APP_PRIVATE_KEY_SECRET,
-      toPkcs8Pem(resolvePrivateKey(app.private_key)),
-    );
-    return [APP_ID_SECRET, APP_INSTALLATION_ID_SECRET, APP_PRIVATE_KEY_SECRET];
-  }
-  const pat = ctx.config.github.runtime_token;
-  if (pat === undefined) {
-    throw new Error("no runtime credential in config: set github.runtime_token or github.app");
-  }
-  await putRepoSecret(ctx.admin, ref, RUNTIME_TOKEN_SECRET, pat);
-  return [RUNTIME_TOKEN_SECRET];
+  await putRepoSecret(ctx.admin, ref, APP_ID_SECRET, String(app.app_id));
+  await putRepoSecret(ctx.admin, ref, APP_INSTALLATION_ID_SECRET, String(app.installation_id));
+  await putRepoSecret(
+    ctx.admin,
+    ref,
+    APP_PRIVATE_KEY_SECRET,
+    toPkcs8Pem(resolvePrivateKey(app.private_key)),
+  );
+  return [APP_ID_SECRET, APP_INSTALLATION_ID_SECRET, APP_PRIVATE_KEY_SECRET];
 }
 
 async function openPrIfMissing(

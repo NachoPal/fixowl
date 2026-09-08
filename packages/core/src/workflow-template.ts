@@ -3,7 +3,6 @@ import {
   APP_ID_SECRET,
   APP_INSTALLATION_ID_SECRET,
   APP_PRIVATE_KEY_SECRET,
-  RUNTIME_TOKEN_SECRET,
 } from "./secret-names.ts";
 
 /**
@@ -27,14 +26,6 @@ export interface WorkflowTemplateOptions {
   agent: string;
   /** Env var names the agent adapter needs; each is wired from a same-named repo secret. */
   agentEnv: readonly string[];
-  /**
-   * When true, wire the GitHub App secret trio (FIXOWL_APP_ID /
-   * FIXOWL_APP_INSTALLATION_ID / FIXOWL_APP_PRIVATE_KEY) into the action env
-   * instead of the single runtime PAT secret (FIXOWL_GITHUB_TOKEN). The action's
-   * runtime resolver picks App auth when the trio is present. Default/false
-   * renders exactly today's PAT workflow, byte-for-byte.
-   */
-  appAuth?: boolean;
   maxIssuesPerRun: number;
   /** Usage-budget stop % (issue #21); the input is rendered only when set. */
   usageBudgetPercent?: number;
@@ -83,13 +74,10 @@ ${dispatchBlock}`
     : `on:
 ${dispatchBlock}`;
 
-  // Tier 2 (App auth) wires the App secret trio; Tier 1 (PAT) the single runtime
-  // secret. A PAT (default) workflow renders exactly as before - the App branch
-  // only fires when appAuth is true - so existing provisioned repos are
-  // unaffected until re-provisioned onto the App.
-  const runtimeSecretNames = options.appAuth
-    ? [APP_ID_SECRET, APP_INSTALLATION_ID_SECRET, APP_PRIVATE_KEY_SECRET]
-    : [RUNTIME_TOKEN_SECRET];
+  // The runtime credential is the GitHub App secret trio, sealed by `fixowl
+  // provision`; the action mints (and auto-refreshes) an installation token
+  // from it. Agent env vars follow, each wired from a same-named secret.
+  const runtimeSecretNames = [APP_ID_SECRET, APP_INSTALLATION_ID_SECRET, APP_PRIVATE_KEY_SECRET];
   const secretEnv = [...runtimeSecretNames, ...options.agentEnv]
     .map((name) => `          ${name}: \${{ secrets.${name} }}`)
     .join("\n");

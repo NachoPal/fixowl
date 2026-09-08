@@ -18,7 +18,7 @@ const FORBIDDEN = [
   /enableAutoMerge/i,
   /auto[_-]merge/i,
   // The "Merge a branch" REST API and ref force-updates can merge without
-  // ever saying "pulls.merge"; the runtime PAT (Contents RW) could do both.
+  // ever saying "pulls.merge"; the App token (Contents RW) could do both.
   /repos\.merge\b/,
   /\/merges\b/,
   /updateRef/i,

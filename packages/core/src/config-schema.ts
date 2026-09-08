@@ -63,13 +63,14 @@ const repoEntrySchema = z.object({
 export { labelModelsSchema };
 
 /**
- * The GitHub App runtime-credential tier (Tier 2), the alternative to a runtime
- * PAT. Provisioning seals these as repo Actions secrets and the action builds an
- * auto-refreshing installation-token client from them. `app_id` and
- * `installation_id` accept a number or a numeric string (YAML often quotes long
- * ids). `private_key` resolves from secrets.env like every other secret; store
- * it base64-encoded so the multi-line PEM survives the KEY=VALUE parser, and the
- * CLI decodes and normalizes it to PKCS#8 before sealing (see app-key.ts).
+ * The GitHub App runtime credential - the only credential the night run pushes
+ * and calls the API with. Provisioning seals these as repo Actions secrets and
+ * the action builds an auto-refreshing installation-token client from them.
+ * `app_id` and `installation_id` accept a number or a numeric string (YAML
+ * often quotes long ids). `private_key` resolves from secrets.env like every
+ * other secret; store it base64-encoded so the multi-line PEM survives the
+ * KEY=VALUE parser, and the CLI decodes and normalizes it to PKCS#8 before
+ * sealing (see app-key.ts).
  */
 const githubAppSchema = z.object({
   app_id: z.union([z.number().int().positive(), z.string().regex(/^\d+$/)]),
@@ -77,39 +78,32 @@ const githubAppSchema = z.object({
   private_key: z.string().min(1),
 });
 
+/**
+ * Migration error for a config written when a runtime PAT was still a valid
+ * credential. Zod strips unknown keys, so without this the legacy key would be
+ * silently ignored and the night would fail at 2am instead of at config load.
+ */
+export const RUNTIME_TOKEN_REMOVED_MESSAGE =
+  "github.runtime_token (the runtime PAT) was removed: fixowl authenticates the night run " +
+  "only as a GitHub App. Delete runtime_token, add the github.app block (app_id, " +
+  "installation_id, private_key), and re-run `fixowl provision`; see docs/app-auth.md";
+
 /** `~/.fixowl/config.yaml`, after ${VAR} references are resolved. Never contains raw secrets on disk. */
 export const globalConfigSchema = z.object({
   version: z.literal(1),
-  github: z
-    .object({
-      admin_token: z.string().min(1),
-      /**
-       * Runtime PAT (Tier 1). Optional because the App tier (`app`) is the
-       * alternative; exactly one of the two must be set (enforced below).
-       */
-      runtime_token: z.string().min(1).optional(),
-      /** GitHub App runtime credential (Tier 2); mutually exclusive with runtime_token. */
-      app: githubAppSchema.optional(),
-      /**
-       * Least-privilege PAT for the optional local fallback trigger: Actions:
-       * write only, used solely to dispatch the workflow when the cron misses.
-       * Separate from the setup-only admin token and the minimal runtime token.
-       */
-      fallback_token: z.string().min(1).optional(),
-    })
-    .superRefine((github, ctx) => {
-      // Runtime credential is a strict XOR: exactly one of a PAT or an App. Both
-      // (ambiguous) or neither (no way to push) is a config error, caught at
-      // load time so `loadConfig` rejects it immediately.
-      const hasPat = github.runtime_token !== undefined;
-      const hasApp = github.app !== undefined;
-      if (hasPat === hasApp) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: "set exactly one of github.runtime_token or github.app",
-        });
-      }
-    }),
+  github: z.object({
+    admin_token: z.string().min(1),
+    /** The GitHub App runtime credential; required (see docs/app-auth.md). */
+    app: githubAppSchema,
+    /** Rejected loudly: the runtime-PAT credential no longer exists. */
+    runtime_token: z.undefined({ error: RUNTIME_TOKEN_REMOVED_MESSAGE }).optional(),
+    /**
+     * Least-privilege PAT for the optional local fallback trigger: Actions:
+     * write only, used solely to dispatch the workflow when the cron misses.
+     * Separate from the setup-only admin token and the App runtime credential.
+     */
+    fallback_token: z.string().min(1).optional(),
+  }),
   runner: z
     .object({
       dir: z.string().min(1).optional(),
