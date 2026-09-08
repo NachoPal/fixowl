@@ -32,6 +32,24 @@ describe("fixowl init --non-interactive", () => {
     expect(statSync(secretsPath).mode & 0o777).toBe(0o600);
   });
 
+  it("points App setup at the one-click manifest flow, with manual creation as a footnote", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "fixowl-init-"));
+    const configPath = join(dir, "config.yaml");
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await initCommand({ configPath, nonInteractive: true, checkEngine: stubEngine });
+    vi.restoreAllMocks();
+
+    const printed = logSpy.mock.calls.flat().join("\n");
+    expect(printed).toContain("one browser click");
+    expect(printed).toContain("App Manifest");
+    expect(printed).toContain("Manual App setup (advanced)");
+    // The old co-equal step-by-step creation guide is gone (Tier-1 lesson:
+    // one onboarding path, with manual creation only an advanced footnote).
+    expect(printed).not.toContain("https://github.com/settings/apps/new");
+    expect(printed).not.toContain('UNCHECK "Active"');
+  });
+
   it("leaves existing files alone", async () => {
     const dir = mkdtempSync(join(tmpdir(), "fixowl-init-"));
     const configPath = join(dir, "config.yaml");

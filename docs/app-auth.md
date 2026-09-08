@@ -5,7 +5,7 @@ comment, and read CI state. That credential is a **GitHub App** (`app` in the
 config): its installation token reads Checks, so the
 [CI-gated fix loop](ci-fix-loop.md) is **real** (green flips a PR to ready; red
 keeps it a draft and retries), and the token **auto-refreshes** across the whole
-night. Creating the App takes ~15-20 minutes, once.
+night. `fixowl init` creates the App for you in **one browser click**.
 
 A fine-grained PAT is deliberately not accepted: GitHub exposes no grantable
 "Checks" permission to PATs, so on one the gate could never read check-run
@@ -29,46 +29,70 @@ refreshes for the whole night with **zero human action and no in-workflow mint
 step**. A unit test drives a simulated >1-hour night and asserts a fresh token is
 minted after the first expires.
 
-## Setup
+## Setup: the one-click manifest flow
 
-1. **Register a GitHub App.** Settings > Developer settings > GitHub Apps > New
-   GitHub App (personal or org). Give it any name/homepage. **No webhook** is
-   needed (uncheck "Active").
-2. **Grant repository permissions** (nothing else):
-   - Contents: **Read and write**
-   - Pull requests: **Read and write**
-   - Issues: **Read and write**
-   - Checks: **Read-only** ← the whole point; makes the CI gate real
-   - Commit statuses: **Read-only**
-   - Actions: **Read-only**
-   - Administration: **Read-only** (lets the gate read branch-protection /
-     ruleset required checks; grants no runner registration or protection
-     changes)
-3. **Install the App on your target repos** (the App's "Install App" tab; pick
-   "Only select repositories"). On an **org**, an org owner must approve the
-   install - the same policy wall that blocks fine-grained PATs in locked-down
-   orgs. Personal-account installs are self-serve.
-4. **Generate a private key** (the App's General tab > "Generate a private key")
-   and download the `.pem`.
-5. **base64-encode the key** onto one line so it survives `secrets.env`'s
-   line-based `KEY=VALUE` parser:
+`fixowl init` uses GitHub's [App Manifest flow](https://docs.github.com/en/apps/sharing-github-apps/registering-a-github-app-from-a-manifest):
+it pre-fills the whole App - name, permissions, webhook off - and opens your
+browser to GitHub's confirmation page. **Nothing is created until you review
+that page and click "Create GitHub App"** (the name is editable there). GitHub
+then hands the App ID, slug, and private key straight back to the CLI, which
+saves them automatically: the key base64-encoded into `secrets.env`, the App ID
+into the config. No permission-ticking, no key download, no base64 by hand.
 
-   ```sh
-   base64 -i app.private-key.pem | tr -d '\n'
-   ```
+On an SSH or no-browser host, pick the wizard's **headless** option: it writes
+a small `app-manifest.html` you open in any browser (copy it to your laptop
+first if needed), and you paste one code back into the terminal. The code is
+single-use and expires **1 hour** after GitHub issues it.
 
-6. **`fixowl init`** asks for the App ID (App > General), the Installation ID
-   (the number in the install settings URL, `.../installations/<id>`), and the
-   base64 key; it verifies the App authenticates and holds `Checks: read` (plus
-   `Contents: write` and `Pull requests: write`, without which pushes/PRs fail
-   at night) before writing the config. Or edit the config by hand (see below).
-7. **`fixowl validate`** re-checks the App identity, `Checks: read`,
+### What the manifest pre-fills, and why
+
+This is the least-privilege justification - for you, or for the org owner
+approving the install:
+
+| Pre-filled | Why |
+| --- | --- |
+| Contents: **write** | push fix branches (fixowl **never merges**; no merge API is ever called) |
+| Pull requests: **write** | open one draft PR per issue and flip it to ready when CI is green |
+| Issues: **write** | read the labeled issues and comment results back on them |
+| Checks: **read** | the CI gate reads check runs, so a PR goes ready only when CI is green |
+| Commit statuses: **read** | legacy commit-status contexts count toward the same CI gate |
+| Actions: **read** | fetch failing CI logs so the agent can fix a red build |
+| Administration: **read** | read which checks branch protection requires (read-only: cannot change settings or register runners) |
+| Webhook: **off** | fixowl polls on its nightly schedule; there is no endpoint to host |
+| Everything else | **no access** - and the install step below is where you pick which repos it can touch at all |
+
+### Install the App (the one step a manifest cannot do)
+
+The manifest creates the App and its key, but only **you** choose which
+repositories it may touch: install the App (the wizard prints the direct
+`https://github.com/apps/<slug>/installations/new` link; pick "Only select
+repositories"). On an **org**, an org owner must approve the install - the same
+policy wall that blocks fine-grained PATs in locked-down orgs (if your target
+repos live in an org, tell the wizard so the App is created under that org).
+Personal-account installs are self-serve.
+
+Because the CLI now holds the private key, it then authenticates as the App and
+**auto-detects the Installation ID** by listing the App's installations - you
+are only asked when the listing fails or is ambiguous.
+
+After the App step:
+
+1. **`fixowl validate`** re-checks the App identity, `Checks: read`,
    `Contents: write`, `Pull requests: write`, and that the App is installed on
    each configured repo.
-8. **`fixowl provision`** seals `FIXOWL_APP_ID` / `FIXOWL_APP_INSTALLATION_ID` /
+2. **`fixowl provision`** seals `FIXOWL_APP_ID` / `FIXOWL_APP_INSTALLATION_ID` /
    `FIXOWL_APP_PRIVATE_KEY` as repo Actions secrets (the private key normalized
    to PKCS#8, see below) and renders a workflow whose fixowl step env carries the
    trio.
+
+### Optional: the fixowl avatar
+
+New Apps get a GitHub-generated identicon. There is **no manifest field and no
+API** to set an App's logo ([confirmed limitation](https://github.community/t/app-manifest-flow-no-way-to-define-logo/14877));
+it is a one-time manual upload if you want it: your App's settings page >
+Display information > upload
+[`assets/fixowl-app-avatar.png`](../assets/fixowl-app-avatar.png). Purely
+cosmetic - skip it freely.
 
 ### Config shape
 
@@ -122,3 +146,23 @@ The App's *write* is least-privilege (Contents/Pull requests/Issues); its extra
 scopes are read-only. It never merges. A leaked installation *token* dies within
 ~1 hour; the sensitive at-rest secret is the **private key** - treat it like the
 admin token. See [security.md](security.md) for the full model.
+
+## Manual App setup (advanced)
+
+You should not need this - the manifest flow above is the supported path, and
+it shows everything for review before creating anything. Create the App by hand
+only if you must (e.g. adopting an App that already exists): register a new
+GitHub App (Settings > Developer settings > GitHub Apps; any unique name, any
+homepage URL, webhook **unchecked**), grant exactly the repository permissions
+in the [rationale table](#what-the-manifest-pre-fills-and-why) and nothing
+else, then install it, generate/download a private key, and base64-encode it
+onto one line:
+
+```sh
+base64 -i app.private-key.pem | tr -d '\n'
+```
+
+The App ID is on the App's settings page ("About"); the Installation ID is the
+number in `https://github.com/settings/installations/<id>` - though
+`fixowl init`'s "Use an existing App" option auto-detects it from the key for
+you and verifies the whole credential either way.

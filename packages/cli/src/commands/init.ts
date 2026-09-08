@@ -1,4 +1,6 @@
-import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
+import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Octokit } from "@octokit/rest";
 import {
@@ -11,9 +13,27 @@ import {
 import { CONFIG_PATH, loadSecrets, SECRETS_PATH } from "../config-load.ts";
 import { makeContext } from "../context.ts";
 import { checkDockerEngine, type EngineStatus } from "../docker/engine-check.ts";
+import {
+  detectInstallation,
+  listAppInstallations,
+  type AppInstallation,
+} from "../github/app-installations.ts";
 import { resolvePrivateKey, toPkcs8Pem } from "../github/app-key.ts";
-import { appClient, githubClient } from "../github/client.ts";
+import {
+  appInstallUrl,
+  buildAppManifest,
+  defaultAppName,
+  exchangeManifestCode,
+  extractManifestCode,
+  HEADLESS_REDIRECT_URL,
+  manifestSubmitUrl,
+  renderManifestFormPage,
+  renderManifestRationale,
+  type ManifestConversion,
+} from "../github/app-manifest.ts";
+import { appClient, appJwtClient, githubClient } from "../github/client.ts";
 import { describeGitHubError } from "../github/errors.ts";
+import { startManifestCapture } from "../github/manifest-server.ts";
 import {
   parseLabels,
   parseSchedule,
@@ -30,23 +50,9 @@ import { startCommand } from "./start.ts";
 import { validateCommand } from "./validate.ts";
 
 const PAT_URL = "https://github.com/settings/personal-access-tokens/new";
-const APP_URL = "https://github.com/settings/apps/new";
 
-/** The App's repository permissions, shared by the App-setup step and help text. */
-const APP_PERMISSIONS = [
-  "Contents: Read and write",
-  "Pull requests: Read and write",
-  "Issues: Read and write",
-  "Checks: Read-only",
-  "Commit statuses: Read-only",
-  "Actions: Read-only",
-  "Administration: Read-only",
-] as const;
-
-/** Renders APP_PERMISSIONS as one bullet per line, each prefixed with `indent`. */
-function appPermissionsBullets(indent: string): string {
-  return APP_PERMISSIONS.map((permission) => `${indent}- ${permission}`).join("\n");
-}
+/** Homepage the manifest pre-fills - required by GitHub, not used functionally. */
+const FIXOWL_HOMEPAGE = "https://github.com/NachoPal/fixowl";
 
 /** Agents offered by the wizard. Test-only and paid-API adapters stay out of it. */
 const AGENT_CHOICES = [
@@ -146,7 +152,7 @@ every answer is stored in ${dirname(configPath)}.`);
   }
 
   const secrets = loadSecrets(secretsPath);
-  const { admin, app } = await stepTokens(prompter, secrets);
+  const { admin, app } = await stepTokens(prompter, secrets, secretsPath);
   const { agent, agentEnv } = await stepAgent(prompter, secrets);
   const repos = await stepRepos(prompter, admin, agent);
   const wantFallback = await stepFallback(prompter, secrets);
@@ -198,10 +204,12 @@ Keeping it separate means the fallback holds only Actions: write, so you can
 still revoke or downgrade the admin token after provisioning.
 Mint it at ${PAT_URL}`);
   await prompter.pause("\nPress Enter once you have the fallback token ready ");
-  secrets.FIXOWL_FALLBACK_TOKEN = await askToken(prompter, {
-    label: "  fallback token",
-    existing: secrets.FIXOWL_FALLBACK_TOKEN,
-  });
+  secrets.FIXOWL_FALLBACK_TOKEN = (
+    await askToken(prompter, {
+      label: "  fallback token",
+      existing: secrets.FIXOWL_FALLBACK_TOKEN,
+    })
+  ).token;
   return true;
 }
 
@@ -212,6 +220,7 @@ Mint it at ${PAT_URL}`);
 async function stepTokens(
   prompter: Prompter,
   secrets: Record<string, string>,
+  secretsPath: string,
 ): Promise<{ admin: Octokit; app: AppCredentialAnswer }> {
   log.info(`
 Step 1/4  GitHub credentials
@@ -232,75 +241,308 @@ ONLY the repos you want fixowl to touch.
            downgrade it to read-only if you want \`fixowl status\` to confirm
            the runner is online). Routine \`fixowl start\` needs no admin token.
 
-  App      GitHub App, ~15 min once (set up next). Its installation token reads
-           Checks, so the CI-gated fix loop is REAL (green flips a PR to ready;
-           red keeps it a draft), and @octokit/auth-app auto-refreshes the token
-           across the whole night, so it never hits the 1-hour expiry cliff.
+  App      created for you next in ONE browser click (GitHub's App Manifest
+           flow). Its installation token reads Checks, so the CI-gated fix loop
+           is REAL (green flips a PR to ready; red keeps it a draft), and
+           @octokit/auth-app auto-refreshes the token across the whole night,
+           so it never hits the 1-hour expiry cliff.
 
 Mint the admin PAT at ${PAT_URL}`);
   await prompter.pause("\nPress Enter once you have the admin token ready ");
 
-  const adminToken = await askToken(prompter, {
+  const { token: adminToken, login } = await askToken(prompter, {
     label: "  admin token",
     existing: secrets.FIXOWL_ADMIN_TOKEN,
   });
   secrets.FIXOWL_ADMIN_TOKEN = adminToken;
-  const app = await stepAppCredential(prompter, secrets);
+  const app = await stepAppCredential(prompter, secrets, secretsPath, login);
   return { admin: githubClient(adminToken), app };
 }
 
 /**
- * Collect and verify the GitHub App credential. The private key is stored
- * base64-encoded (so the multi-line PEM survives secrets.env); verification
- * confirms the App authenticates and holds Checks: read - the honest pre-flight
- * for the whole reason to use an App - plus the write permissions the night
- * needs (Contents: write for pushes, Pull requests: write for PRs).
+ * Create (or adopt) the GitHub App and capture its credentials. The primary
+ * path is GitHub's App Manifest one-click flow: the wizard pre-fills the whole
+ * App - permissions, webhook off, name - opens the browser to GitHub's
+ * confirmation page (informed consent: everything is reviewable there), and
+ * receives the App ID + private key back automatically. A headless variant
+ * covers SSH/no-browser hosts, and "use an existing App" is the advanced
+ * escape hatch (see docs/app-auth.md). The private key is stored
+ * base64-encoded so the multi-line PEM survives secrets.env; verification
+ * confirms the App authenticates and holds Checks: read - the honest
+ * pre-flight for the whole reason to use an App - plus the write permissions
+ * the night needs.
  */
 async function stepAppCredential(
   prompter: Prompter,
   secrets: Record<string, string>,
+  secretsPath: string,
+  login: string | undefined,
 ): Promise<AppCredentialAnswer> {
   log.info(`
-GitHub App setup
-----------------
-1. Create the App at ${APP_URL}
-   Fill in the form:
-   - GitHub App name: any unique name, e.g. fixowl-<your-username> (must be
-     unique across all of GitHub).
-   - Homepage URL (required by GitHub, not used functionally): any valid URL
-     works - your target repo's URL or your GitHub profile URL are fine.
-   - Description, Callback URL / Setup URL, "Request user authorization
-     (OAuth) during installation": leave blank / unchecked.
-   - Webhook: UNCHECK "Active" (no webhook needed; leave URL and secret blank).
-   - Repository permissions - set exactly:
-${appPermissionsBullets("     ")}
-     (leave every other permission at "No access")
-   - Account permissions / Subscribe to events: none.
-   - "Where can this GitHub App be installed?": "Only on this account" is
-     fine for personal use.
-   - Click "Create GitHub App".
-2. Install the App on your target repo(s) - a SEPARATE step, in the App's
-   own settings, not the repo settings:
-   - Go to https://github.com/settings/apps -> click your App.
-   - In the left sidebar, click "Install App".
-   - Click the green "Install" button next to your account.
-   - Choose "Only select repositories" -> pick your target repo(s) -> Install.
-   - Note: https://github.com/settings/installations looks empty until you
-     do this - that is expected.
-3. Generate a private key: on your App's settings page
-   (https://github.com/settings/apps/<your-app-name>), scroll down to
-   "Private keys" and click "Generate a private key", then download the .pem.
-4. base64-encode it so it survives secrets.env, on ONE line:
-     base64 -i app.private-key.pem | tr -d '\\n'
-   App ID: on your App's settings page
-   (https://github.com/settings/apps/<your-app-name>), near the top in the
-   "About" section. Installation ID is the number in the install URL:
-   https://github.com/settings/installations/<id>. See docs/app-auth.md.`);
+GitHub App setup - one browser click
+------------------------------------
+fixowl pre-fills the App for you; GitHub shows it all for review before
+anything is created. What is being pre-filled, and why:
+
+${renderManifestRationale("  ")}
+
+Creating the App does NOT yet grant access to any repo - installing it (the
+next step) is where you choose the repositories fixowl may touch.`);
+
+  for (;;) {
+    const mode = await prompter.choose<"browser" | "headless" | "existing">(
+      "\nHow do you want to set up the App?",
+      [
+        {
+          value: "browser",
+          label: "One-click create (recommended)",
+          hint: "opens your browser; credentials are captured automatically",
+        },
+        {
+          value: "headless",
+          label: "Headless create",
+          hint: "no browser on this host; you paste one code back",
+        },
+        {
+          value: "existing",
+          label: "Use an existing App",
+          hint: "advanced: enter its ID and private key yourself",
+        },
+      ],
+    );
+    if (mode === "existing") return await enterExistingApp(prompter, secrets, secretsPath);
+
+    const name = await prompter.ask("  App name (globally unique; editable on GitHub's page)", {
+      default: login !== undefined ? defaultAppName(login) : undefined,
+      validate: (value) =>
+        value.trim().length > 34 ? "GitHub caps App names at 34 chars" : undefined,
+    });
+    let org: string | undefined;
+    if (
+      await prompter.confirm(
+        "  Create the App under an organization (needed when the target repos live in one)?",
+        false,
+      )
+    ) {
+      org = (await prompter.ask("  Organization login")).trim();
+    }
+
+    let conversion: ManifestConversion;
+    try {
+      conversion =
+        mode === "browser"
+          ? await browserManifestFlow(name.trim(), org)
+          : await headlessManifestFlow(prompter, secretsPath, name.trim(), org);
+    } catch (error) {
+      log.warn(`App creation did not complete: ${describeError(error)}`);
+      continue; // back to the mode choice; nothing was saved
+    }
+
+    // Persist the key IMMEDIATELY: GitHub hands it out exactly once, and it
+    // exists nowhere else until this write.
+    const privateKeyB64 = Buffer.from(conversion.pem, "utf8").toString("base64");
+    secrets.FIXOWL_APP_PRIVATE_KEY = privateKeyB64;
+    writeFileSync(secretsPath, renderSecretsEnv(secrets), { mode: 0o600 });
+    chmodSync(secretsPath, 0o600);
+    log.ok(
+      `created GitHub App "${conversion.slug}" (id ${conversion.appId}); private key saved to ${secretsPath}`,
+    );
+
+    const appId = String(conversion.appId);
+    const installationId = await detectInstallationId(prompter, {
+      appId,
+      privateKeyB64,
+      slug: conversion.slug,
+      freshlyCreated: true,
+    });
+    const check = await verifyApp(appId, installationId, privateKeyB64);
+    if (check.ok) log.ok(check.message);
+    // The App was just created from our own manifest, so a failed check means
+    // something outside the wizard (e.g. the install); `fixowl validate`
+    // re-checks before provisioning either way.
+    else log.warn(`${check.message}\n  Continuing; \`fixowl validate\` re-checks this.`);
+    return { appId, installationId };
+  }
+}
+
+/**
+ * The primary manifest path: a loopback-only server serves the auto-submitting
+ * manifest form and catches GitHub's redirect, so the App ID and private key
+ * arrive without the user copying anything.
+ */
+async function browserManifestFlow(
+  name: string,
+  org: string | undefined,
+): Promise<ManifestConversion> {
+  const state = randomBytes(16).toString("hex");
+  const capture = await startManifestCapture({
+    state,
+    pageForRedirect: (redirectUrl) =>
+      renderManifestFormPage(
+        buildAppManifest({ name, homepageUrl: FIXOWL_HOMEPAGE, redirectUrl }),
+        manifestSubmitUrl({ org, state }),
+      ),
+  });
+  try {
+    log.info(`
+Opening your browser. Review the pre-filled App on GitHub's page and click
+"Create GitHub App". If no browser opened, visit:
+  ${capture.url}`);
+    openBrowser(capture.url);
+    const code = await capture.code;
+    log.info("  received the creation code from GitHub; exchanging it…");
+    return await exchangeManifestCode(code);
+  } finally {
+    capture.close();
+  }
+}
+
+/**
+ * The headless variant: the manifest form is written to an HTML file the user
+ * opens in ANY browser (copy it to a laptop when this host is remote), and the
+ * redirect lands on github.com with the code in the address bar - no localhost
+ * server, nothing to reach this machine. Same one-hour conversion window.
+ */
+async function headlessManifestFlow(
+  prompter: Prompter,
+  secretsPath: string,
+  name: string,
+  org: string | undefined,
+): Promise<ManifestConversion> {
+  const state = randomBytes(16).toString("hex");
+  const page = renderManifestFormPage(
+    buildAppManifest({ name, homepageUrl: FIXOWL_HOMEPAGE, redirectUrl: HEADLESS_REDIRECT_URL }),
+    manifestSubmitUrl({ org, state }),
+  );
+  const pagePath = join(dirname(secretsPath), "app-manifest.html");
+  writeFileSync(pagePath, page);
+  log.info(`
+Wrote ${pagePath} (no secrets in it).
+1. Open that file in any browser - copy it to your own machine first if this
+   host is remote (e.g. scp).
+2. Review the pre-filled App on GitHub's page and click "Create GitHub App".
+3. You land back on ${HEADLESS_REDIRECT_URL} with ?code=… in the
+   address bar. Paste the code (or the whole URL) here within 1 hour.`);
+  const answer = await prompter.ask("  code (or the full redirected URL)", {
+    validate: (value) =>
+      extractManifestCode(value) === undefined
+        ? "no code found; paste the code= value or the full URL from the address bar"
+        : undefined,
+  });
+  const code = extractManifestCode(answer);
+  if (code === undefined) throw new Error("unreachable: validated answer had no code");
+  const conversion = await exchangeManifestCode(code);
+  rmSync(pagePath, { force: true });
+  return conversion;
+}
+
+/** Best-effort `open`/`xdg-open`; the URL is printed anyway if this fails. */
+function openBrowser(url: string): void {
+  const command = process.platform === "darwin" ? "open" : "xdg-open";
+  try {
+    const child = spawn(command, [url], { stdio: "ignore", detached: true });
+    child.on("error", () => {});
+    child.unref();
+  } catch {
+    // Non-fatal: the wizard already printed the URL to visit manually.
+  }
+}
+
+/**
+ * Install guidance + Installation ID auto-detection. The manifest creates the
+ * App but cannot install it: the user still picks the repositories, on GitHub.
+ * Since the CLI now holds the private key it then authenticates as the App and
+ * lists installations itself, instead of sending the user to dig the ID out of
+ * a settings URL. Falls back to asking when the API cannot be read.
+ */
+async function detectInstallationId(
+  prompter: Prompter,
+  options: { appId: string; privateKeyB64: string; slug?: string; freshlyCreated: boolean },
+): Promise<string> {
+  let client;
+  try {
+    client = appJwtClient(
+      Number(options.appId),
+      toPkcs8Pem(resolvePrivateKey(options.privateKeyB64)),
+    );
+  } catch (error) {
+    log.warn(`cannot authenticate as the App to list installations: ${describeError(error)}`);
+    return await askInstallationId(prompter);
+  }
+
+  const installHint =
+    options.slug !== undefined
+      ? appInstallUrl(options.slug)
+      : "https://github.com/settings/apps -> your App -> Install App";
+  if (options.freshlyCreated) {
+    log.info(`
+Install the App - this is where YOU pick which repositories fixowl may touch:
+  ${installHint}
+Choose "Only select repositories" and pick your target repo(s).`);
+    await prompter.pause("\nPress Enter once the App is installed ");
+  }
+
+  for (;;) {
+    let installations: AppInstallation[];
+    try {
+      installations = await listAppInstallations(client);
+    } catch (error) {
+      log.warn(`could not list the App's installations: ${describeGitHubError(error)}`);
+      if (await prompter.confirm("  Try again?", true)) continue;
+      return await askInstallationId(prompter);
+    }
+    const detected = detectInstallation(installations);
+    switch (detected.kind) {
+      case "one":
+        log.ok(
+          `App installed on ${detected.installation.account} - installation id ${detected.installation.id} detected`,
+        );
+        return String(detected.installation.id);
+      case "many":
+        return String(
+          await prompter.choose(
+            "  The App is installed on several accounts; which installation is for fixowl?",
+            detected.installations.map((install) => ({
+              value: install.id,
+              label: install.account,
+              hint: `installation ${install.id}`,
+            })),
+          ),
+        );
+      case "none": {
+        log.warn(`the App has no installations yet - install it at ${installHint}`);
+        if (await prompter.confirm("  Check again?", true)) continue;
+        return await askInstallationId(prompter);
+      }
+    }
+  }
+}
+
+/** The manual fallback: the number in https://github.com/settings/installations/<id>. */
+async function askInstallationId(prompter: Prompter): Promise<string> {
+  return await prompter.ask(
+    "  Installation ID (the number in https://github.com/settings/installations/<id>)",
+    { validate: numericId },
+  );
+}
+
+/**
+ * The advanced path: adopt an App that already exists. Only its ID and private
+ * key are typed; the Installation ID is still auto-detected via the key. The
+ * required permissions live in docs/app-auth.md ("Manual App setup").
+ */
+async function enterExistingApp(
+  prompter: Prompter,
+  secrets: Record<string, string>,
+  secretsPath: string,
+): Promise<AppCredentialAnswer> {
+  log.info(`
+Using an existing App (advanced). Find the App ID on the App's settings page
+("About" section) and generate/download a private key there ("Private keys"),
+then base64-encode it on ONE line: base64 -i app.private-key.pem | tr -d '\\n'
+Required permissions: docs/app-auth.md ("Manual App setup").`);
   for (;;) {
     const appId = await prompter.ask("  App ID (numeric)", { validate: numericId });
-    const installationId = await prompter.ask("  Installation ID (numeric)", {
-      validate: numericId,
-    });
     const privateKeyB64 = await prompter.secret("  App private key (base64 of the .pem)", {
       existing: secrets.FIXOWL_APP_PRIVATE_KEY,
       validate: (value) =>
@@ -308,16 +550,22 @@ ${appPermissionsBullets("     ")}
           ? "paste the base64 on one line (base64 -i app.pem | tr -d '\\n')"
           : undefined,
     });
+    secrets.FIXOWL_APP_PRIVATE_KEY = privateKeyB64;
+    writeFileSync(secretsPath, renderSecretsEnv(secrets), { mode: 0o600 });
+    chmodSync(secretsPath, 0o600);
+    const installationId = await detectInstallationId(prompter, {
+      appId,
+      privateKeyB64,
+      freshlyCreated: false,
+    });
     const check = await verifyApp(appId, installationId, privateKeyB64);
     if (check.ok) {
-      secrets.FIXOWL_APP_PRIVATE_KEY = privateKeyB64;
       log.ok(check.message);
       return { appId, installationId };
     }
     log.warn(check.message);
     if (!(await prompter.confirm("  Enter the App details again?", true))) {
       // Keep what was typed; `fixowl validate` re-checks before provisioning.
-      secrets.FIXOWL_APP_PRIVATE_KEY = privateKeyB64;
       return { appId, installationId };
     }
   }
@@ -399,7 +647,7 @@ async function verifyApp(
 async function askToken(
   prompter: Prompter,
   options: { label: string; existing?: string },
-): Promise<string> {
+): Promise<{ token: string; login: string | undefined }> {
   for (;;) {
     const token = await prompter.secret(options.label, {
       existing: options.existing,
@@ -409,10 +657,12 @@ async function askToken(
     const login = await whoami(token);
     if (login.ok) {
       log.ok(`authenticated as ${login.login}: ${maskSecret(token)}`);
-      return token;
+      return { token, login: login.login };
     }
     log.warn(`GitHub rejected that token: ${login.reason}`);
-    if (!(await prompter.confirm("  Enter it again?", true))) return token;
+    if (!(await prompter.confirm("  Enter it again?", true))) {
+      return { token, login: undefined };
+    }
   }
 }
 
@@ -952,39 +1202,14 @@ Next steps (or re-run \`fixowl init\` on a terminal for the guided setup):
          - Actions: Read and write
          - Pull requests: Read and write
      Then set up the GitHub App the night run authenticates as (its
-     installation token reads Checks, which makes the CI gate real):
-         a. Create the App at ${APP_URL}
-            - GitHub App name: any unique name, e.g. fixowl-<your-username>.
-            - Homepage URL (required by GitHub, not used functionally): any
-              valid URL works - your target repo's URL or your profile URL.
-            - Description, Callback URL / Setup URL, "Request user
-              authorization (OAuth) during installation": leave blank/unchecked.
-            - Webhook: UNCHECK "Active".
-            - Repository permissions - set exactly:
-${appPermissionsBullets("              ")}
-              (leave every other permission at "No access")
-            - "Where can this GitHub App be installed?": "Only on this
-              account" is fine for personal use.
-            - Click "Create GitHub App".
-         b. Install it (a SEPARATE step, in the App's own settings):
-            go to https://github.com/settings/apps -> click your App ->
-            "Install App" (left sidebar) -> green "Install" next to your
-            account -> "Only select repositories" -> pick your repo(s) ->
-            Install. (https://github.com/settings/installations looks empty
-            until you do this - that is expected.)
-         c. Generate a private key: on your App's settings page
-            (https://github.com/settings/apps/<your-app-name>), scroll down
-            to "Private keys" and click "Generate a private key", then
-            download the .pem and base64-encode it onto one line:
-              base64 -i app.private-key.pem | tr -d '\\n'
-            and put it in ${secretsPath} as FIXOWL_APP_PRIVATE_KEY. App ID:
-            on your App's settings page
-            (https://github.com/settings/apps/<your-app-name>), near the top
-            in the "About" section. Installation ID is the number in the
-            install URL: https://github.com/settings/installations/<id>.
-         d. Put the App ID and Installation ID in the github.app block of the
-            config. The installation token auto-refreshes across the night.
-            See docs/app-auth.md.
+     installation token reads Checks, which makes the CI gate real). The
+     easy way is \`fixowl init\` on an interactive terminal: it creates the
+     App for you in one browser click via GitHub's App Manifest flow and
+     captures the App ID and private key automatically. To create it by
+     hand instead, follow "Manual App setup (advanced)" in docs/app-auth.md,
+     then put the App ID and Installation ID in the github.app block of the
+     config and the base64 of the .pem (base64 -i app.private-key.pem |
+     tr -d '\\n') in ${secretsPath} as FIXOWL_APP_PRIVATE_KEY.
   2. If using the claude agent: run \`claude setup-token\` and put the resulting
      token in ${secretsPath} as CLAUDE_CODE_OAUTH_TOKEN.
   3. Edit ${configPath}: list your repos.
