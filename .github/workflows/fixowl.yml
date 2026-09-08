@@ -36,22 +36,27 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - uses: NachoPal/fixowl@00e71c73fca6f45cd78bc3fe85f9284ae3c5acdb # main @ 2026-09-05
+      - uses: NachoPal/fixowl@aa009e44ffacb0a17b597ab52a91ae225a19200a # main @ 2026-09-08
         with:
-          labels-any: "for: agent"
+          labels-any: "for: agents"
           labels-all: ""
           agent: claude
           agent-env: "CLAUDE_CODE_OAUTH_TOKEN"
-          max-issues-per-run: "10"
-          issue-timeout-minutes: "45"
+          max-issues-per-run: "3"
+          issue-timeout-minutes: "120"
+          max-ci-tries: "3"
+          ci-timeout-minutes: "60"
           source: "${{ github.event.inputs.source }}"
           schedule: "37 0 * * *"
-          default-model: "opus"
-          default-effort: "high"
-          label-models: "{\"effort: high\":{\"model\":\"opus\",\"effort\":\"high\"},\"effort: low\":{\"model\":\"sonnet\",\"effort\":\"high\"},\"effort: max\":{\"model\":\"opus\",\"effort\":\"max\"},\"effort: medium\":{\"model\":\"opus\",\"effort\":\"medium\"},\"effort: xhigh\":{\"model\":\"opus\",\"effort\":\"xhigh\"}}"
+          usage-budget-percent: "85"
+          run-budget-minutes: "240"
+          default-model: "sonnet"
+          default-effort: "medium"
         env:
           GITHUB_TOKEN: ${{ github.token }} # Actions: read, for the once-a-day budget guard
-          FIXOWL_GITHUB_TOKEN: ${{ secrets.FIXOWL_GITHUB_TOKEN }}
+          FIXOWL_APP_ID: ${{ secrets.FIXOWL_APP_ID }}
+          FIXOWL_APP_INSTALLATION_ID: ${{ secrets.FIXOWL_APP_INSTALLATION_ID }}
+          FIXOWL_APP_PRIVATE_KEY: ${{ secrets.FIXOWL_APP_PRIVATE_KEY }}
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 
       - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
