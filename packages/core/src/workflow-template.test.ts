@@ -2,8 +2,21 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { parse as parseYaml } from "yaml";
 import { describe, expect, it } from "vitest";
 import { renderFixowlWorkflow, type WorkflowTemplateOptions } from "./workflow-template.ts";
+
+type WorkflowStep = {
+  uses?: string;
+  if?: string;
+  "continue-on-error"?: boolean;
+  with?: { name?: string };
+};
+
+function fixowlJobSteps(rendered: string): WorkflowStep[] {
+  const doc = parseYaml(rendered) as { jobs: { fixowl: { steps: WorkflowStep[] } } };
+  return doc.jobs.fixowl.steps;
+}
 
 const baseOptions: WorkflowTemplateOptions = {
   schedule: "30 1 * * *",
@@ -122,6 +135,26 @@ describe("renderFixowlWorkflow", () => {
     // The ephemeral guard token is unchanged; agent env still wired.
     expect(rendered).toContain("GITHUB_TOKEN: ${{ github.token }}");
     expect(rendered).toContain("CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}");
+  });
+
+  it("marks the end-of-job combined evidence upload continue-on-error so it can never fail the run", () => {
+    const steps = fixowlJobSteps(renderFixowlWorkflow(baseOptions));
+    // The combined upload is the only step that produces the single
+    // `fixowl-evidence` artifact and always runs (if: always()).
+    const combinedUpload = steps.filter(
+      (step) => step.if === "always()" && step.with?.name === "fixowl-evidence",
+    );
+    expect(combinedUpload).toHaveLength(1);
+    // GitHub Actions semantics: continue-on-error true means a failure of this
+    // step (the intermittent FinalizeArtifact 403) does not fail the job/run.
+    expect(combinedUpload[0]?.["continue-on-error"]).toBe(true);
+
+    // No other step opts out of failure - the fix is scoped to this one upload,
+    // so a real failure anywhere else still turns the run red.
+    const otherContinueOnError = steps.filter(
+      (step) => step.with?.name !== "fixowl-evidence" && step["continue-on-error"] === true,
+    );
+    expect(otherContinueOnError).toEqual([]);
   });
 
   it("passes actionlint when available", () => {

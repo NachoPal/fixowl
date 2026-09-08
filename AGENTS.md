@@ -180,8 +180,10 @@ See [docs/releasing.md](docs/releasing.md).
   are mandatory: `@actions/artifact` v2+ forbids two artifacts sharing a name in
   one run. Naming/paths are pure in `evidence.ts` (shared with `pr-body.ts`,
   which links each PR to its own issue artifact); the workflow keeps the combined
-  end-of-job `fixowl-evidence` upload as the fully-successful fallback. Upload is
-  best-effort (a failure is logged, never aborts the night); in-process tests
+  end-of-job `fixowl-evidence` upload as the fully-successful fallback, marked
+  `continue-on-error` so its intermittent FinalizeArtifact 403 (issue #118) never
+  flips the whole run red. Upload is best-effort (a failure is logged, never
+  aborts the night); in-process tests
   inject a fake or omit it. The one accepted limit: the issue in progress at the
   freeze may lose its evidence (its container was frozen).
 
