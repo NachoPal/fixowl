@@ -334,9 +334,10 @@ ${appPermissionsBullets("     ")}
    "Private keys" and click "Generate a private key", then download the .pem.
 4. base64-encode it so it survives secrets.env, on ONE line:
      base64 -i app.private-key.pem | tr -d '\\n'
-   App ID is on the App's General tab. Installation ID is the number in the
-   install URL: https://github.com/settings/installations/<id>. See
-   docs/app-auth.md.`);
+   App ID: on your App's settings page
+   (https://github.com/settings/apps/<your-app-name>), near the top in the
+   "About" section. Installation ID is the number in the install URL:
+   https://github.com/settings/installations/<id>. See docs/app-auth.md.`);
   for (;;) {
     const appId = await prompter.ask("  App ID (numeric)", { validate: numericId });
     const installationId = await prompter.ask("  Installation ID (numeric)", {
@@ -1031,8 +1032,10 @@ ${appPermissionsBullets("              ")}
             to "Private keys" and click "Generate a private key", then
             download the .pem and base64-encode it onto one line:
               base64 -i app.private-key.pem | tr -d '\\n'
-            and put it in ${secretsPath} as FIXOWL_APP_PRIVATE_KEY. App ID is
-            on the App's General tab; Installation ID is the number in the
+            and put it in ${secretsPath} as FIXOWL_APP_PRIVATE_KEY. App ID:
+            on your App's settings page
+            (https://github.com/settings/apps/<your-app-name>), near the top
+            in the "About" section. Installation ID is the number in the
             install URL: https://github.com/settings/installations/<id>.
          d. Uncomment the github.app block in the config. The installation
             token auto-refreshes across the night. See docs/app-auth.md.
