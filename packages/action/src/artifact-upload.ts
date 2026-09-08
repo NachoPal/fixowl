@@ -23,7 +23,7 @@ async function listFilesRecursive(dir: string): Promise<string[]> {
  * fixowl speaks the current (v4+) artifact-backend protocol rather than
  * reimplementing its Azure-blob upload by hand. Uses only the Actions runtime's
  * own `ACTIONS_RUNTIME_TOKEN`/`ACTIONS_RESULTS_URL` (present for any running job);
- * it never touches the runtime PAT and runs on the host, outside any container.
+ * it never touches the App credential and runs on the host, outside any container.
  */
 export class GitHubArtifactUploader implements ArtifactUploader {
   private readonly client = new DefaultArtifactClient();

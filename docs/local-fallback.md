@@ -82,10 +82,10 @@ never guarded, regardless of window.
 
 ## The token: `FIXOWL_FALLBACK_TOKEN`
 
-Dispatching a workflow requires **Actions: write**. fixowl's other two tokens
+Dispatching a workflow requires **Actions: write**. fixowl's other credentials
 deliberately don't provide that for routine use (see [security.md](security.md)):
 the admin token is setup-only and meant to be revoked or downgraded after
-provisioning, and the runtime token is least-privilege and lives in the repo, not
+provisioning, and the GitHub App is least-privilege and lives in the repo, not
 on the host.
 
 So the fallback uses its **own** dedicated, least-privilege token:

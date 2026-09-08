@@ -20,23 +20,26 @@ const repo = (over: Partial<RepoAnswers> = {}): RepoAnswers => ({
 
 const SECRETS = {
   FIXOWL_ADMIN_TOKEN: "admin",
-  FIXOWL_RUNTIME_TOKEN: "runtime",
+  FIXOWL_APP_PRIVATE_KEY: "base64pem",
   CLAUDE_CODE_OAUTH_TOKEN: "oauth",
 };
+
+const APP = { appId: "123456", installationId: "7890123" };
 
 /** Parses rendered YAML the way the CLI does, so the schema is the assertion. */
 function loadRendered(yaml: string): ReturnType<typeof globalConfigSchema.parse> {
   return globalConfigSchema.parse(substituteSecretRefs(parseYaml(yaml), SECRETS));
 }
 
+/** The wizard's answers with the constant parts (agent, App) filled in. */
+function answers(repos: RepoAnswers[], over: { fallback?: boolean } = {}) {
+  return { agent: "claude", agentEnv: ["CLAUDE_CODE_OAUTH_TOKEN"], repos, app: APP, ...over };
+}
+
 describe("renderConfigYaml", () => {
   it("produces a config the loader accepts, with the first repo as defaults", () => {
     const config = loadRendered(
-      renderConfigYaml({
-        agent: "claude",
-        agentEnv: ["CLAUDE_CODE_OAUTH_TOKEN"],
-        repos: [repo({ scheduleNote: "02:37 Europe/Madrid" })],
-      }),
+      renderConfigYaml(answers([repo({ scheduleNote: "02:37 Europe/Madrid" })])),
     );
     expect(config.defaults).toMatchObject({
       schedule: "37 1 * * *",
@@ -52,10 +55,8 @@ describe("renderConfigYaml", () => {
 
   it("writes per-repo overrides only where a repo differs from the defaults", () => {
     const config = loadRendered(
-      renderConfigYaml({
-        agent: "claude",
-        agentEnv: ["CLAUDE_CODE_OAUTH_TOKEN"],
-        repos: [
+      renderConfigYaml(
+        answers([
           repo(),
           repo({ name: "NachoPal/same" }),
           repo({
@@ -64,8 +65,8 @@ describe("renderConfigYaml", () => {
             labels: ["overnight", "type: bug"],
             maxIssuesPerRun: 1,
           }),
-        ],
-      }),
+        ]),
+      ),
     );
     expect(config.repos[1]).toEqual({ name: "NachoPal/same" });
     expect(config.repos[2]).toEqual({
@@ -77,14 +78,12 @@ describe("renderConfigYaml", () => {
   });
 
   it("renders run-budget defaults when set and per-repo overrides where they differ", () => {
-    const yaml = renderConfigYaml({
-      agent: "claude",
-      agentEnv: ["CLAUDE_CODE_OAUTH_TOKEN"],
-      repos: [
+    const yaml = renderConfigYaml(
+      answers([
         repo({ usageBudgetPercent: 85, runBudgetMinutes: 240, issueTimeoutMinutes: 45 }),
         repo({ name: "NachoPal/other", usageBudgetPercent: 60, issueTimeoutMinutes: 30 }),
-      ],
-    });
+      ]),
+    );
     const config = loadRendered(yaml);
     expect(config.defaults).toMatchObject({
       usage_budget_percent: 85,
@@ -100,11 +99,7 @@ describe("renderConfigYaml", () => {
   });
 
   it("leaves the usage/wall-clock axes opted out (commented) when the base repo omits them", () => {
-    const yaml = renderConfigYaml({
-      agent: "claude",
-      agentEnv: ["CLAUDE_CODE_OAUTH_TOKEN"],
-      repos: [repo()],
-    });
+    const yaml = renderConfigYaml(answers([repo()]));
     const config = loadRendered(yaml);
     expect(config.defaults?.usage_budget_percent).toBeUndefined();
     expect(config.defaults?.run_budget_minutes).toBeUndefined();
@@ -115,10 +110,8 @@ describe("renderConfigYaml", () => {
 
   it("renders default model/effort into defaults and label_models per repo", () => {
     const config = loadRendered(
-      renderConfigYaml({
-        agent: "claude",
-        agentEnv: ["CLAUDE_CODE_OAUTH_TOKEN"],
-        repos: [
+      renderConfigYaml(
+        answers([
           repo({
             defaultModel: "sonnet",
             defaultEffort: "medium",
@@ -127,8 +120,8 @@ describe("renderConfigYaml", () => {
               quick: { model: "haiku", effort: "low" },
             },
           }),
-        ],
-      }),
+        ]),
+      ),
     );
     expect(config.defaults).toMatchObject({ model: "sonnet", effort: "medium" });
     expect(config.repos[0]).toEqual({
@@ -142,14 +135,12 @@ describe("renderConfigYaml", () => {
 
   it("lifts model/effort into defaults only when every repo shares the same value", () => {
     const config = loadRendered(
-      renderConfigYaml({
-        agent: "claude",
-        agentEnv: ["CLAUDE_CODE_OAUTH_TOKEN"],
-        repos: [
+      renderConfigYaml(
+        answers([
           repo({ defaultModel: "sonnet", defaultEffort: "medium" }),
           repo({ name: "NachoPal/same", defaultModel: "sonnet", defaultEffort: "medium" }),
-        ],
-      }),
+        ]),
+      ),
     );
     expect(config.defaults).toMatchObject({ model: "sonnet", effort: "medium" });
     expect(config.repos[0]).toEqual({ name: "NachoPal/storyengine" });
@@ -162,14 +153,12 @@ describe("renderConfigYaml", () => {
 
   it("renders model/effort per repo when the repos disagree", () => {
     const config = loadRendered(
-      renderConfigYaml({
-        agent: "claude",
-        agentEnv: ["CLAUDE_CODE_OAUTH_TOKEN"],
-        repos: [
+      renderConfigYaml(
+        answers([
           repo({ defaultModel: "sonnet", defaultEffort: "medium" }),
           repo({ name: "NachoPal/big", defaultModel: "opus", defaultEffort: "max" }),
-        ],
-      }),
+        ]),
+      ),
     );
     expect(config.defaults?.model).toBeUndefined();
     expect(config.defaults?.effort).toBeUndefined();
@@ -183,14 +172,12 @@ describe("renderConfigYaml", () => {
 
   it("lets a repo decline a default without inheriting another repo's model", () => {
     const config = loadRendered(
-      renderConfigYaml({
-        agent: "claude",
-        agentEnv: ["CLAUDE_CODE_OAUTH_TOKEN"],
-        repos: [
+      renderConfigYaml(
+        answers([
           repo({ defaultModel: "opus", defaultEffort: "max" }),
           repo({ name: "NachoPal/default-agent" }),
-        ],
-      }),
+        ]),
+      ),
     );
     expect(config.defaults?.model).toBeUndefined();
     expect(config.defaults?.effort).toBeUndefined();
@@ -206,57 +193,37 @@ describe("renderConfigYaml", () => {
   });
 
   it("keeps secrets out of the config file", () => {
-    const yaml = renderConfigYaml({
-      agent: "claude",
-      agentEnv: ["CLAUDE_CODE_OAUTH_TOKEN"],
-      repos: [repo()],
-    });
+    const yaml = renderConfigYaml(answers([repo()]));
     expect(yaml).toContain("admin_token: ${FIXOWL_ADMIN_TOKEN}");
-    expect(yaml).toContain("runtime_token: ${FIXOWL_RUNTIME_TOKEN}");
+    expect(yaml).toContain("private_key: ${FIXOWL_APP_PRIVATE_KEY}");
     expect(yaml).not.toContain("github_pat_");
+    expect(yaml).not.toContain("base64pem");
   });
 
   it("refuses to render without a repo", () => {
-    expect(() => renderConfigYaml({ agent: "claude", agentEnv: [], repos: [] })).toThrow(
-      /at least one repo/,
-    );
+    expect(() => renderConfigYaml(answers([]))).toThrow(/at least one repo/);
   });
 
-  it("renders the GitHub App block for the App tier and drops runtime_token", () => {
-    const yaml = renderConfigYaml({
-      agent: "claude",
-      agentEnv: ["CLAUDE_CODE_OAUTH_TOKEN"],
-      repos: [repo()],
-      runtimeCredential: { kind: "app", appId: "123456", installationId: "7890123" },
-    });
+  it("renders the GitHub App block as the only runtime credential", () => {
+    const yaml = renderConfigYaml(answers([repo()]));
     expect(yaml).toContain("app_id: 123456");
     expect(yaml).toContain("installation_id: 7890123");
     expect(yaml).toContain("private_key: ${FIXOWL_APP_PRIVATE_KEY}");
-    expect(yaml).not.toContain("runtime_token:");
-    const config = globalConfigSchema.parse(
-      substituteSecretRefs(parseYaml(yaml), { ...SECRETS, FIXOWL_APP_PRIVATE_KEY: "base64pem" }),
-    );
+    expect(yaml).not.toContain("runtime_token");
+    const config = loadRendered(yaml);
     expect(config.github.app).toEqual({
       app_id: 123456,
       installation_id: 7890123,
       private_key: "base64pem",
     });
-    expect(config.github.runtime_token).toBeUndefined();
   });
 
   it("omits the fallback token unless the fallback is enabled", () => {
-    expect(
-      renderConfigYaml({ agent: "claude", agentEnv: ["CLAUDE_CODE_OAUTH_TOKEN"], repos: [repo()] }),
-    ).not.toContain("fallback_token");
+    expect(renderConfigYaml(answers([repo()]))).not.toContain("fallback_token");
   });
 
   it("wires the fallback token into the github block when enabled", () => {
-    const yaml = renderConfigYaml({
-      agent: "claude",
-      agentEnv: ["CLAUDE_CODE_OAUTH_TOKEN"],
-      repos: [repo()],
-      fallback: true,
-    });
+    const yaml = renderConfigYaml(answers([repo()], { fallback: true }));
     expect(yaml).toContain("fallback_token: ${FIXOWL_FALLBACK_TOKEN}");
     const config = globalConfigSchema.parse(
       substituteSecretRefs(parseYaml(yaml), { ...SECRETS, FIXOWL_FALLBACK_TOKEN: "fb" }),
@@ -269,12 +236,12 @@ describe("renderSecretsEnv", () => {
   it("round-trips through the secrets parser, tokens first", () => {
     const rendered = renderSecretsEnv({
       CLAUDE_CODE_OAUTH_TOKEN: "sk-oauth",
-      FIXOWL_RUNTIME_TOKEN: "github_pat_runtime",
+      FIXOWL_APP_PRIVATE_KEY: "base64pem",
       FIXOWL_ADMIN_TOKEN: "github_pat_admin",
     });
     expect(parseSecretsEnv(rendered)).toEqual({
       FIXOWL_ADMIN_TOKEN: "github_pat_admin",
-      FIXOWL_RUNTIME_TOKEN: "github_pat_runtime",
+      FIXOWL_APP_PRIVATE_KEY: "base64pem",
       CLAUDE_CODE_OAUTH_TOKEN: "sk-oauth",
     });
     expect(rendered.indexOf("FIXOWL_ADMIN_TOKEN")).toBeLessThan(

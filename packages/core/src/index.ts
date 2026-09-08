@@ -78,6 +78,7 @@ export {
   repoFullNameSchema,
   resolvedModelSelectionErrors,
   resolveRepoSettings,
+  RUNTIME_TOKEN_REMOVED_MESSAGE,
   runnerBaseDir,
   type GithubAppConfig,
   type GlobalConfig,
@@ -107,7 +108,7 @@ export {
   APP_ID_SECRET,
   APP_INSTALLATION_ID_SECRET,
   APP_PRIVATE_KEY_SECRET,
-  RUNTIME_TOKEN_SECRET,
+  LEGACY_RUNTIME_TOKEN_SECRET,
 } from "./secret-names.ts";
 export { resolveRuntimeCredentialFromEnv, type RuntimeCredential } from "./runtime-credential.ts";
 export {

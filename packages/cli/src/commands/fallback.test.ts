@@ -7,7 +7,11 @@ function makeCtx(): CliContext {
   return {
     config: {
       version: 1,
-      github: { admin_token: "a", runtime_token: "r", fallback_token: "f" },
+      github: {
+        admin_token: "a",
+        app: { app_id: 1, installation_id: 2, private_key: "pem" },
+        fallback_token: "f",
+      },
       repos: [{ name: "acme/widgets" }],
     },
   } as unknown as CliContext;

@@ -51,20 +51,20 @@ issue body (untrusted)
 
 ## Tokens
 
-The **runtime credential** comes in two tiers - a fine-grained PAT (Tier 1) or a
-GitHub App (Tier 2, recommended for real CI-gating). The admin and fallback
-tokens are always fine-grained PATs. All are scoped to only the target repos:
+The **runtime credential** - the identity the night run pushes and calls the API
+with - is a GitHub App installation. The admin and fallback tokens are
+fine-grained PATs. All are scoped to only the target repos:
 
 | credential | permissions | lives |
 | --- | --- | --- |
 | admin (PAT) | Administration RW, Secrets RW, Contents RW, Workflows RW, Issues RW, Actions RW, Pull requests RW | CLI machine only (`~/.fixowl/secrets.env`, chmod 600) |
-| runtime, Tier 1 (fine-grained PAT) | Contents RW, Pull requests RW, Issues RW; Commit statuses: read, Actions: read, Administration: read | repo Actions secret `FIXOWL_GITHUB_TOKEN` |
-| runtime, Tier 2 (GitHub App - recommended) | installation token: Contents/Pull requests/Issues: **write**; **Checks: read**; Commit statuses/Actions/Administration: read | app id + installation id + PKCS#8 private key, sealed as `FIXOWL_APP_ID` / `FIXOWL_APP_INSTALLATION_ID` / `FIXOWL_APP_PRIVATE_KEY` |
+| runtime (GitHub App) | installation token: Contents/Pull requests/Issues: **write**; **Checks: read**; Commit statuses/Actions/Administration: read | app id + installation id + PKCS#8 private key, sealed as repo Actions secrets `FIXOWL_APP_ID` / `FIXOWL_APP_INSTALLATION_ID` / `FIXOWL_APP_PRIVATE_KEY` |
 | fallback (optional PAT) | Actions RW only | CLI/runner host only (`~/.fixowl/secrets.env`, chmod 600) as `FIXOWL_FALLBACK_TOKEN` |
 
-Exactly one runtime tier is provisioned per repo (config enforces `runtime_token`
-XOR `app`); everything below about the runtime PAT applies to the App's
-installation token identically, except where the App tier is called out.
+A fine-grained PAT is deliberately not accepted as the runtime credential:
+GitHub exposes no grantable "Checks" permission to PATs, so the CI-gated fix
+loop could never verify check runs on one. A config that still sets the old
+`runtime_token` key is rejected at load with a migration message.
 
 - **The admin token is setup-only.** It is spent by `fixowl provision` (labels,
   secrets, workflow) and by runner registration - registration is the only
@@ -77,77 +77,68 @@ installation token identically, except where the App tier is called out.
 - Keeping the admin token at **Administration: read** (rather than revoking it)
   buys one thing: the local online check in `fixowl start` and `fixowl status`,
   which lists the repo's runners. That is inherently an Administration read, so
-  it cannot be satisfied by the least-privilege runtime token (see below) - the
-  honest alternatives are a read-only admin token or confirming the runner in
-  the GitHub UI under Settings > Actions > Runners. When the admin token is
-  absent or lacks that read, `fixowl start` still installs and starts the
-  service and just prints how to confirm online status; it never fails on it.
-- The runtime PAT's **write** access stays least-privilege - only Contents,
-  Pull requests, and Issues. It is the most-exposed credential (a repo Actions
-  secret injected into the night run), so it can push branches, open PRs, and
-  comment, and nothing more. The [CI-gated fix loop](ci-fix-loop.md) additionally
-  needs to *read* the base branch's required checks and the failing jobs' logs,
-  so the runtime PAT also carries **read-only** Commit statuses, Actions, and
-  Administration - the only grantable reads it needs. Administration is **read
-  only**: it lets the loop read branch-protection / ruleset required checks, but
-  grants no runner registration or protection changes, so the
-  admin-token-is-setup-only property (no Administration **write** anywhere but the
-  setup-only admin token) is preserved.
-- There is a deliberate gap in what these reads can cover: GitHub Actions **check
-  runs** are read through an API that requires a "Checks" permission GitHub does
-  **not** expose in the fine-grained-PAT permission list, and no grantable read
-  (Commit statuses / Actions / Administration) substitutes for it. So a
-  fine-grained runtime PAT simply **cannot read check-run status**, and the
-  check-runs read 403s ("Resource not accessible by personal access token").
-  fixowl treats that the same as "no readable checks": the CI gate **degrades**
-  rather than failing the issue - it warns loudly that CI could not be verified
-  and flips the draft PR to ready after a short settle window (the same fallback
-  used when a repo has no branch protection). CI gating is therefore best-effort
-  for fine-grained runtime tokens; the **GitHub App tier** (Tier 2) is the
-  supported way to make the gate actually verify check runs - a GitHub App
-  installation with `Checks: read` reads the check-runs API where a PAT cannot
-  (its 403 variant is "Resource not accessible by integration", which fixowl
-  degrades on the same way when the App is under-scoped).
+  it cannot be satisfied by the least-privilege App (see below) - the honest
+  alternatives are a read-only admin token or confirming the runner in the
+  GitHub UI under Settings > Actions > Runners. When the admin token is absent
+  or lacks that read, `fixowl start` still installs and starts the service and
+  just prints how to confirm online status; it never fails on it.
+- The App's **write** access stays least-privilege - only Contents, Pull
+  requests, and Issues. Its installation token is the most-exposed credential
+  (minted inside the night run from repo Actions secrets), so it can push
+  branches, open PRs, and comment, and nothing more. The
+  [CI-gated fix loop](ci-fix-loop.md) additionally needs to *read* the base
+  branch's required checks, the head's check runs, and the failing jobs' logs,
+  so the App also carries **read-only** Checks, Commit statuses, Actions, and
+  Administration. Administration is **read only**: it lets the loop read
+  branch-protection / ruleset required checks, but grants no runner registration
+  or protection changes, so the admin-token-is-setup-only property (no
+  Administration **write** anywhere but the setup-only admin token) is preserved.
+- **Checks: read is why the runtime credential is an App.** GitHub Actions
+  **check runs** are read through an API that requires a "Checks" permission,
+  which GitHub grants to Apps but does **not** expose to fine-grained PATs (and
+  no grantable read substitutes for it). An App installation missing
+  `Checks: read` gets a 403 ("Resource not accessible by integration"); fixowl
+  treats that the same as "no readable checks": the CI gate **degrades** rather
+  than failing the issue - it warns loudly that CI could not be verified and
+  flips the draft PR to ready after a short settle window (the same fallback
+  used when a repo has no branch protection). `fixowl init` and
+  `fixowl validate` refuse an App without `Checks: read` precisely so that
+  degrade never happens silently at 2am.
 - When the required checks are unreadable (no branch protection, or the read
   scope is missing), the loop likewise falls back to gating on all completed
   checks and logs a warning rather than failing - so under-granting degrades
   gracefully.
 - The online check (an Administration *read* of the repo's runners) is still not
-  solved by the runtime token: it is deliberately performed with the admin token.
-- The runtime PAT (not `GITHUB_TOKEN`) authors PRs so the target repo's own CI
-  triggers on them.
+  solved by the App: it is deliberately performed with the admin token.
+- The App's installation token (not `GITHUB_TOKEN`) authors PRs so the target
+  repo's own CI triggers on them.
 - **The fallback token is optional and least-privilege.** The local fallback
   trigger ([local-fallback.md](local-fallback.md)) needs **Actions: write** to
   dispatch the workflow when the cron misses - which the admin token (setup-only,
-  meant to be revoked/downgraded) and the runtime token (in-repo, least
-  privilege) deliberately do not provide for an always-on host job. Rather than
-  keeping a full-admin token live or widening the runtime token, the fallback
-  uses its own dedicated PAT holding **only Actions RW** on the target repos,
-  stored on the host as `FIXOWL_FALLBACK_TOKEN`. This preserves the
-  admin-token-is-setup-only property: with the fallback enabled you can still
-  revoke or downgrade the admin token. The workflow's own once-a-day budget guard
-  lists runs with the ephemeral `GITHUB_TOKEN` (Actions: read), never this token.
-- On the runner, the runtime token is injected into git fetch/push commands as an
-  env-based `http.extraheader` only. It never appears in argv (`ps`), in git
-  error output, or in any file under the workspace or the git dir. The git dir
-  is no longer mounted into containers at all (see above), but the extraheader
-  discipline stays: nothing credential-shaped is ever written to disk. A test
-  asserts all three. The token is fetched from a **provider callback immediately
-  before each git command**, not captured once at startup, so a GitHub App
+  meant to be revoked/downgraded) and the App (in-repo, least privilege)
+  deliberately do not provide for an always-on host job. Rather than keeping a
+  full-admin token live or widening the App, the fallback uses its own dedicated
+  PAT holding **only Actions RW** on the target repos, stored on the host as
+  `FIXOWL_FALLBACK_TOKEN`. This preserves the admin-token-is-setup-only property:
+  with the fallback enabled you can still revoke or downgrade the admin token.
+  The workflow's own once-a-day budget guard lists runs with the ephemeral
+  `GITHUB_TOKEN` (Actions: read), never this token.
+- On the runner, the installation token is injected into git fetch/push commands
+  as an env-based `http.extraheader` only. It never appears in argv (`ps`), in
+  git error output, or in any file under the workspace or the git dir. The git
+  dir is no longer mounted into containers at all (see above), but the
+  extraheader discipline stays: nothing credential-shaped is ever written to
+  disk. A test asserts all three. The token is fetched from a **provider callback
+  immediately before each git command**, not captured once at startup, so the
   installation token (which expires ~1h after minting) is always current even on
-  a push hours into the night (see the App tier below).
+  a push hours into the night (see below).
 
-## Runtime credential: PAT vs GitHub App
-
-The runtime PAT (Tier 1) is the quick-start on-ramp: fastest to set up, but
-GitHub exposes no grantable "Checks" scope to fine-grained PATs, so the CI gate
-degrades (above). The GitHub App (Tier 2) is the recommended tier for real
-CI-gating:
+## Runtime credential: the GitHub App
 
 - **The App reads Checks, so the gate is real.** An installation with
   `Checks: read` lets the CI-gated loop verify check runs: a green head flips the
   draft PR to ready, a red one keeps it a draft and retries - discrimination a
-  fine-grained PAT can never reach.
+  fine-grained PAT can never reach, which is why a PAT is not an option.
 - **1-hour token, auto-refreshed, no human in the loop.** A GitHub App
   installation access token expires ~1 hour after it is minted. A single mint at
   job start would 401 on every push and API call after the first hour, breaking
@@ -157,35 +148,35 @@ CI-gating:
   **transparently re-mints it near expiry** on every later API call, and the git
   edge asks that same strategy for the current token before each fetch/push. So
   the token is refreshed for the whole night with zero human action and no
-  in-workflow re-mint step (`actions/create-github-app-token`, which mints once
-  and auto-revokes at job end, is a documented escape hatch only, with its
-  1-hour ceiling; see [app-auth.md](app-auth.md)).
+  in-workflow re-mint step (`actions/create-github-app-token` would mint once at
+  job start and auto-revoke at job end, capping the night at its 1-hour token).
 - **`fixowl[bot]` attribution.** App-authored PRs and comments come from the
-  App's bot identity, not a human. Like the runtime PAT (and unlike
-  `GITHUB_TOKEN`), an installation token's PRs **do** trigger the target repo's
-  own CI.
+  App's bot identity, not a human. Unlike `GITHUB_TOKEN`, an installation
+  token's PRs **do** trigger the target repo's own CI.
 - **At-rest secret is the private key.** A leaked installation *token* is bounded
   - it dies within ~1 hour. The sensitive at-rest secret is the App **private
   key** (sealed as `FIXOWL_APP_PRIVATE_KEY`); treat it like the admin token. It
   is stored/sealed as PKCS#8 (GitHub hands out PKCS#1; `fixowl provision`
-  normalizes it) and, like every runtime credential, only ever reaches the runner
-  as an Actions secret, never a container.
-- **Same write floor.** The App holds no more *write* than the runtime PAT
-  (Contents/Pull requests/Issues), plus the read-only Checks/Commit
-  statuses/Actions/Administration the gate needs. It never merges (no code path
-  calls a merge API) and holds no Administration **write**, so the
-  admin-token-is-setup-only invariant is preserved.
+  normalizes it) and only ever reaches the runner as an Actions secret, never a
+  container.
+- **Least-privilege write floor.** The App's write is only Contents/Pull
+  requests/Issues, plus the read-only Checks/Commit statuses/Actions/
+  Administration the gate needs. It never merges (no code path calls a merge
+  API) and holds no Administration **write**, so the admin-token-is-setup-only
+  invariant is preserved.
 
 See [app-auth.md](app-auth.md) for the full App setup (registration, permissions,
-install, key format, and the in-workflow-mint escape hatch).
+install, and key format).
+
 - Repo secrets are sealed client-side (libsodium sealed box against the repo
   public key) before the API call.
 - The agent credential (e.g. `CLAUDE_CODE_OAUTH_TOKEN`) reaches only the agent
   container, passed as `-e NAME` so values never appear in argv or logs.
 - The agent env allowlist structurally refuses GitHub credential names
-  (`FIXOWL_GITHUB_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN`): `getAgentAdapter`
-  throws, so a workflow or config that names one fails the night loudly at
-  startup instead of shipping a token into a container.
+  (`FIXOWL_APP_PRIVATE_KEY`, `FIXOWL_APP_ID`, `FIXOWL_APP_INSTALLATION_ID`,
+  `GITHUB_TOKEN`, `GH_TOKEN`): `getAgentAdapter` throws, so a workflow or config
+  that names one fails the night loudly at startup instead of shipping a
+  credential into a container.
 
 ## Spend control
 

@@ -25,7 +25,7 @@ export function githubClient(token: string): Octokit {
  * @octokit/auth-app picks the right auth per endpoint. `privateKey` must be a
  * PKCS#8 PEM (normalize with `toPkcs8Pem` first).
  */
-export function appClient(cred: Extract<RuntimeCredential, { kind: "app" }>): Octokit {
+export function appClient(cred: RuntimeCredential): Octokit {
   return new Octokit({
     authStrategy: createAppAuth,
     auth: { appId: cred.appId, privateKey: cred.privateKey, installationId: cred.installationId },

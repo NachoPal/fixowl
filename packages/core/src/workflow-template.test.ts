@@ -38,13 +38,13 @@ describe("renderFixowlWorkflow", () => {
 
   it("uses GITHUB_TOKEN only as the read-only budget guard, and has no container key", () => {
     const rendered = renderFixowlWorkflow(baseOptions);
-    // The runtime PAT (FIXOWL_GITHUB_TOKEN) authors PRs, so the target repo's CI
-    // triggers on them - GITHUB_TOKEN never does that.
-    expect(rendered).toContain("FIXOWL_GITHUB_TOKEN: ${{ secrets.FIXOWL_GITHUB_TOKEN }}");
+    // The App installation token authors PRs, so the target repo's CI triggers
+    // on them - GITHUB_TOKEN never does that.
+    expect(rendered).toContain("FIXOWL_APP_ID: ${{ secrets.FIXOWL_APP_ID }}");
     // GITHUB_TOKEN appears exactly once, as the ephemeral Actions: read token the
     // once-a-day budget guard lists runs with; never a secrets.* value.
     expect(rendered).not.toContain("secrets.GITHUB_TOKEN");
-    expect(rendered.match(/(?<!FIXOWL_)GITHUB_TOKEN/g) ?? []).toEqual(["GITHUB_TOKEN"]);
+    expect(rendered.match(/GITHUB_TOKEN/g) ?? []).toEqual(["GITHUB_TOKEN"]);
     expect(rendered).toContain("GITHUB_TOKEN: ${{ github.token }}");
     expect(rendered).not.toContain("container:");
   });
@@ -110,27 +110,18 @@ describe("renderFixowlWorkflow", () => {
     expect(JSON.parse(yamlScalar)).toEqual({ heavy: { model: "opus", effort: "max" } });
   });
 
-  it("wires the App secret trio (and omits the runtime PAT) when appAuth is on", () => {
-    const rendered = renderFixowlWorkflow({ ...baseOptions, appAuth: true });
+  it("wires the GitHub App secret trio as the only runtime credential", () => {
+    const rendered = renderFixowlWorkflow(baseOptions);
     expect(rendered).toContain("FIXOWL_APP_ID: ${{ secrets.FIXOWL_APP_ID }}");
     expect(rendered).toContain(
       "FIXOWL_APP_INSTALLATION_ID: ${{ secrets.FIXOWL_APP_INSTALLATION_ID }}",
     );
     expect(rendered).toContain("FIXOWL_APP_PRIVATE_KEY: ${{ secrets.FIXOWL_APP_PRIVATE_KEY }}");
-    // The single runtime PAT secret is not wired in the App workflow.
-    expect(rendered).not.toContain("FIXOWL_GITHUB_TOKEN: ${{ secrets.FIXOWL_GITHUB_TOKEN }}");
+    // The removed runtime-PAT secret is never wired.
+    expect(rendered).not.toContain("FIXOWL_GITHUB_TOKEN");
     // The ephemeral guard token is unchanged; agent env still wired.
     expect(rendered).toContain("GITHUB_TOKEN: ${{ github.token }}");
     expect(rendered).toContain("CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}");
-  });
-
-  it("renders the PAT workflow byte-for-byte when appAuth is off (default)", () => {
-    // The App branch must be inert unless explicitly enabled, so a PAT repo is
-    // unaffected until re-provisioned.
-    const base = renderFixowlWorkflow(baseOptions);
-    expect(renderFixowlWorkflow({ ...baseOptions, appAuth: false })).toBe(base);
-    expect(base).toContain("FIXOWL_GITHUB_TOKEN: ${{ secrets.FIXOWL_GITHUB_TOKEN }}");
-    expect(base).not.toContain("FIXOWL_APP_ID");
   });
 
   it("passes actionlint when available", () => {
@@ -150,7 +141,6 @@ describe("renderFixowlWorkflow", () => {
       ["scheduled.yml", baseOptions],
       ["dispatch-only.yml", { ...baseOptions, schedule: null }],
       ["cloud.yml", { ...baseOptions, runsOn: "ubuntu-latest" }],
-      ["app-auth.yml", { ...baseOptions, appAuth: true }],
     ] as const) {
       const file = join(wfDir, name);
       writeFileSync(file, renderFixowlWorkflow(options));

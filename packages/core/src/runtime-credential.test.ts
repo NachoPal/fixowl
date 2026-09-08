@@ -3,7 +3,7 @@ import {
   APP_ID_SECRET,
   APP_INSTALLATION_ID_SECRET,
   APP_PRIVATE_KEY_SECRET,
-  RUNTIME_TOKEN_SECRET,
+  LEGACY_RUNTIME_TOKEN_SECRET,
 } from "./secret-names.ts";
 import { resolveRuntimeCredentialFromEnv } from "./runtime-credential.ts";
 
@@ -14,60 +14,52 @@ const appEnv = {
 };
 
 describe("resolveRuntimeCredentialFromEnv", () => {
-  it("selects the App when its three secrets are all present", () => {
-    const cred = resolveRuntimeCredentialFromEnv(appEnv);
-    expect(cred).toEqual({
-      kind: "app",
+  it("resolves the App when its three secrets are all present", () => {
+    expect(resolveRuntimeCredentialFromEnv(appEnv)).toEqual({
       appId: 123456,
       installationId: 7890123,
       privateKey: appEnv[APP_PRIVATE_KEY_SECRET],
     });
   });
 
-  it("selects the PAT when only the runtime token is present", () => {
-    const cred = resolveRuntimeCredentialFromEnv({ [RUNTIME_TOKEN_SECRET]: "ghp_runtime" });
-    expect(cred).toEqual({ kind: "pat", token: "ghp_runtime" });
+  it("throws, naming every App secret, when none is present", () => {
+    expect(() => resolveRuntimeCredentialFromEnv({})).toThrow(
+      new RegExp(
+        `missing ${APP_ID_SECRET}, ${APP_INSTALLATION_ID_SECRET}, ${APP_PRIVATE_KEY_SECRET}`,
+      ),
+    );
   });
 
-  it("throws when both an App credential and a PAT are set", () => {
-    expect(() =>
-      resolveRuntimeCredentialFromEnv({ ...appEnv, [RUNTIME_TOKEN_SECRET]: "ghp_runtime" }),
-    ).toThrow(/provision exactly one/i);
-  });
-
-  it("throws when no runtime credential is present", () => {
-    expect(() => resolveRuntimeCredentialFromEnv({})).toThrow(/no runtime credential/i);
-  });
-
-  it("falls back to the PAT when the App trio is only partial", () => {
-    const partial = {
-      [APP_ID_SECRET]: "123456",
-      [APP_PRIVATE_KEY_SECRET]: "-----BEGIN PRIVATE KEY-----\n...\n",
-      // installation id missing
-      [RUNTIME_TOKEN_SECRET]: "ghp_runtime",
-    };
-    expect(resolveRuntimeCredentialFromEnv(partial)).toEqual({ kind: "pat", token: "ghp_runtime" });
-  });
-
-  it("throws when the App trio is partial and there is no PAT", () => {
+  it("throws, naming the missing secret, when the App trio is partial", () => {
     expect(() =>
       resolveRuntimeCredentialFromEnv({
         [APP_ID_SECRET]: "123456",
         [APP_INSTALLATION_ID_SECRET]: "7890123",
         // private key missing
       }),
-    ).toThrow(/no runtime credential/i);
+    ).toThrow(new RegExp(`missing ${APP_PRIVATE_KEY_SECRET}\\.`));
   });
 
   it("treats empty-string secrets as absent", () => {
     expect(() =>
       resolveRuntimeCredentialFromEnv({
-        [RUNTIME_TOKEN_SECRET]: "",
         [APP_ID_SECRET]: "",
         [APP_INSTALLATION_ID_SECRET]: "",
         [APP_PRIVATE_KEY_SECRET]: "",
       }),
-    ).toThrow(/no runtime credential/i);
+    ).toThrow(/no GitHub App runtime credential/i);
+  });
+
+  it("rejects the removed runtime PAT with a migration message (never a silent fallback)", () => {
+    expect(() =>
+      resolveRuntimeCredentialFromEnv({ [LEGACY_RUNTIME_TOKEN_SECRET]: "ghp_runtime" }),
+    ).toThrow(/removed runtime PAT[\s\S]*fixowl provision[\s\S]*docs\/app-auth\.md/);
+  });
+
+  it("ignores the legacy secret once the App trio is complete", () => {
+    expect(
+      resolveRuntimeCredentialFromEnv({ ...appEnv, [LEGACY_RUNTIME_TOKEN_SECRET]: "ghp_runtime" }),
+    ).toMatchObject({ appId: 123456 });
   });
 
   it("rejects a non-numeric App id", () => {

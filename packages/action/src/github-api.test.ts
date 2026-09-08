@@ -3,10 +3,12 @@ import { describe, expect, it } from "vitest";
 import { makeGitHubApi } from "./github-api.ts";
 
 /**
- * The check-runs API needs a "Checks" permission GitHub does not expose to
- * fine-grained PATs, so a fine-grained runtime token 403s when reading a ref's
- * checks. `getChecksForRef` must swallow that into `readable: false` (mirroring
- * `getRequiredChecks`) instead of throwing and failing the whole issue.
+ * The check-runs API needs the App's "Checks" permission, so an installation
+ * missing Checks: read 403s when reading a ref's checks ("Resource not
+ * accessible by integration"; GitHub words the same denial "by personal access
+ * token" for a user token, and both are exercised here). `getChecksForRef` must
+ * swallow that into `readable: false` (mirroring `getRequiredChecks`) instead
+ * of throwing and failing the whole issue.
  */
 describe("makeGitHubApi.getChecksForRef", () => {
   it("returns readable:false (never throws) when the check-runs read 403s", async () => {

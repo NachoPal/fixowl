@@ -127,7 +127,9 @@ const ADAPTERS: Record<string, AgentAdapter> = { claude, aider, codex, script };
  * a workflow or config naming one fails the night loudly at startup.
  */
 export const FORBIDDEN_AGENT_ENV: readonly string[] = [
-  "FIXOWL_GITHUB_TOKEN",
+  "FIXOWL_APP_PRIVATE_KEY",
+  "FIXOWL_APP_ID",
+  "FIXOWL_APP_INSTALLATION_ID",
   "GITHUB_TOKEN",
   "GH_TOKEN",
 ];

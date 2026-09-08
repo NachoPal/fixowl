@@ -1,6 +1,6 @@
 ---
-status: accepted
-date: 2026-09-06
+status: superseded by ADR-0003
+date: 2026-09-08
 decision-makers: [fixowl captain]
 ---
 

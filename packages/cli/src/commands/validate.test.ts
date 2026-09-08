@@ -1,17 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CliContext } from "../context.ts";
 
-// Fake the Octokit factories so no network is touched; the app-key helpers pass
+// Fake the Octokit factory so no network is touched; the app-key helpers pass
 // through so any private_key string is accepted in the test config.
 const mocks = vi.hoisted(() => ({
   getAuthenticatedApp: vi.fn(),
   getInstallation: vi.fn(),
   listReposPaginate: vi.fn(),
-  getAuthenticatedUser: vi.fn(),
 }));
 
 vi.mock("../github/client.ts", () => ({
-  githubClient: () => ({ rest: { users: { getAuthenticated: mocks.getAuthenticatedUser } } }),
   appClient: () => ({
     rest: {
       apps: {
@@ -56,17 +54,7 @@ describe("validateRuntimeCredential", () => {
     vi.restoreAllMocks();
   });
 
-  it("PAT tier authenticates via GET /user, never the App endpoints", async () => {
-    mocks.getAuthenticatedUser.mockResolvedValue({ data: { login: "octocat" } });
-    const errors = await collect(
-      ctxWith({ admin_token: "ghp_admin", runtime_token: "ghp_runtime" }),
-    );
-    expect(errors).toEqual([]);
-    expect(mocks.getAuthenticatedUser).toHaveBeenCalledTimes(1);
-    expect(mocks.getAuthenticatedApp).not.toHaveBeenCalled();
-  });
-
-  it("App tier confirms identity, Checks: read, and repo access", async () => {
+  it("confirms the App identity, Checks: read, and repo access", async () => {
     mocks.getAuthenticatedApp.mockResolvedValue({ data: { slug: "fixowl", id: 123456 } });
     mocks.getInstallation.mockResolvedValue({ data: { permissions: FULL_PERMS } });
     mocks.listReposPaginate.mockResolvedValue([{ full_name: "o/r" }]);
@@ -76,7 +64,6 @@ describe("validateRuntimeCredential", () => {
     expect(errors).toEqual([]);
     expect(mocks.getAuthenticatedApp).toHaveBeenCalledTimes(1);
     expect(mocks.getInstallation).toHaveBeenCalledWith({ installation_id: 7890123 });
-    expect(mocks.getAuthenticatedUser).not.toHaveBeenCalled();
   });
 
   it("fails when the App is missing Checks: read (the CI gate would degrade)", async () => {

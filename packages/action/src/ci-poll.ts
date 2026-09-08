@@ -80,8 +80,8 @@ export async function waitForRequiredChecks(
 
   for (;;) {
     const checks = await github.getChecksForRef(params.sha);
-    // The runtime token could not read the ref's checks at all (a fine-grained
-    // PAT cannot access the check-runs API; GitHub 403s). CI cannot be verified,
+    // The runtime credential could not read the ref's checks at all (an App
+    // installation without Checks: read is 403'd). CI cannot be verified,
     // so settle then flip to ready as the no-CI fallback does (captain 7.2), but
     // report it as a distinct `unverified` outcome - never green - so the PR body
     // and issue comment tell the human CI was never consulted, matching the loud

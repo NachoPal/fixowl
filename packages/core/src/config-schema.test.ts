@@ -4,12 +4,19 @@ import {
   globalConfigSchemaChecked,
   repoFileConfigSchema,
   resolveRepoSettings,
+  RUNTIME_TOKEN_REMOVED_MESSAGE,
   runnerBaseDir,
 } from "./config-schema.ts";
 
+const app = {
+  app_id: 123456,
+  installation_id: 7890123,
+  private_key: "${FIXOWL_APP_PRIVATE_KEY}",
+};
+
 const minimalConfig = {
   version: 1,
-  github: { admin_token: "ghp_admin", runtime_token: "ghp_runtime" },
+  github: { admin_token: "ghp_admin", app },
   repos: [{ name: "NachoPal/storyengine" }],
 };
 
@@ -37,38 +44,43 @@ describe("globalConfigSchema", () => {
   });
 });
 
-describe("runtime credential XOR (github.runtime_token vs github.app)", () => {
-  const app = {
-    app_id: 123456,
-    installation_id: 7890123,
-    private_key: "${FIXOWL_APP_PRIVATE_KEY}",
-  };
-
-  it("accepts a PAT-only github block (backward compatible)", () => {
-    expect(() => globalConfigSchema.parse(minimalConfig)).not.toThrow();
+describe("runtime credential (github.app is the only one)", () => {
+  it("accepts an App github block", () => {
+    const config = globalConfigSchema.parse(minimalConfig);
+    expect(config.github.app.app_id).toBe(123456);
   });
 
-  it("accepts an App-only github block", () => {
-    const config = globalConfigSchema.parse({
-      ...minimalConfig,
-      github: { admin_token: "ghp_admin", app },
-    });
-    expect(config.github.app?.app_id).toBe(123456);
+  it("requires the app block", () => {
+    expect(() =>
+      globalConfigSchema.parse({ ...minimalConfig, github: { admin_token: "ghp_admin" } }),
+    ).toThrow();
   });
 
-  it("rejects a github block with BOTH a runtime_token and an app", () => {
+  it("rejects a legacy runtime_token with a migration message pointing at the App", () => {
+    expect(() =>
+      globalConfigSchema.parse({
+        ...minimalConfig,
+        github: { admin_token: "ghp_admin", runtime_token: "ghp_runtime" },
+      }),
+    ).toThrow(RUNTIME_TOKEN_REMOVED_MESSAGE);
+  });
+
+  it("rejects a runtime_token even alongside a valid app block (never silently ignored)", () => {
     expect(() =>
       globalConfigSchema.parse({
         ...minimalConfig,
         github: { admin_token: "ghp_admin", runtime_token: "ghp_runtime", app },
       }),
-    ).toThrow(/exactly one of github.runtime_token or github.app/);
+    ).toThrow(/runtime_token \(the runtime PAT\) was removed[\s\S]*docs\/app-auth\.md/);
   });
 
-  it("rejects a github block with NEITHER a runtime_token nor an app", () => {
-    expect(() =>
-      globalConfigSchema.parse({ ...minimalConfig, github: { admin_token: "ghp_admin" } }),
-    ).toThrow(/exactly one of github.runtime_token or github.app/);
+  it("keeps the admin and fallback tokens", () => {
+    const config = globalConfigSchema.parse({
+      ...minimalConfig,
+      github: { admin_token: "ghp_admin", app, fallback_token: "ghp_fallback" },
+    });
+    expect(config.github.admin_token).toBe("ghp_admin");
+    expect(config.github.fallback_token).toBe("ghp_fallback");
   });
 
   it("accepts a numeric-string app_id / installation_id", () => {
@@ -79,16 +91,11 @@ describe("runtime credential XOR (github.runtime_token vs github.app)", () => {
         app: { app_id: "123456", installation_id: "7890123", private_key: "pem" },
       },
     });
-    expect(config.github.app?.app_id).toBe("123456");
+    expect(config.github.app.app_id).toBe("123456");
   });
 
-  it("still lets the App tier through the agent-aware checked schema", () => {
-    expect(() =>
-      globalConfigSchemaChecked.parse({
-        ...minimalConfig,
-        github: { admin_token: "ghp_admin", app },
-      }),
-    ).not.toThrow();
+  it("lets the App through the agent-aware checked schema", () => {
+    expect(() => globalConfigSchemaChecked.parse(minimalConfig)).not.toThrow();
   });
 });
 

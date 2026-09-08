@@ -20,10 +20,13 @@ describe("fixowl init --non-interactive", () => {
 
     await initCommand({ configPath, nonInteractive: true, checkEngine: stubEngine });
 
-    expect(readFileSync(configPath, "utf8")).toContain("admin_token: ${FIXOWL_ADMIN_TOKEN}");
+    const config = readFileSync(configPath, "utf8");
+    expect(config).toContain("admin_token: ${FIXOWL_ADMIN_TOKEN}");
+    expect(config).toContain("private_key: ${FIXOWL_APP_PRIVATE_KEY}");
+    expect(config).not.toContain("runtime_token");
     expect(parseSecretsEnv(readFileSync(secretsPath, "utf8"))).toEqual({
       FIXOWL_ADMIN_TOKEN: "",
-      FIXOWL_RUNTIME_TOKEN: "",
+      FIXOWL_APP_PRIVATE_KEY: "",
       CLAUDE_CODE_OAUTH_TOKEN: "",
     });
     expect(statSync(secretsPath).mode & 0o777).toBe(0o600);

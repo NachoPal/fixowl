@@ -63,9 +63,9 @@ export class GitWorkspace {
     private readonly gitDir: string,
     /**
      * Resolves the CURRENT runtime token, called immediately before each
-     * authenticated git command (never captured once). For a PAT it is a
-     * constant; for a GitHub App it asks the octokit auth strategy, which
-     * returns the cached installation token or re-mints a fresh one near expiry.
+     * authenticated git command (never captured once). It asks the octokit App
+     * auth strategy, which returns the cached installation token or re-mints a
+     * fresh one near expiry.
      * Omitted in tests that push to a local remote needing no auth.
      */
     private readonly tokenProvider?: () => Promise<string> | string,

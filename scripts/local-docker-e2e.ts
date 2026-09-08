@@ -84,7 +84,7 @@ const issues: IssueLite[] = [
     labels: ["overnight"],
   },
 ];
-const FAKE_PUSH_TOKEN = "ghp_FAKE_e2e_runtime_token";
+const FAKE_PUSH_TOKEN = "ghp_FAKE_e2e_push_token";
 const pulls: Array<{ head: string; base: string; title: string; draft: boolean; body: string }> =
   [];
 const comments: Array<{ issueNumber: number; body: string }> = [];
@@ -169,10 +169,10 @@ const seenConfig = await git(
   "issue/1-create-the-fix-file:seen-git-config.txt",
 );
 assert.ok(seenConfig.includes("NO .git IN WORKSPACE"), "agent container saw a .git dir");
-assert.ok(!seenConfig.includes(FAKE_PUSH_TOKEN), "runtime PAT leaked into the agent container");
+assert.ok(!seenConfig.includes(FAKE_PUSH_TOKEN), "runtime token leaked into the agent container");
 assert.ok(
   !seenConfig.includes(Buffer.from(`x-access-token:${FAKE_PUSH_TOKEN}`).toString("base64")),
-  "runtime PAT (base64) leaked into the agent container",
+  "runtime token (base64) leaked into the agent container",
 );
 // The planted .git never executed on the host and never reached the branch.
 assert.ok(
@@ -190,8 +190,12 @@ assert.ok(!branchFiles.includes("pre-commit"), "the planted .git was committed")
 // After the night the real git dir is back and free of the planted config.
 const restoredConfig = readFileSync(join(workspaceDir, ".git", "config"), "utf8");
 assert.ok(!restoredConfig.includes("fsmonitor"), "planted config survived the restore");
-assert.ok(!restoredConfig.includes(FAKE_PUSH_TOKEN), "runtime PAT leaked into .git/config");
-assert.ok(existsSync(join(tempDir, "fixowl-evidence", "issue-1", "agent.log")));
+assert.ok(!restoredConfig.includes(FAKE_PUSH_TOKEN), "runtime token leaked into .git/config");
+// The CI-gated loop writes one agent log per attempt (see issue-pipeline.ts).
+assert.ok(
+  existsSync(join(tempDir, "fixowl-evidence", "issue-1", "agent-attempt-1.log")),
+  "agent attempt log missing from the evidence dir",
+);
 assert.ok(
   readFileSync(
     join(tempDir, "fixowl-evidence", "issue-1", "check-fix-landed.log"),
