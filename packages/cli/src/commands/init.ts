@@ -329,8 +329,9 @@ ${appPermissionsBullets("     ")}
    - Choose "Only select repositories" -> pick your target repo(s) -> Install.
    - Note: https://github.com/settings/installations looks empty until you
      do this - that is expected.
-3. Generate a private key: the App's General tab -> "Generate a private key"
-   -> download the .pem.
+3. Generate a private key: on your App's settings page
+   (https://github.com/settings/apps/<your-app-name>), scroll down to
+   "Private keys" and click "Generate a private key", then download the .pem.
 4. base64-encode it so it survives secrets.env, on ONE line:
      base64 -i app.private-key.pem | tr -d '\\n'
    App ID: on your App's settings page
@@ -1026,8 +1027,10 @@ ${appPermissionsBullets("              ")}
             account -> "Only select repositories" -> pick your repo(s) ->
             Install. (https://github.com/settings/installations looks empty
             until you do this - that is expected.)
-         c. Generate a private key (App's General tab -> "Generate a private
-            key" -> download the .pem), then base64-encode it onto one line:
+         c. Generate a private key: on your App's settings page
+            (https://github.com/settings/apps/<your-app-name>), scroll down
+            to "Private keys" and click "Generate a private key", then
+            download the .pem and base64-encode it onto one line:
               base64 -i app.private-key.pem | tr -d '\\n'
             and put it in ${secretsPath} as FIXOWL_APP_PRIVATE_KEY. App ID:
             on your App's settings page
