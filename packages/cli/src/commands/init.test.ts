@@ -14,6 +14,7 @@ import {
   AGENT_CHOICES,
   AGENT_SECRET_HELP,
   initCommand,
+  NO_ADMIN_SIGNPOST,
   offerToCreateSelectorLabels,
   renderActionsNeeded,
 } from "./init.ts";
@@ -86,6 +87,18 @@ describe("fixowl init --non-interactive", () => {
     await initCommand({ configPath, nonInteractive: true, checkEngine: stubEngine });
 
     expect(readFileSync(configPath, "utf8")).toBe(before);
+  });
+});
+
+describe("fixowl init admin-token step (step 1/4)", () => {
+  it("signposts the no-admin route before asking for the admin PAT", () => {
+    // A security-conscious operator must learn the no-admin route from `init`
+    // itself, not only from the docs. The signpost names the exact command and
+    // the doc, and stays a plain-dash short note (no em dash).
+    expect(NO_ADMIN_SIGNPOST).toContain("fixowl provision <repo> --manual");
+    expect(NO_ADMIN_SIGNPOST).toContain("docs/security.md");
+    expect(NO_ADMIN_SIGNPOST).toContain("no admin token needed");
+    expect(NO_ADMIN_SIGNPOST).not.toContain("—");
   });
 });
 

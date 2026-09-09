@@ -57,6 +57,15 @@ import { validateCommand } from "./validate.ts";
 
 const PAT_URL = "https://github.com/settings/personal-access-tokens/new";
 
+/**
+ * Signpost to the no-admin-token route (`fixowl provision <repo> --manual`,
+ * see provision-manual.ts) shown just before init asks for the admin PAT, so a
+ * security-conscious operator learns it from `init` and not only from the docs.
+ */
+export const NO_ADMIN_SIGNPOST = `Don't want to hand fixowl an admin PAT? Press Ctrl-C and run
+\`fixowl provision <repo> --manual\` instead (no admin token needed; it
+prints the same setup as copy-paste steps). See docs/security.md.`;
+
 /** Homepage the manifest pre-fills - required by GitHub, not used functionally. */
 const FIXOWL_HOMEPAGE = "https://github.com/NachoPal/fixowl";
 
@@ -281,7 +290,9 @@ ONLY the repos you want fixowl to touch.
            @octokit/auth-app auto-refreshes the token across the whole night,
            so it never hits the 1-hour expiry cliff.
 
-Mint the admin PAT at ${PAT_URL}`);
+Mint the admin PAT at ${PAT_URL}
+
+${NO_ADMIN_SIGNPOST}`);
   await prompter.pause("\nPress Enter once you have the admin token ready ");
 
   const { token: adminToken, login } = await askToken(prompter, {
