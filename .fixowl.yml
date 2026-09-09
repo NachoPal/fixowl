@@ -6,8 +6,10 @@ version: 1
 dockerfile: Dockerfile
 
 verify:
-  # Commands run in a fresh container after the agent finishes. Any failure
-  # turns the PR into a draft. These are this repo's real CI gates.
+  # Commands run in a fresh container after the agent finishes, as a cheap
+  # pre-filter: if they fail, fixowl feeds the output back to the agent and
+  # retries without pushing (no CI spend). They do not decide ready-vs-draft -
+  # the target repo's required CI does that.
   checks:
     - { name: lint, run: "pnpm lint" }
     - { name: tests, run: "pnpm test" }
