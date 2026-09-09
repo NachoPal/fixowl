@@ -129,16 +129,28 @@ See [docs/releasing.md](docs/releasing.md).
   read it. Extend an agent there rather than hardcoding a model list elsewhere.
   Per-issue model/effort resolution is pure logic in
   `packages/core/src/model-selection.ts`.
-- The optional local fallback trigger backs up GitHub's flaky `schedule` cron:
-  a per-repo macOS launchd agent runs `fixowl fallback check` after the cron and
-  dispatches the workflow only if today's `schedule` run is missing. Pure
-  decisions (`decideFallbackDispatch`, plus the once-a-day slot budget guard
-  `guardScheduledSlot` the action runs at night start) live in
-  `packages/core/src/fallback-dispatch.ts`; launchd/plist + DST-safe timing in
-  `packages/cli/src/runner/fallback-launchd.ts`; commands in
-  `packages/cli/src/commands/fallback.ts`. It uses its own least-privilege
-  `FIXOWL_FALLBACK_TOKEN` (Actions: write only) so the admin token stays
-  setup-only and revocable. See [docs/local-fallback.md](docs/local-fallback.md).
+- The scheduling trigger is a first-class per-repo choice
+  (`schedule_trigger` in `config-schema.ts`, a `fixowl init` prompt), resolving
+  to one of three modes via `resolveRepoSettings` (unset -> `both`, which
+  preserves the pre-choice behavior). `hostSchedulerRole`/`workflowHasSchedule`
+  (also `packages/core/src/config-schema.ts`) are the pure derivations every
+  caller reads: `github-cron` keeps the workflow cron and installs NO host agent;
+  `host-scheduler` (recommended) renders a dispatch-only workflow and the macOS
+  launchd agent dispatches it **directly on schedule** (primary role, gap 0);
+  `both` keeps the cron AND runs the launchd agent as the cron **fallback**.
+  `provision.ts` threads the mode into `renderFixowlWorkflow`'s nullable
+  `schedule` (via `workflowHasSchedule`; the legacy `--no-schedule` flag still
+  forces omit). The host agent's per-repo decision is role-driven in
+  `fallback.ts`: primary -> `decidePrimaryDispatch`, fallback ->
+  `decideFallbackDispatch`, `github-cron` -> never dispatch / never install
+  (issue #81); pure decisions plus the once-a-day slot guard `guardScheduledSlot`
+  (the action runs at night start) live in
+  `packages/core/src/fallback-dispatch.ts`, launchd/plist + DST-safe timing in
+  `packages/cli/src/runner/fallback-launchd.ts`. Modes 2/3 use the
+  least-privilege `FIXOWL_FALLBACK_TOKEN` (Actions: write only) so the admin
+  token stays setup-only and revocable. The `promptScheduleTrigger` helper
+  (`init.ts`) takes a current-value prefill so the future `fixowl edit` command
+  reuses it. See [docs/local-fallback.md](docs/local-fallback.md).
 - Night planning is two layers of pure logic between selection and the stacking
   loop in `main.ts`. Layer 1 (`packages/action/src/prereq-planner.ts`) enforces
   native `blocked-by` edges - fetched read-only via `GitHubApi.getIssueDependencies`

@@ -9,6 +9,7 @@ import {
   getAgentAdapter,
   repoFullNameSchema,
   type AgentCatalogEntry,
+  type ScheduleTrigger,
 } from "@fixowl/core";
 import { CONFIG_PATH, loadSecrets, SECRETS_PATH } from "../config-load.ts";
 import { makeContext } from "../context.ts";
@@ -185,7 +186,10 @@ every answer is stored in ${dirname(configPath)}.`);
   const { admin, app } = await stepTokens(prompter, secrets, secretsPath);
   const { agent, agentEnv } = await stepAgent(prompter, secrets);
   const repos = await stepRepos(prompter, admin, agent);
-  const wantFallback = await stepFallback(prompter, secrets);
+  // Modes 2 (host-scheduler) and 3 (both) need the host launchd agent and its
+  // scoped dispatch token; mode 1 (github-cron) needs neither.
+  const needsHostScheduler = repos.some((repo) => repo.scheduleTrigger !== "github-cron");
+  const wantFallback = needsHostScheduler ? await stepHostSchedulerToken(prompter, secrets) : false;
 
   writeFileSync(
     configPath,
@@ -200,43 +204,43 @@ every answer is stored in ${dirname(configPath)}.`);
 }
 
 // ---------------------------------------------------------------------------
-// Optional step: the local fallback trigger and its scoped token
+// The host scheduler's scoped dispatch token
 // ---------------------------------------------------------------------------
 
 /**
- * Opt-in setup of the local fallback trigger. Collects its own least-privilege
- * token (Actions: write only), kept separate from the admin token and the App
- * so the admin token stays revocable. Returns whether the fallback was enabled.
+ * Collect the host scheduler's least-privilege dispatch token, reached only when
+ * at least one repo chose a host-scheduler mode (`host-scheduler` or `both`).
+ * The token is Actions: write only, kept separate from the admin token and the
+ * App so the admin token stays revocable. Returns whether the host scheduler is
+ * enabled (false if the operator defers minting the token).
  */
-async function stepFallback(prompter: Prompter, secrets: Record<string, string>): Promise<boolean> {
+async function stepHostSchedulerToken(
+  prompter: Prompter,
+  secrets: Record<string, string>,
+): Promise<boolean> {
   log.info(`
-Local fallback trigger (optional)
----------------------------------
-GitHub's scheduled cron is best-effort and can silently skip a night. The
-fallback is a small job on THIS host that runs shortly after the cron and
-dispatches the night run only if the cron did not fire - a self-healing backup.
-A fallback run is recorded as workflow_dispatch (a real cron run is schedule),
-so you can still tell whether the cron itself is working. It is opt-in, and
-macOS-only for now (launchd).`);
-  if (!(await prompter.confirm("\nSet up the local fallback trigger now?", false))) {
-    log.info("Skipped. You can enable it any time with: fixowl fallback install");
-    return false;
-  }
-
-  log.info(`
-Dispatching the workflow needs a token with Actions: write, which the admin
-token and the GitHub App deliberately do not provide for routine use. Mint a
-SECOND fine-grained PAT, scoped to ONLY your target repos, granting exactly:
+Host scheduler token
+--------------------
+You chose to have THIS host dispatch the night run (directly on schedule, or as
+a cron fallback). Dispatching the workflow needs a token with Actions: write,
+which the admin token and the GitHub App deliberately do not provide for routine
+use. Mint a SECOND fine-grained PAT, scoped to ONLY your target repos, granting:
 
   Actions: Read and write   (nothing else)
 
-Keeping it separate means the fallback holds only Actions: write, so you can
-still revoke or downgrade the admin token after provisioning.
+Keeping it separate means the host scheduler holds only Actions: write, so you
+can still revoke or downgrade the admin token after provisioning.
 Mint it at ${PAT_URL}`);
-  await prompter.pause("\nPress Enter once you have the fallback token ready ");
+  if (!(await prompter.confirm("\nSet up the host scheduler token now?", true))) {
+    log.info(
+      "Skipped. The host scheduler will not run until you add FIXOWL_FALLBACK_TOKEN and run: fixowl fallback install",
+    );
+    return false;
+  }
+  await prompter.pause("\nPress Enter once you have the token ready ");
   secrets.FIXOWL_FALLBACK_TOKEN = (
     await askToken(prompter, {
-      label: "  fallback token",
+      label: "  host scheduler token",
       existing: secrets.FIXOWL_FALLBACK_TOKEN,
     })
   ).token;
@@ -759,6 +763,56 @@ Step 2/4  Coding agent
 // Step 3: the repos
 // ---------------------------------------------------------------------------
 
+/** The three scheduling-trigger choices, with the reliability tradeoff. */
+const SCHEDULE_TRIGGER_CHOICES: ReadonlyArray<{
+  value: ScheduleTrigger;
+  label: string;
+  hint: string;
+}> = [
+  {
+    value: "host-scheduler",
+    label: "Host scheduler (recommended for self-hosted)",
+    hint: "workflow is dispatch-only; this host dispatches the night directly on schedule (reliable timing)",
+  },
+  {
+    value: "github-cron",
+    label: "GitHub cron only",
+    hint: "workflow keeps its schedule: cron; no host agent. Simple, but the cron fires late/unreliably - best with a GitHub-hosted runner",
+  },
+  {
+    value: "both",
+    label: "Both (cron + host fallback)",
+    hint: "workflow keeps its cron AND this host dispatches only if the cron run is missing",
+  },
+];
+
+/**
+ * Ask which trigger fires the nightly run, with the reliability guidance.
+ * Shaped as a standalone prompt (with an optional current-value prefill) so a
+ * future `fixowl edit` command can reuse it for keep-or-change editing.
+ */
+export async function promptScheduleTrigger(
+  prompter: Prompter,
+  current?: ScheduleTrigger,
+): Promise<ScheduleTrigger> {
+  log.info(`
+  Scheduling trigger
+  ------------------
+  GitHub Actions' cron is unreliable - it fires late and sometimes skips a
+  night. fixowl's primary target is a self-hosted runner, so the recommended
+  option is to let THIS host dispatch the run on schedule. GitHub cron is mainly
+  worth it if you run on a GitHub-HOSTED runner.`);
+  // Order the current value first so it is the highlighted default when editing.
+  const choices =
+    current === undefined
+      ? SCHEDULE_TRIGGER_CHOICES
+      : [
+          ...SCHEDULE_TRIGGER_CHOICES.filter((choice) => choice.value === current),
+          ...SCHEDULE_TRIGGER_CHOICES.filter((choice) => choice.value !== current),
+        ];
+  return prompter.choose("  How should the nightly run be triggered?", choices);
+}
+
 async function stepRepos(
   prompter: Prompter,
   admin: Octokit,
@@ -774,6 +828,9 @@ coding agent runs with.`);
 
   const repos: RepoAnswers[] = [];
   let lastSchedule = "02:37";
+  // Default the highlighted choice to the recommended host scheduler; carry each
+  // repo's pick forward as the prefill for the next.
+  let lastScheduleTrigger: ScheduleTrigger = "host-scheduler";
   let lastLabels = "overnight";
   let lastMaxIssues = "4";
   let lastUsageBudget = String(FIXOWL_DEFAULTS.usageBudgetPercent);
@@ -795,6 +852,8 @@ coding agent runs with.`);
     log.info(
       `    cron "${schedule.cron}" (UTC)${schedule.note !== undefined ? ` = ${schedule.note}` : ""}`,
     );
+
+    const scheduleTrigger = await promptScheduleTrigger(prompter, lastScheduleTrigger);
 
     const labelsAnswer = await prompter.ask(
       "  Labels that mark an issue for fixowl (comma-separated)",
@@ -856,6 +915,7 @@ coding agent runs with.`);
       name,
       schedule: schedule.cron,
       scheduleNote: schedule.note,
+      scheduleTrigger,
       labels,
       maxIssuesPerRun: Number(maxIssuesAnswer),
       usageBudgetPercent: usageBudgetAnswer.trim() === "" ? undefined : Number(usageBudgetAnswer),
@@ -864,6 +924,7 @@ coding agent runs with.`);
       ...modelSelection,
     });
     lastSchedule = scheduleAnswer;
+    lastScheduleTrigger = scheduleTrigger;
     lastLabels = labelsAnswer;
     lastMaxIssues = maxIssuesAnswer;
     lastUsageBudget = usageBudgetAnswer;
@@ -1249,8 +1310,8 @@ Fix that and re-run:
     log.info("\n$ fixowl fallback install");
     if (process.platform !== "darwin") {
       log.warn(
-        "the local fallback is macOS-only for now; on Linux add a cron/systemd-timer\n" +
-          "  that runs `fixowl fallback check` shortly after your cron.",
+        "the host scheduler is macOS-only for now; on Linux add a cron/systemd-timer\n" +
+          "  that runs `fixowl fallback check` on schedule.",
       );
     } else {
       try {
@@ -1262,7 +1323,7 @@ Fix that and re-run:
       } catch (error) {
         log.error(describeError(error));
         log.info(
-          "\nThe fallback did not install. Fix the problem above and re-run: fixowl fallback install",
+          "\nThe host scheduler did not install. Fix the problem above and re-run: fixowl fallback install",
         );
         process.exitCode = 1;
         return;
@@ -1282,7 +1343,7 @@ Fix that and re-run:
   fixowl run owner/repo      # do not wait for the cron; run a night now
   fixowl logs owner/repo     # what happened last night${
     options.installFallback === true
-      ? "\n  fixowl fallback status     # local cron-backup: installed? next fire?"
+      ? "\n  fixowl fallback status     # host scheduler: installed? mode? next fire?"
       : ""
   }`);
 }
@@ -1301,16 +1362,18 @@ github:
     app_id: 123456                         # App settings page, "About" section
     installation_id: 7890123               # the number in https://github.com/settings/installations/<id>
     private_key: \${FIXOWL_APP_PRIVATE_KEY} # base64 of the downloaded App .pem (normalized to PKCS#8 at provision)
-  # fallback_token: \${FIXOWL_FALLBACK_TOKEN}  # optional; fine-grained PAT, Actions: write only, for the local fallback
+  # fallback_token: \${FIXOWL_FALLBACK_TOKEN}  # host-scheduler modes only; fine-grained PAT, Actions: write only
 
 # runner:
 #   dir: ~/.fixowl/runners   # must live under $HOME (Colima shares $HOME with its VM)
 
 # fallback:
-#   gap_minutes: 30          # minutes after the cron the local fallback fires (default 30)
+#   gap_minutes: 30          # "both" mode only: minutes after the cron the host fallback fires (default 30)
 
 defaults:
   schedule: "37 1 * * *"     # UTC; odd minute dodges GitHub's peak-time cron delays
+  schedule_trigger: host-scheduler   # host launchd dispatches on schedule (recommended for self-hosted);
+                                     #   alternatives: github-cron (cron only), both (cron + host fallback)
   labels: { any: [overnight] }
   agent: claude
   # Layered run-budget (issue #21): the night stops on the first condition that
@@ -1389,10 +1452,13 @@ Next steps (or re-run \`fixowl init\` on a terminal for the guided setup):
      token in ${secretsPath} as CLAUDE_CODE_OAUTH_TOKEN.
   3. Edit ${configPath}: list your repos.
   4. Run \`fixowl validate\`, then \`fixowl provision\` and \`fixowl start\`.
-  5. Optional: to back up GitHub's flaky cron, mint a SECOND fine-grained PAT with
-     ONLY Actions: write on your repos, put it in ${secretsPath} as
-     FIXOWL_FALLBACK_TOKEN, uncomment github.fallback_token in the config, then
-     run \`fixowl fallback install\` (macOS). See docs/local-fallback.md.`);
+  5. Scheduling trigger (defaults.schedule_trigger): host-scheduler (recommended
+     for self-hosted; the workflow is dispatch-only and this host dispatches on
+     schedule), github-cron (workflow keeps its cron; no host agent), or both
+     (cron + host fallback). For host-scheduler or both, mint a SECOND
+     fine-grained PAT with ONLY Actions: write on your repos, put it in
+     ${secretsPath} as FIXOWL_FALLBACK_TOKEN, uncomment github.fallback_token in
+     the config, then run \`fixowl fallback install\` (macOS). See docs/local-fallback.md.`);
 }
 
 // ---------------------------------------------------------------------------

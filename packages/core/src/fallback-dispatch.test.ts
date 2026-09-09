@@ -3,6 +3,7 @@ import {
   anchorOccurrence,
   coversScheduledSlot,
   decideFallbackDispatch,
+  decidePrimaryDispatch,
   guardScheduledSlot,
   isSameUtcDay,
   isScheduledSlotRun,
@@ -213,6 +214,44 @@ describe("decideFallbackDispatch", () => {
       );
       expect(decision.dispatch).toBe(false);
     });
+  });
+});
+
+describe("decidePrimaryDispatch (host-scheduler mode / issue #81)", () => {
+  const CRON = "18 5 * * *";
+
+  it("dispatches against a dispatch-only workflow with no schedule run - never treats it as 'cron missed'", () => {
+    // The dispatch-only workflow never produces a `schedule` event; primary mode
+    // must still dispatch (this is the intended trigger, not a missed cron).
+    const decision = decidePrimaryDispatch([], NOW, CRON);
+    expect(decision.dispatch).toBe(true);
+    expect(decision.reason).toContain("workflow_dispatch");
+  });
+
+  it("dispatches when only manual dispatches (no marker) cover the occurrence", () => {
+    const runs = [run({ id: 10, event: "workflow_dispatch", createdAt: "2026-09-05T05:20:00Z" })];
+    expect(decidePrimaryDispatch(runs, NOW, CRON).dispatch).toBe(true);
+  });
+
+  it("stands down when its own prior tagged dispatch already covers the occurrence", () => {
+    // A double launchd fire (or a re-arm) must not start two paid nights.
+    const decision = decidePrimaryDispatch(
+      [fallbackRun({ id: 12, createdAt: "2026-09-05T05:18:30Z" })],
+      NOW,
+      CRON,
+    );
+    expect(decision.dispatch).toBe(false);
+    expect(decision.existing?.id).toBe(12);
+  });
+
+  it("stands down when a real cron run happens to cover the occurrence", () => {
+    const decision = decidePrimaryDispatch([run({ id: 5, status: "in_progress" })], NOW, CRON);
+    expect(decision.dispatch).toBe(false);
+  });
+
+  it("dispatches when the only tagged dispatch is from a previous occurrence", () => {
+    const stale = fallbackRun({ id: 12, createdAt: "2026-09-04T05:18:30Z" });
+    expect(decidePrimaryDispatch([stale], NOW, CRON).dispatch).toBe(true);
   });
 });
 

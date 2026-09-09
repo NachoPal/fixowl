@@ -6,6 +6,49 @@ import type { LabelModelMap } from "./model-selection.ts";
 /** 5-field cron expression; correctness beyond shape is GitHub's problem. */
 const cronSchema = z.string().regex(/^\S+ \S+ \S+ \S+ \S+$/, "expected a 5-field cron expression");
 
+/**
+ * Which trigger fires the nightly run (a first-class `fixowl init` choice).
+ * GitHub's `schedule` cron is unreliable, and fixowl's primary target is a
+ * self-hosted runner, so the host's own scheduler (the launchd agent) is a
+ * first-class - and recommended - option:
+ *
+ *  - `github-cron`   the workflow keeps its `schedule:` cron and NO host agent
+ *                    is installed. Simplest, but the cron fires late/unreliably;
+ *                    mainly worth it with a GitHub-*hosted* runner.
+ *  - `host-scheduler` the workflow OMITS `schedule:` (dispatch-only) and the host
+ *                    launchd agent dispatches the workflow *directly* on schedule
+ *                    (primary-dispatch mode). Recommended for a self-hosted runner.
+ *  - `both`          the workflow keeps `schedule:` AND the host agent runs in its
+ *                    fallback mode (dispatch only if the cron run is missing).
+ *
+ * See docs/local-fallback.md.
+ */
+export const scheduleTriggerSchema = z.enum(["github-cron", "host-scheduler", "both"]);
+export type ScheduleTrigger = z.infer<typeof scheduleTriggerSchema>;
+
+/**
+ * Whether a scheduling mode installs the host launchd agent, and in which mode.
+ * `github-cron` installs nothing; `host-scheduler` runs it as the *primary*
+ * dispatcher; `both` runs it as the cron *fallback*. Used by the fallback
+ * install/check commands so a `github-cron` repo is never armed (issue #81) and
+ * a `host-scheduler` repo dispatches directly rather than "cron missed" logic.
+ */
+export function hostSchedulerRole(trigger: ScheduleTrigger): "none" | "primary" | "fallback" {
+  switch (trigger) {
+    case "github-cron":
+      return "none";
+    case "host-scheduler":
+      return "primary";
+    case "both":
+      return "fallback";
+  }
+}
+
+/** Whether the generated workflow includes an `on.schedule:` cron for this mode. */
+export function workflowHasSchedule(trigger: ScheduleTrigger): boolean {
+  return trigger !== "host-scheduler";
+}
+
 const envVarNameSchema = z.string().regex(/^[A-Z][A-Z0-9_]*$/, "expected an ENV_VAR_NAME");
 
 export const repoFullNameSchema = z.string().regex(/^[\w.-]+\/[\w.-]+$/, "expected owner/repo");
@@ -29,6 +72,12 @@ const labelModelsSchema = z.record(z.string().min(1), modelEffortSchema);
 const repoEntrySchema = z.object({
   name: repoFullNameSchema,
   schedule: cronSchema.optional(),
+  /**
+   * Which trigger fires this repo's nightly run (see scheduleTriggerSchema).
+   * Unset resolves to `both`, which preserves the pre-choice behavior (workflow
+   * keeps its cron; a launchd agent, if installed, runs as the fallback).
+   */
+  schedule_trigger: scheduleTriggerSchema.optional(),
   labels: labelRuleSchema.optional(),
   agent: z.string().optional(),
   /**
@@ -119,6 +168,8 @@ export const globalConfigSchema = z.object({
   defaults: z
     .object({
       schedule: cronSchema.optional(),
+      /** Default scheduling trigger for every repo that does not set its own. */
+      schedule_trigger: scheduleTriggerSchema.optional(),
       labels: labelRuleSchema.optional(),
       agent: z.string().optional(),
       max_issues_per_run: z.number().int().positive().optional(),
@@ -172,6 +223,13 @@ export const globalConfigSchemaChecked = globalConfigSchema.superRefine((config,
 
 export const FIXOWL_DEFAULTS = {
   schedule: "37 1 * * *",
+  /**
+   * Default scheduling trigger. `both` (workflow cron + host fallback) is also
+   * the resolution fallback for an unset value, so a config written before this
+   * choice existed behaves exactly as it did. `fixowl init` recommends
+   * `host-scheduler` for self-hosted runners and writes whatever the operator picks.
+   */
+  scheduleTrigger: "both" as ScheduleTrigger,
   labels: { any: ["overnight"] } satisfies LabelRule,
   agent: "claude",
   maxIssuesPerRun: 4,
@@ -214,6 +272,11 @@ export const FIXOWL_DEFAULTS = {
 export interface ResolvedRepoSettings {
   name: string;
   schedule: string;
+  /**
+   * Which trigger fires the nightly run: GitHub cron only, the host scheduler
+   * only (primary dispatch), or both (cron + host fallback). See scheduleTriggerSchema.
+   */
+  scheduleTrigger: ScheduleTrigger;
   labels: LabelRule;
   agent: string;
   maxIssuesPerRun: number;
@@ -256,6 +319,8 @@ export function resolveRepoSettings(config: GlobalConfig, repoName: string): Res
   return {
     name: entry.name,
     schedule: entry.schedule ?? defaults.schedule ?? FIXOWL_DEFAULTS.schedule,
+    scheduleTrigger:
+      entry.schedule_trigger ?? defaults.schedule_trigger ?? FIXOWL_DEFAULTS.scheduleTrigger,
     labels: entry.labels ?? defaults.labels ?? FIXOWL_DEFAULTS.labels,
     agent,
     maxIssuesPerRun:

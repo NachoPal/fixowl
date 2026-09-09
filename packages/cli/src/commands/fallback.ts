@@ -1,9 +1,12 @@
 import { realpathSync } from "node:fs";
 import {
   decideFallbackDispatch,
+  decidePrimaryDispatch,
   fallbackGapMinutes,
+  hostSchedulerRole,
   resolveRepoSettings,
   SCHEDULED_FALLBACK_SOURCE,
+  type FallbackDecision,
   type WorkflowRunLite,
 } from "@fixowl/core";
 import { targetRepos, type CliContext } from "../context.ts";
@@ -86,10 +89,20 @@ export function realFallbackCheckDeps(ctx: CliContext): FallbackCheckDeps {
 }
 
 /**
- * The check-then-dispatch the launchd agent runs. For each repo: dispatch the
- * workflow only when today's scheduled (cron) run is missing, tagging the
- * dispatch so the in-run budget guard treats it as the scheduled slot. Logs
- * clearly whether it fired or stood down, so the launchd log is auditable.
+ * The check-then-dispatch the host launchd agent runs. The repo's
+ * `schedule_trigger` decides the strategy (see hostSchedulerRole):
+ *
+ *  - `both` (fallback):   dispatch only when the current occurrence's `schedule`
+ *                         (cron) run is missing - back up an unreliable cron.
+ *  - `host-scheduler` (primary): the workflow is dispatch-only, so dispatch
+ *                         *directly* on schedule, deduping only against a
+ *                         scheduled-slot run already covering the occurrence
+ *                         (issue #81 - never read "no cron run" as "cron missed").
+ *  - `github-cron` (none): never dispatch - this repo relies on GitHub's cron and
+ *                         should not have a host agent at all; skip defensively.
+ *
+ * Either dispatch is tagged so the in-run budget guard treats it as the
+ * scheduled slot. Logs clearly whether it fired or stood down.
  */
 export async function fallbackCheckCommand(
   ctx: CliContext,
@@ -99,16 +112,28 @@ export async function fallbackCheckCommand(
   for (const repoFullName of targetRepos(ctx.config, repoArg)) {
     const ref = splitRepoFullName(repoFullName);
     try {
+      const settings = resolveRepoSettings(ctx.config, repoFullName);
+      const role = hostSchedulerRole(settings.scheduleTrigger);
+      if (role === "none") {
+        log.info(
+          `${repoFullName}: skip - schedule_trigger is "${settings.scheduleTrigger}" ` +
+            "(GitHub cron only); the host scheduler is disabled for this repo",
+        );
+        continue;
+      }
       const runs = await deps.listRecentRuns(ref);
-      const schedule = resolveRepoSettings(ctx.config, repoFullName).schedule;
-      const decision = decideFallbackDispatch(runs, deps.now(), schedule);
+      const decision: FallbackDecision =
+        role === "primary"
+          ? decidePrimaryDispatch(runs, deps.now(), settings.schedule)
+          : decideFallbackDispatch(runs, deps.now(), settings.schedule);
       if (!decision.dispatch) {
         log.info(`${repoFullName}: skip - ${decision.reason}`);
         continue;
       }
       const branch = await deps.getDefaultBranch(ref);
       await deps.dispatch(ref, branch);
-      log.ok(`${repoFullName}: dispatched fallback run - ${decision.reason}`);
+      const kind = role === "primary" ? "scheduled" : "fallback";
+      log.ok(`${repoFullName}: dispatched ${kind} run - ${decision.reason}`);
     } catch (error) {
       const detail = describeGitHubError(error);
       const hint = /unexpected inputs/i.test(detail)
@@ -128,12 +153,13 @@ function cliInvocation(configPath: string | undefined): string[] {
 }
 
 function repoLocalTime(ctx: CliContext, repoFullName: string): LocalTime {
-  const cron = parseDailyCron(resolveRepoSettings(ctx.config, repoFullName).schedule);
-  return fallbackLocalTime({
-    cron,
-    gapMinutes: fallbackGapMinutes(ctx.config),
-    maxOffsetMinutes: hostMaxOffsetMinutes(),
-  });
+  const settings = resolveRepoSettings(ctx.config, repoFullName);
+  const cron = parseDailyCron(settings.schedule);
+  // Fallback mode fires a generous gap AFTER the cron so the cron gets first
+  // crack; primary mode is the only trigger, so it fires ON the schedule (gap 0).
+  const gapMinutes =
+    hostSchedulerRole(settings.scheduleTrigger) === "primary" ? 0 : fallbackGapMinutes(ctx.config);
+  return fallbackLocalTime({ cron, gapMinutes, maxOffsetMinutes: hostMaxOffsetMinutes() });
 }
 
 function fmtLocalTime(local: LocalTime): string {
@@ -154,6 +180,15 @@ export async function fallbackInstallCommand(
   }
   const invocation = cliInvocation(configPath);
   for (const repoFullName of targetRepos(ctx.config, repoArg)) {
+    const role = hostSchedulerRole(resolveRepoSettings(ctx.config, repoFullName).scheduleTrigger);
+    if (role === "none") {
+      // A `github-cron` repo relies on GitHub's cron; installing (or arming) a
+      // host agent for it would dispatch unwanted nights (issue #81). Skip it.
+      log.info(
+        `${repoFullName}: skip - schedule_trigger is "github-cron"; no host agent for this repo`,
+      );
+      continue;
+    }
     const local = repoLocalTime(ctx, repoFullName);
     const label = fallbackLabel(repoFullName);
     const plist = renderFallbackPlist({
@@ -165,9 +200,13 @@ export async function fallbackInstallCommand(
       stderrPath: fallbackLogPath(label),
     });
     await installFallbackAgent({ label, plist });
+    const when =
+      role === "primary"
+        ? "dispatches the night directly on schedule"
+        : `~${fallbackGapMinutes(ctx.config)} min after the cron (fallback)`;
     log.ok(
-      `${repoFullName}: fallback installed, fires daily at ${fmtLocalTime(local)} local ` +
-        `(~${fallbackGapMinutes(ctx.config)} min after the cron); next ${nextFireTime(local).toLocaleString()}`,
+      `${repoFullName}: host scheduler installed, fires daily at ${fmtLocalTime(local)} local ` +
+        `(${when}); next ${nextFireTime(local).toLocaleString()}`,
     );
     log.info(`  logs: ${fallbackLogPath(label)}`);
   }
@@ -193,15 +232,21 @@ export async function fallbackStatusCommand(
 ): Promise<void> {
   for (const repoFullName of targetRepos(ctx.config, repoArg)) {
     log.info(`\n${repoFullName}`);
+    const role = hostSchedulerRole(resolveRepoSettings(ctx.config, repoFullName).scheduleTrigger);
     const label = fallbackLabel(repoFullName);
     if (!isFallbackInstalled(label)) {
-      log.info("  fallback: not installed");
+      log.info(
+        role === "none"
+          ? "  host scheduler: not installed (schedule_trigger: github-cron)"
+          : "  host scheduler: not installed",
+      );
       continue;
     }
     const loaded = await isFallbackLoaded(label);
     const local = readPlistLocalTime(label) ?? repoLocalTime(ctx, repoFullName);
+    const mode = role === "primary" ? "primary dispatch" : "cron fallback";
     log.info(
-      `  fallback: installed${loaded ? "" : " (not loaded)"}, fires daily at ` +
+      `  host scheduler: installed${loaded ? "" : " (not loaded)"} (${mode}), fires daily at ` +
         `${fmtLocalTime(local)} local; next ${nextFireTime(local).toLocaleString()}`,
     );
     log.info(`  plist: ${fallbackPlistPath(label)}`);

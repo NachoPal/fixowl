@@ -13,6 +13,7 @@ import {
 const repo = (over: Partial<RepoAnswers> = {}): RepoAnswers => ({
   name: "NachoPal/storyengine",
   schedule: "37 1 * * *",
+  scheduleTrigger: "both",
   labels: ["overnight"],
   maxIssuesPerRun: 4,
   ...over,
@@ -216,6 +217,26 @@ describe("renderConfigYaml", () => {
       installation_id: 7890123,
       private_key: "base64pem",
     });
+  });
+
+  it("renders schedule_trigger into defaults and overrides only where a repo differs", () => {
+    const yaml = renderConfigYaml(
+      answers([
+        repo({ scheduleTrigger: "host-scheduler" }),
+        repo({ name: "NachoPal/same", scheduleTrigger: "host-scheduler" }),
+        repo({ name: "NachoPal/cron", scheduleTrigger: "github-cron" }),
+      ]),
+    );
+    const config = loadRendered(yaml);
+    expect(config.defaults?.schedule_trigger).toBe("host-scheduler");
+    // A repo matching the default emits no override; a differing one does.
+    expect(config.repos[1]).toEqual({ name: "NachoPal/same" });
+    expect(config.repos[2]).toEqual({
+      name: "NachoPal/cron",
+      schedule_trigger: "github-cron",
+    });
+    expect(resolveRepoSettings(config, "NachoPal/same").scheduleTrigger).toBe("host-scheduler");
+    expect(resolveRepoSettings(config, "NachoPal/cron").scheduleTrigger).toBe("github-cron");
   });
 
   it("omits the fallback token unless the fallback is enabled", () => {

@@ -150,15 +150,16 @@ loop could never verify check runs on one. A config that still sets the old
   solved by the App: it is deliberately performed with the admin token.
 - The App's installation token (not `GITHUB_TOKEN`) authors PRs so the target
   repo's own CI triggers on them.
-- **The fallback token is optional and least-privilege.** The local fallback
-  trigger ([local-fallback.md](local-fallback.md)) needs **Actions: write** to
-  dispatch the workflow when the cron misses - which the admin token (setup-only,
-  meant to be revoked/downgraded) and the App (in-repo, least privilege)
-  deliberately do not provide for an always-on host job. Rather than keeping a
-  full-admin token live or widening the App, the fallback uses its own dedicated
-  PAT holding **only Actions RW** on the target repos, stored on the host as
-  `FIXOWL_FALLBACK_TOKEN`. This preserves the admin-token-is-setup-only property:
-  with the fallback enabled you can still revoke or downgrade the admin token.
+- **The fallback token is optional and least-privilege.** The host scheduler
+  ([local-fallback.md](local-fallback.md)) needs **Actions: write** to dispatch
+  the workflow - on schedule in `host-scheduler` mode, or when the cron misses in
+  `both` mode - which the admin token (setup-only, meant to be revoked/downgraded)
+  and the App (in-repo, least privilege) deliberately do not provide for an
+  always-on host job. Rather than keeping a full-admin token live or widening the
+  App, the host scheduler uses its own dedicated PAT holding **only Actions RW**
+  on the target repos, stored on the host as `FIXOWL_FALLBACK_TOKEN`. This
+  preserves the admin-token-is-setup-only property: with the host scheduler
+  enabled you can still revoke or downgrade the admin token.
   The workflow's own once-a-day budget guard lists runs with the ephemeral
   `GITHUB_TOKEN` (Actions: read), never this token.
 - On the runner, the installation token is injected into git fetch/push commands
