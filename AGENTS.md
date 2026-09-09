@@ -199,7 +199,7 @@ See [docs/releasing.md](docs/releasing.md).
   the job runs `node dist/action/index.js` with those set via shell `export` -
   never `uses: ./` (which would hit the real repo). Loose assertions only (agent
   is nondeterministic): PRs on `issue/<n>-*`, blocked_by stacking, `isDraft==false`
-  == CI green. Design in [docs/adr/0001-release-gated-real-call-e2e-test.md].
+  == CI green.
   Coverage gap (stated in each job summary): NOT self-hosted runner registration,
   the launchd fallback, or the scheduled-slot budget guard. This is distinct from
   `scripts/local-docker-e2e.ts` (`pnpm e2e:docker`), an in-process real-docker /

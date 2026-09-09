@@ -210,7 +210,7 @@ jobs:
   # dist/action/index.js retargeted at the sandbox with a forced-cheap model
   # (sonnet/medium for EVERY issue), asserts loosely that PRs landed on the
   # expected issue/<n>-* branches with the dependency order respected and CI
-  # green, and tears everything down. See docs/adr/0001-*.
+  # green, and tears everything down.
   #
   # REPORT-ONLY (continue-on-error): a paid, nondeterministic agent test must not
   # veto a release on its first flake. Promote to a hard gate once the flake rate
@@ -222,7 +222,7 @@ jobs:
     needs: [release]
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    continue-on-error: true # report-only to start; see the ADR
+    continue-on-error: true # report-only to start: a paid, flaky agent test must not veto a release
     permissions:
       contents: read # checkout only; the sandbox is reached with its own App token
     # Serialize every workflow that touches the one shared sandbox (this job and
@@ -240,7 +240,7 @@ jobs:
       # comfortably outlasts this short job). The action itself gets the App
       # trio below and mints its own auto-refreshing token, exactly as a
       # provisioned repo does; this step also resolves the installation id the
-      # trio needs. See docs/adr/0001-*.
+      # trio needs.
       - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
         id: app-token
         with:
