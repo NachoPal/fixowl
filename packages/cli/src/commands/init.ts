@@ -1209,8 +1209,11 @@ Fix that and re-run:
   log.info(`
 🦉 fixowl is set up.
 
-  Once the PR(s) above are merged, file an issue, add the label you chose, and
-  check back tomorrow.
+  ${
+    actions.pause
+      ? "Once the PR(s) above are merged, file an issue, add the label you chose, and\n  check back tomorrow."
+      : "File an issue, add the label you chose, and check back tomorrow."
+  }
   fixowl status              # runner, last run, open fixowl PRs
   fixowl run owner/repo      # do not wait for the cron; run a night now
   fixowl logs owner/repo     # what happened last night${
