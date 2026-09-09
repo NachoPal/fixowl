@@ -87,6 +87,18 @@ See [docs/releasing.md](docs/releasing.md).
 
 ## Conventions
 
+- `fixowl edit [repo]` (`packages/cli/src/commands/edit.ts`) is the interactive
+  config-update path (keep-or-change per-repo, then an optional `noRegister`
+  provision hand-off). It shares the per-repo question block with `init` via the
+  exported `promptRepoSettings`/`stepModelSelection` (`init.ts`) - `init` passes
+  sticky-last prefills, `edit` passes `resolveRepoSettings`; `stepModelSelection`
+  is byte-for-byte unchanged when its `current` arg is undefined (init's path).
+  Write-back is **surgical**: it mutates a `parseDocument` Document so comments
+  and untouched keys survive, writes only changed fields, drops a per-repo key
+  when the new value equals the resolved default, and re-validates before
+  overwriting. Never route `edit` through `renderConfigYaml` (a lossy fresh-file
+  renderer, kept strictly init-only). `edit` is config, not re-onboarding: no
+  App/token/runner setup.
 - `fixowl provision --manual` (`packages/cli/src/commands/provision-manual.ts`)
   is the no-admin-token provisioning path: it renders the workflow,
   `.fixowl.yml`, and issue template with the exact same renderers

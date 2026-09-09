@@ -21,6 +21,12 @@ export interface RepoAnswers {
   runBudgetMinutes?: number;
   /** Per-issue hard timeout in minutes; falls back to the built-in default when unset. */
   issueTimeoutMinutes?: number;
+  /** CI-gated fix loop: max agent passes before a draft PR is left; falls back to the default when unset. */
+  ciMaxTries?: number;
+  /** Minutes each CI-gated pass waits for the base branch's required checks; falls back to the default when unset. */
+  ciTimeoutMinutes?: number;
+  /** Opt-in Layer 2 (heuristic same-files conflict ordering); off by default. */
+  heuristicConflictOrdering?: boolean;
   /** Default model for issues with no selector label. */
   defaultModel?: string;
   /** Default reasoning effort for issues with no selector label. */
@@ -175,6 +181,15 @@ function repoOverrideLines(
   ) {
     lines.push(`    issue_timeout_minutes: ${repo.issueTimeoutMinutes}`);
   }
+  if (repo.ciMaxTries !== base.ciMaxTries && repo.ciMaxTries !== undefined) {
+    lines.push(`    ci_max_tries: ${repo.ciMaxTries}`);
+  }
+  if (repo.ciTimeoutMinutes !== base.ciTimeoutMinutes && repo.ciTimeoutMinutes !== undefined) {
+    lines.push(`    ci_timeout_minutes: ${repo.ciTimeoutMinutes}`);
+  }
+  if ((repo.heuristicConflictOrdering ?? false) !== (base.heuristicConflictOrdering ?? false)) {
+    lines.push(`    heuristic_conflict_ordering: ${repo.heuristicConflictOrdering ?? false}`);
+  }
   lines.push(...modelEffortLines("    ", repo, liftedModel, liftedEffort));
   lines.push(...labelModelsBlock("    ", repo.labelModels));
   return lines;
@@ -216,6 +231,18 @@ export function renderConfigYaml(answers: ConfigAnswers): string {
   }
   const defaultModelBlock = defaultModelLines.length > 0 ? `\n${defaultModelLines.join("\n")}` : "";
 
+  // Layer 2 (heuristic conflict-ordering) is off by default: render it as an
+  // active default line only when the base repo enabled it, otherwise keep the
+  // discoverable commented example so a fresh config reads exactly as before.
+  const heuristicBlock =
+    base.heuristicConflictOrdering === true
+      ? "\n  heuristic_conflict_ordering: true   # opt-in Layer 2: an LLM groups & stacks same-file issues to reduce conflicts (paid LLM)"
+      : "\n  # heuristic_conflict_ordering: true   # opt-in Layer 2: an LLM groups & stacks" +
+        "\n  #   non-dependent issues that touch the same files, to avoid merge conflicts." +
+        "\n  #   Off by default: fixowl never merges (so never restacks what it stacks)," +
+        "\n  #   independent PRs review more robustly, and the classifier is a paid LLM guess." +
+        "\n  #   Native blocked_by ordering (Layer 1) is always-on regardless.";
+
   const fallbackTokenLine = answers.fallback
     ? `\n  fallback_token: \${FIXOWL_FALLBACK_TOKEN} # fine-grained PAT, Actions: write only; the host scheduler dispatches with it`
     : "";
@@ -252,13 +279,8 @@ ${scheduleTriggerLine("  ", base.scheduleTrigger)}
 ${budgetLine("usage_budget_percent", base.usageBudgetPercent, FIXOWL_DEFAULTS.usageBudgetPercent, "stop before a new issue once the agent usage window hits this %")}
 ${budgetLine("run_budget_minutes", base.runBudgetMinutes, FIXOWL_DEFAULTS.runBudgetMinutes, "graceful wall-clock: don't start a new issue after this many minutes")}
   issue_timeout_minutes: ${base.issueTimeoutMinutes ?? FIXOWL_DEFAULTS.issueTimeoutMinutes}   # per-issue hard timeout (a stuck agent is killed)
-  ci_max_tries: ${FIXOWL_DEFAULTS.ciMaxTries}          # CI-gated fix loop: agent passes before a draft PR is left
-  ci_timeout_minutes: ${FIXOWL_DEFAULTS.ciTimeoutMinutes}     # minutes each pass waits for the base branch's required checks${defaultModelBlock}
-  # heuristic_conflict_ordering: true   # opt-in Layer 2: an LLM groups & stacks
-  #   non-dependent issues that touch the same files, to avoid merge conflicts.
-  #   Off by default: fixowl never merges (so never restacks what it stacks),
-  #   independent PRs review more robustly, and the classifier is a paid LLM guess.
-  #   Native blocked_by ordering (Layer 1) is always-on regardless.
+  ci_max_tries: ${base.ciMaxTries ?? FIXOWL_DEFAULTS.ciMaxTries}          # CI-gated fix loop: agent passes before a draft PR is left
+  ci_timeout_minutes: ${base.ciTimeoutMinutes ?? FIXOWL_DEFAULTS.ciTimeoutMinutes}     # minutes each pass waits for the base branch's required checks${defaultModelBlock}${heuristicBlock}
 
 # Per-agent env allowlist: the ONLY env vars entering per-issue containers.
 agents:

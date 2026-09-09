@@ -1,4 +1,5 @@
 import { Command } from "commander";
+import { editCommand } from "./commands/edit.ts";
 import {
   fallbackCheckCommand,
   fallbackInstallCommand,
@@ -35,6 +36,13 @@ export function createProgram(): Command {
     .option("--non-interactive", "just scaffold ~/.fixowl and print the manual steps")
     .action(async (options: { nonInteractive?: boolean }) => {
       await initCommand({ configPath: configPath(), nonInteractive: options.nonInteractive });
+    });
+
+  program
+    .command("edit [repo]")
+    .description("interactively update an existing repo's config, then optionally re-provision")
+    .action(async (repo: string | undefined) => {
+      await editCommand(makeContext(configPath()), repo, { configPath: configPath() });
     });
 
   program

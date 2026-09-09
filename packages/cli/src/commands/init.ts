@@ -724,7 +724,7 @@ async function whoami(
 // Step 2: the coding agent and its credential
 // ---------------------------------------------------------------------------
 
-async function stepAgent(
+export async function stepAgent(
   prompter: Prompter,
   secrets: Record<string, string>,
 ): Promise<{ agent: string; agentEnv: readonly string[] }> {
@@ -823,116 +823,199 @@ Step 3/4  Repositories
 ----------------------
 For each repo: which one, when the nightly run fires, which labels mark an
 issue as fixowl's, the run budgets that stop the night (usage %, wall-clock,
-and an optional issue-count cap), the per-issue timeout, and which model the
-coding agent runs with.`);
+and an optional issue-count cap), the per-issue timeout, the CI-gated fix loop
+budget, and which model the coding agent runs with.`);
 
   const repos: RepoAnswers[] = [];
-  let lastSchedule = "02:37";
-  // Default the highlighted choice to the recommended host scheduler; carry each
-  // repo's pick forward as the prefill for the next.
-  let lastScheduleTrigger: ScheduleTrigger = "host-scheduler";
-  let lastLabels = "overnight";
-  let lastMaxIssues = "4";
-  let lastUsageBudget = String(FIXOWL_DEFAULTS.usageBudgetPercent);
-  let lastRunBudget = String(FIXOWL_DEFAULTS.runBudgetMinutes);
-  let lastIssueTimeout = String(FIXOWL_DEFAULTS.issueTimeoutMinutes);
+  // The wizard's sticky-last-value defaults: the first repo starts from the
+  // built-in starter values, then each repo's answers prefill the next. Model
+  // selection is intentionally NOT carried forward (it stays a fresh choice per
+  // repo, as it always has - so the keep-or-change path only engages in `edit`).
+  let prefill: RepoSettingsPrefill = {
+    schedule: "02:37",
+    scheduleTrigger: "host-scheduler",
+    labels: "overnight",
+    maxIssuesPerRun: FIXOWL_DEFAULTS.maxIssuesPerRun,
+    usageBudgetPercent: FIXOWL_DEFAULTS.usageBudgetPercent,
+    runBudgetMinutes: FIXOWL_DEFAULTS.runBudgetMinutes,
+    issueTimeoutMinutes: FIXOWL_DEFAULTS.issueTimeoutMinutes,
+    ciMaxTries: FIXOWL_DEFAULTS.ciMaxTries,
+    ciTimeoutMinutes: FIXOWL_DEFAULTS.ciTimeoutMinutes,
+    heuristicConflictOrdering: FIXOWL_DEFAULTS.heuristicConflictOrdering,
+  };
 
   for (;;) {
     log.info(`\nRepo ${repos.length + 1}`);
     const name = await askRepoName(prompter, admin, repos);
+    const answers = await promptRepoSettings(prompter, admin, agent, name, prefill);
+    repos.push({ name, ...answers });
 
-    const scheduleAnswer = await prompter.ask(
-      "  Nightly run time (local HH:MM, or a 5-field UTC cron)",
-      {
-        default: lastSchedule,
-        validate: (value) => problemWith(() => parseSchedule(value)),
-      },
-    );
-    const schedule = parseSchedule(scheduleAnswer);
-    log.info(
-      `    cron "${schedule.cron}" (UTC)${schedule.note !== undefined ? ` = ${schedule.note}` : ""}`,
-    );
-
-    const scheduleTrigger = await promptScheduleTrigger(prompter, lastScheduleTrigger);
-
-    const labelsAnswer = await prompter.ask(
-      "  Labels that mark an issue for fixowl (comma-separated)",
-      {
-        default: lastLabels,
-        validate: (value) =>
-          parseLabels(value).length > 0 ? undefined : "at least one label is required",
-      },
-    );
-    // Layered run-budget (issue #21): the night stops on the first condition
-    // that trips. Each is optional; a blank answer opts that axis out.
-    const usageBudgetAnswer = await prompter.ask(
-      "  Usage budget - stop the night at what % of the agent's usage window? (blank = no usage cap)",
-      {
-        default: lastUsageBudget,
-        validate: (value) =>
-          value.trim() === "" || isPercent(value)
-            ? undefined
-            : "enter a percent 0-100, or leave blank for no usage cap",
-      },
-    );
-    const runBudgetAnswer = await prompter.ask(
-      "  Graceful run budget - don't start a new issue after how many minutes? (blank = none)",
-      {
-        default: lastRunBudget,
-        validate: (value) =>
-          value.trim() === "" || /^[1-9]\d*$/.test(value.trim())
-            ? undefined
-            : "enter a positive whole number of minutes, or leave blank",
-      },
-    );
-    const maxIssuesAnswer = await prompter.ask(
-      "  Optional hard cap - max issues per night (secondary count cap)",
-      {
-        default: lastMaxIssues,
-        validate: (value) =>
-          /^[1-9]\d*$/.test(value) ? undefined : "enter a positive whole number",
-      },
-    );
-    const issueTimeoutAnswer = await prompter.ask(
-      "  Per-issue timeout in minutes (a stuck agent is killed after this)",
-      {
-        default: lastIssueTimeout,
-        validate: (value) =>
-          /^[1-9]\d*$/.test(value) ? undefined : "enter a positive whole number",
-      },
-    );
-
-    const labels = parseLabels(labelsAnswer);
-    const modelSelection = await stepModelSelection(
-      prompter,
-      admin,
-      name,
-      agent,
-      await fetchLabelCandidates(admin, name, labels),
-    );
-
-    repos.push({
-      name,
-      schedule: schedule.cron,
-      scheduleNote: schedule.note,
-      scheduleTrigger,
-      labels,
-      maxIssuesPerRun: Number(maxIssuesAnswer),
-      usageBudgetPercent: usageBudgetAnswer.trim() === "" ? undefined : Number(usageBudgetAnswer),
-      runBudgetMinutes: runBudgetAnswer.trim() === "" ? undefined : Number(runBudgetAnswer),
-      issueTimeoutMinutes: Number(issueTimeoutAnswer),
-      ...modelSelection,
-    });
-    lastSchedule = scheduleAnswer;
-    lastScheduleTrigger = scheduleTrigger;
-    lastLabels = labelsAnswer;
-    lastMaxIssues = maxIssuesAnswer;
-    lastUsageBudget = usageBudgetAnswer;
-    lastRunBudget = runBudgetAnswer;
-    lastIssueTimeout = issueTimeoutAnswer;
+    // Carry this repo's non-model answers forward as the next repo's prefill.
+    prefill = {
+      schedule: answers.schedule,
+      scheduleTrigger: answers.scheduleTrigger,
+      labels: answers.labels.join(", "),
+      maxIssuesPerRun: answers.maxIssuesPerRun,
+      usageBudgetPercent: answers.usageBudgetPercent,
+      runBudgetMinutes: answers.runBudgetMinutes,
+      issueTimeoutMinutes: answers.issueTimeoutMinutes ?? FIXOWL_DEFAULTS.issueTimeoutMinutes,
+      ciMaxTries: answers.ciMaxTries ?? FIXOWL_DEFAULTS.ciMaxTries,
+      ciTimeoutMinutes: answers.ciTimeoutMinutes ?? FIXOWL_DEFAULTS.ciTimeoutMinutes,
+      heuristicConflictOrdering: answers.heuristicConflictOrdering ?? false,
+    };
 
     if (!(await prompter.confirm("\nAdd another repo?", false))) return repos;
   }
+}
+
+/** The current/prefill values shown as each per-repo prompt's default. */
+export interface RepoSettingsPrefill {
+  /** Answer form: a cron ("37 1 * * *") or a local "HH:MM". */
+  schedule: string;
+  scheduleTrigger: ScheduleTrigger;
+  /** Comma-joined labels (parseLabels reverses it). */
+  labels: string;
+  maxIssuesPerRun: number;
+  /** undefined => blank default => the usage axis stays opted out. */
+  usageBudgetPercent?: number;
+  runBudgetMinutes?: number;
+  issueTimeoutMinutes: number;
+  ciMaxTries: number;
+  ciTimeoutMinutes: number;
+  heuristicConflictOrdering: boolean;
+  defaultModel?: string;
+  defaultEffort?: string;
+  labelModels?: Record<string, { model: string; effort: string }>;
+}
+
+/** All per-repo answers, minus `name`. Shared by `init` and `edit`. */
+export type RepoSettingsAnswers = Omit<RepoAnswers, "name">;
+
+/**
+ * The per-repo question block, shared by `fixowl init` and `fixowl edit`. Each
+ * prompt's default comes from `prefill`: init passes its sticky-last values, and
+ * `edit` passes the repo's current resolved settings so every field is a
+ * keep-or-change. The model/effort selection engages its keep-or-change path
+ * only when `prefill` carries current model values (i.e. in `edit`).
+ */
+export async function promptRepoSettings(
+  prompter: Prompter,
+  admin: Octokit,
+  agent: string,
+  repoName: string,
+  prefill: RepoSettingsPrefill,
+): Promise<RepoSettingsAnswers> {
+  const scheduleAnswer = await prompter.ask(
+    "  Nightly run time (local HH:MM, or a 5-field UTC cron)",
+    {
+      default: prefill.schedule,
+      validate: (value) => problemWith(() => parseSchedule(value)),
+    },
+  );
+  const schedule = parseSchedule(scheduleAnswer);
+  log.info(
+    `    cron "${schedule.cron}" (UTC)${schedule.note !== undefined ? ` = ${schedule.note}` : ""}`,
+  );
+
+  const scheduleTrigger = await promptScheduleTrigger(prompter, prefill.scheduleTrigger);
+
+  const labelsAnswer = await prompter.ask(
+    "  Labels that mark an issue for fixowl (comma-separated)",
+    {
+      default: prefill.labels,
+      validate: (value) =>
+        parseLabels(value).length > 0 ? undefined : "at least one label is required",
+    },
+  );
+  // Layered run-budget (issue #21): the night stops on the first condition
+  // that trips. Each is optional; a blank answer opts that axis out.
+  const usageBudgetAnswer = await prompter.ask(
+    "  Usage budget - stop the night at what % of the agent's usage window? (blank = no usage cap)",
+    {
+      default: prefill.usageBudgetPercent === undefined ? "" : String(prefill.usageBudgetPercent),
+      validate: (value) =>
+        value.trim() === "" || isPercent(value)
+          ? undefined
+          : "enter a percent 0-100, or leave blank for no usage cap",
+    },
+  );
+  const runBudgetAnswer = await prompter.ask(
+    "  Graceful run budget - don't start a new issue after how many minutes? (blank = none)",
+    {
+      default: prefill.runBudgetMinutes === undefined ? "" : String(prefill.runBudgetMinutes),
+      validate: (value) =>
+        value.trim() === "" || /^[1-9]\d*$/.test(value.trim())
+          ? undefined
+          : "enter a positive whole number of minutes, or leave blank",
+    },
+  );
+  const maxIssuesAnswer = await prompter.ask(
+    "  Optional hard cap - max issues per night (secondary count cap)",
+    {
+      default: String(prefill.maxIssuesPerRun),
+      validate: (value) => (/^[1-9]\d*$/.test(value) ? undefined : "enter a positive whole number"),
+    },
+  );
+  const issueTimeoutAnswer = await prompter.ask(
+    "  Per-issue timeout in minutes (a stuck agent is killed after this)",
+    {
+      default: String(prefill.issueTimeoutMinutes),
+      validate: (value) => (/^[1-9]\d*$/.test(value) ? undefined : "enter a positive whole number"),
+    },
+  );
+  const ciMaxTriesAnswer = await prompter.ask(
+    "  CI-gated fix loop - max agent passes before leaving a draft PR",
+    {
+      default: String(prefill.ciMaxTries),
+      validate: (value) => (/^[1-9]\d*$/.test(value) ? undefined : "enter a positive whole number"),
+    },
+  );
+  const ciTimeoutAnswer = await prompter.ask(
+    "  CI-gated fix loop - minutes each pass waits for the base branch's required checks",
+    {
+      default: String(prefill.ciTimeoutMinutes),
+      validate: (value) => (/^[1-9]\d*$/.test(value) ? undefined : "enter a positive whole number"),
+    },
+  );
+  const heuristicConflictOrdering = await prompter.confirm(
+    "  Enable Layer-2 heuristic conflict ordering (a paid LLM groups & stacks same-file issues)?",
+    prefill.heuristicConflictOrdering,
+  );
+
+  const labels = parseLabels(labelsAnswer);
+  const current =
+    prefill.defaultModel !== undefined ||
+    prefill.defaultEffort !== undefined ||
+    (prefill.labelModels !== undefined && Object.keys(prefill.labelModels).length > 0)
+      ? {
+          defaultModel: prefill.defaultModel,
+          defaultEffort: prefill.defaultEffort,
+          labelModels: prefill.labelModels,
+        }
+      : undefined;
+  const modelSelection = await stepModelSelection(
+    prompter,
+    admin,
+    repoName,
+    agent,
+    await fetchLabelCandidates(admin, repoName, labels),
+    current,
+  );
+
+  return {
+    schedule: schedule.cron,
+    scheduleNote: schedule.note,
+    scheduleTrigger,
+    labels,
+    maxIssuesPerRun: Number(maxIssuesAnswer),
+    usageBudgetPercent: usageBudgetAnswer.trim() === "" ? undefined : Number(usageBudgetAnswer),
+    runBudgetMinutes: runBudgetAnswer.trim() === "" ? undefined : Number(runBudgetAnswer),
+    issueTimeoutMinutes: Number(issueTimeoutAnswer),
+    ciMaxTries: Number(ciMaxTriesAnswer),
+    ciTimeoutMinutes: Number(ciTimeoutAnswer),
+    heuristicConflictOrdering,
+    ...modelSelection,
+  };
 }
 
 /** True when the answer is a number in 0..100 (the usage-budget percent range). */
@@ -985,11 +1068,37 @@ interface ModelSelectionAnswers {
 /** A selector-label candidate: one of the repo's labels, or "let me type them". */
 type LabelPick = { kind: "label"; name: string } | { kind: "other" };
 
+/** True when a current model selection carries at least one selector-label mapping. */
+function hasLabelModels(current: ModelSelectionAnswers | undefined): boolean {
+  return current?.labelModels !== undefined && Object.keys(current.labelModels).length > 0;
+}
+
+/**
+ * Show the current value and keep it on Yes (the default), or open the chooser
+ * on No. With no current value (init's fresh flow) the chooser opens directly,
+ * so `stepModelSelection` is byte-for-byte unchanged when `current` is undefined.
+ */
+async function keepOrChange<T>(
+  prompter: Prompter,
+  label: string,
+  current: T | undefined,
+  choose: () => Promise<T>,
+): Promise<T> {
+  if (current === undefined) return await choose();
+  return (await prompter.confirm(`  Keep ${label} = ${String(current)}?`, true))
+    ? current
+    : await choose();
+}
+
 /**
  * Captures either a per-label mapping (one model+effort per selector label) or
  * a single default, or neither (fall through to the agent CLI's own default).
  * Every list here is arrow-key driven and sourced from the agent catalog, so an
  * agent with no model/effort axis asks nothing at all.
+ *
+ * `current` is `fixowl edit`'s keep-or-change prefill: the confirms default from
+ * it and each model/effort is wrapped in `keepOrChange`. When it is undefined
+ * (init's flow) behaviour is byte-for-byte identical to the fresh wizard.
  */
 async function stepModelSelection(
   prompter: Prompter,
@@ -997,6 +1106,7 @@ async function stepModelSelection(
   name: string,
   agent: string,
   labelCandidates: readonly string[],
+  current?: ModelSelectionAnswers,
 ): Promise<ModelSelectionAnswers> {
   const catalog = agentCatalogEntry(agent);
   if (catalog === undefined) return {}; // agent has no model/effort axis; nothing to ask
@@ -1008,13 +1118,21 @@ async function stepModelSelection(
 
   const wantsLabels = await prompter.confirm(
     "\n  Map specific labels to a model + effort (heavy issues get a bigger model)?",
-    false,
+    hasLabelModels(current),
   );
   if (wantsLabels) {
     const labelModels: Record<string, { model: string; effort: string }> = {};
     for (const label of await chooseSelectorLabels(prompter, admin, name, labelCandidates)) {
-      const model = await chooseModel(prompter, catalog, `  Model for "${label}"`);
-      const effort = await chooseEffort(prompter, catalog, `  Effort for "${label}"`);
+      const currentChoice = current?.labelModels?.[label];
+      const model = await keepOrChange(prompter, `model for "${label}"`, currentChoice?.model, () =>
+        chooseModel(prompter, catalog, `  Model for "${label}"`),
+      );
+      const effort = await keepOrChange(
+        prompter,
+        `effort for "${label}"`,
+        currentChoice?.effort,
+        () => chooseEffort(prompter, catalog, `  Effort for "${label}"`),
+      );
       labelModels[label] = { model, effort };
     }
     if (Object.keys(labelModels).length > 0) answers.labelModels = labelModels;
@@ -1024,11 +1142,21 @@ async function stepModelSelection(
     wantsLabels
       ? "\n  Set a default model + effort for issues carrying none of those labels?"
       : "\n  Set a default model + effort for this repo (No = use the agent's own default)?",
-    !wantsLabels,
+    current === undefined ? !wantsLabels : current.defaultModel !== undefined,
   );
   if (setDefault) {
-    answers.defaultModel = await chooseModel(prompter, catalog, "  Default model");
-    answers.defaultEffort = await chooseEffort(prompter, catalog, "  Default effort");
+    answers.defaultModel = await keepOrChange(
+      prompter,
+      "default model",
+      current?.defaultModel,
+      () => chooseModel(prompter, catalog, "  Default model"),
+    );
+    answers.defaultEffort = await keepOrChange(
+      prompter,
+      "default effort",
+      current?.defaultEffort,
+      () => chooseEffort(prompter, catalog, "  Default effort"),
+    );
   }
 
   return answers;

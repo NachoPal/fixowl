@@ -239,6 +239,51 @@ describe("renderConfigYaml", () => {
     expect(resolveRepoSettings(config, "NachoPal/cron").scheduleTrigger).toBe("github-cron");
   });
 
+  it("is byte-identical whether default ci/heuristic answers are supplied or omitted", () => {
+    // init now collects ci_max_tries / ci_timeout_minutes / heuristic, but when
+    // the user keeps the defaults the rendered file must be exactly what the
+    // pre-change renderer produced (which had no such fields on RepoAnswers).
+    const withoutNewFields = renderConfigYaml(answers([repo()]));
+    const withDefaultAnswers = renderConfigYaml(
+      answers([repo({ ciMaxTries: 3, ciTimeoutMinutes: 60, heuristicConflictOrdering: false })]),
+    );
+    expect(withDefaultAnswers).toBe(withoutNewFields);
+    // And the defaults block still carries the built-in ci values and the
+    // discoverable (commented) heuristic example.
+    expect(withoutNewFields).toContain("ci_max_tries: 3");
+    expect(withoutNewFields).toContain("ci_timeout_minutes: 60");
+    expect(withoutNewFields).toContain("# heuristic_conflict_ordering: true");
+  });
+
+  it("renders custom ci values into defaults and per-repo ci overrides where they differ", () => {
+    const yaml = renderConfigYaml(
+      answers([
+        repo({ ciMaxTries: 5, ciTimeoutMinutes: 90 }),
+        repo({ name: "NachoPal/other", ciMaxTries: 2, ciTimeoutMinutes: 90 }),
+      ]),
+    );
+    const config = loadRendered(yaml);
+    expect(config.defaults).toMatchObject({ ci_max_tries: 5, ci_timeout_minutes: 90 });
+    // The second repo overrides only ci_max_tries (its timeout matches the base).
+    expect(config.repos[1]).toEqual({ name: "NachoPal/other", ci_max_tries: 2 });
+  });
+
+  it("renders heuristic_conflict_ordering as an active default and a per-repo override", () => {
+    const yaml = renderConfigYaml(
+      answers([
+        repo({ heuristicConflictOrdering: true }),
+        repo({ name: "NachoPal/off", heuristicConflictOrdering: false }),
+      ]),
+    );
+    const config = loadRendered(yaml);
+    expect(config.defaults?.heuristic_conflict_ordering).toBe(true);
+    expect(config.repos[1]).toEqual({ name: "NachoPal/off", heuristic_conflict_ordering: false });
+    expect(resolveRepoSettings(config, "NachoPal/storyengine").heuristicConflictOrdering).toBe(
+      true,
+    );
+    expect(resolveRepoSettings(config, "NachoPal/off").heuristicConflictOrdering).toBe(false);
+  });
+
   it("omits the fallback token unless the fallback is enabled", () => {
     expect(renderConfigYaml(answers([repo()]))).not.toContain("fallback_token");
   });
