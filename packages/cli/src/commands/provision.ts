@@ -7,6 +7,7 @@ import {
   renderFixowlWorkflow,
   resolveRepoSettings,
   runnerBaseDir,
+  workflowHasSchedule,
   STARTER_ISSUE_TEMPLATE,
   STARTER_ISSUE_TEMPLATE_PATH,
   STARTER_REPO_CONFIG,
@@ -109,9 +110,13 @@ export async function provisionCommand(
     }
     log.ok(`secrets sealed and pushed: ${[...runtimeSecretNames, ...adapter.env].join(", ")}`);
 
-    // 3. Workflow file
+    // 3. Workflow file. The `schedule_trigger` choice (or the legacy
+    // --no-schedule flag) decides whether the workflow carries an `on.schedule:`
+    // cron: `host-scheduler` mode renders a dispatch-only workflow the host
+    // launchd agent drives directly (issue #81), `github-cron`/`both` keep the cron.
+    const includeSchedule = !options.noSchedule && workflowHasSchedule(settings.scheduleTrigger);
     const workflow = renderFixowlWorkflow({
-      schedule: options.noSchedule ? null : settings.schedule,
+      schedule: includeSchedule ? settings.schedule : null,
       labels: settings.labels,
       agent: adapter.name,
       agentEnv: adapter.env,
@@ -220,7 +225,7 @@ export async function provisionCommand(
       await register({ admin: ctx.admin, ref, dir, repoFullName });
     }
 
-    if (repoData.private === false && options.noSchedule !== true) {
+    if (repoData.private === false && includeSchedule) {
       log.warn(
         "public repo: GitHub pauses scheduled workflows after 60 days without repo activity; `fixowl status` reminds you",
       );

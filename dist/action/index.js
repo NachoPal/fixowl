@@ -85699,6 +85699,7 @@ function resolveModelSelection(params) {
 
 // packages/core/src/config-schema.ts
 var cronSchema = external_exports.string().regex(/^\S+ \S+ \S+ \S+ \S+$/, "expected a 5-field cron expression");
+var scheduleTriggerSchema = external_exports.enum(["github-cron", "host-scheduler", "both"]);
 var envVarNameSchema = external_exports.string().regex(/^[A-Z][A-Z0-9_]*$/, "expected an ENV_VAR_NAME");
 var repoFullNameSchema = external_exports.string().regex(/^[\w.-]+\/[\w.-]+$/, "expected owner/repo");
 var agentSettingsSchema = external_exports.object({
@@ -85712,6 +85713,12 @@ var labelModelsSchema = external_exports.record(external_exports.string().min(1)
 var repoEntrySchema = external_exports.object({
   name: repoFullNameSchema,
   schedule: cronSchema.optional(),
+  /**
+   * Which trigger fires this repo's nightly run (see scheduleTriggerSchema).
+   * Unset resolves to `both`, which preserves the pre-choice behavior (workflow
+   * keeps its cron; a launchd agent, if installed, runs as the fallback).
+   */
+  schedule_trigger: scheduleTriggerSchema.optional(),
   labels: labelRuleSchema.optional(),
   agent: external_exports.string().optional(),
   /**
@@ -85773,6 +85780,8 @@ var globalConfigSchema = external_exports.object({
   }).optional(),
   defaults: external_exports.object({
     schedule: cronSchema.optional(),
+    /** Default scheduling trigger for every repo that does not set its own. */
+    schedule_trigger: scheduleTriggerSchema.optional(),
     labels: labelRuleSchema.optional(),
     agent: external_exports.string().optional(),
     max_issues_per_run: external_exports.number().int().positive().optional(),
@@ -85810,6 +85819,13 @@ var globalConfigSchemaChecked = globalConfigSchema.superRefine((config2, ctx) =>
 });
 var FIXOWL_DEFAULTS = {
   schedule: "37 1 * * *",
+  /**
+   * Default scheduling trigger. `both` (workflow cron + host fallback) is also
+   * the resolution fallback for an unset value, so a config written before this
+   * choice existed behaves exactly as it did. `fixowl init` recommends
+   * `host-scheduler` for self-hosted runners and writes whatever the operator picks.
+   */
+  scheduleTrigger: "both",
   labels: { any: ["overnight"] },
   agent: "claude",
   maxIssuesPerRun: 4,
@@ -85860,6 +85876,7 @@ function resolveRepoSettings(config2, repoName) {
   return {
     name: entry.name,
     schedule: entry.schedule ?? defaults2.schedule ?? FIXOWL_DEFAULTS.schedule,
+    scheduleTrigger: entry.schedule_trigger ?? defaults2.schedule_trigger ?? FIXOWL_DEFAULTS.scheduleTrigger,
     labels: entry.labels ?? defaults2.labels ?? FIXOWL_DEFAULTS.labels,
     agent,
     maxIssuesPerRun: entry.max_issues_per_run ?? defaults2.max_issues_per_run ?? FIXOWL_DEFAULTS.maxIssuesPerRun,

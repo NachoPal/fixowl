@@ -1,4 +1,4 @@
-import { FIXOWL_DEFAULTS } from "@fixowl/core";
+import { FIXOWL_DEFAULTS, type ScheduleTrigger } from "@fixowl/core";
 
 /**
  * Pure rendering for the files `fixowl init` writes. Kept free of I/O and of
@@ -11,6 +11,8 @@ export interface RepoAnswers {
   schedule: string;
   /** Human note for the cron comment, e.g. "02:37 Europe/Madrid". */
   scheduleNote?: string;
+  /** Which trigger fires the nightly run (GitHub cron, host scheduler, or both). */
+  scheduleTrigger: ScheduleTrigger;
   labels: string[];
   maxIssuesPerRun: number;
   /** Usage-budget stop % (issue #21); undefined opts the usage condition out. */
@@ -64,6 +66,22 @@ function labelRule(labels: readonly string[]): string {
 function cronLine(indent: string, repo: RepoAnswers): string {
   const note = repo.scheduleNote !== undefined ? ` - ${repo.scheduleNote}` : "";
   return `${indent}schedule: "${repo.schedule}"${" ".repeat(Math.max(1, 14 - repo.schedule.length))}# UTC${note}`;
+}
+
+/** One-line description of a scheduling trigger, for the config comment. */
+function scheduleTriggerNote(trigger: ScheduleTrigger): string {
+  switch (trigger) {
+    case "github-cron":
+      return "GitHub cron only (no host agent)";
+    case "host-scheduler":
+      return "host launchd dispatches directly on schedule (recommended for self-hosted)";
+    case "both":
+      return "GitHub cron + host launchd fallback";
+  }
+}
+
+function scheduleTriggerLine(indent: string, trigger: ScheduleTrigger): string {
+  return `${indent}schedule_trigger: ${trigger}   # ${scheduleTriggerNote(trigger)}`;
 }
 
 function sameLabels(a: readonly string[], b: readonly string[]): boolean {
@@ -135,6 +153,9 @@ function repoOverrideLines(
 ): string[] {
   const lines: string[] = [];
   if (repo.schedule !== base.schedule) lines.push(cronLine("    ", repo));
+  if (repo.scheduleTrigger !== base.scheduleTrigger) {
+    lines.push(scheduleTriggerLine("    ", repo.scheduleTrigger));
+  }
   if (!sameLabels(repo.labels, base.labels)) lines.push(`    labels: ${labelRule(repo.labels)}`);
   if (repo.maxIssuesPerRun !== base.maxIssuesPerRun) {
     lines.push(`    max_issues_per_run: ${repo.maxIssuesPerRun}`);
@@ -196,7 +217,7 @@ export function renderConfigYaml(answers: ConfigAnswers): string {
   const defaultModelBlock = defaultModelLines.length > 0 ? `\n${defaultModelLines.join("\n")}` : "";
 
   const fallbackTokenLine = answers.fallback
-    ? `\n  fallback_token: \${FIXOWL_FALLBACK_TOKEN} # fine-grained PAT, Actions: write only; the local fallback trigger dispatches with it`
+    ? `\n  fallback_token: \${FIXOWL_FALLBACK_TOKEN} # fine-grained PAT, Actions: write only; the host scheduler dispatches with it`
     : "";
 
   // The GitHub App runtime credential: ids inline, the private key stays base64
@@ -222,6 +243,7 @@ ${appBlock}${fallbackTokenLine}
 # Defaults for every repo below; each repo may override any of them.
 defaults:
 ${cronLine("  ", base)}
+${scheduleTriggerLine("  ", base.scheduleTrigger)}
   labels: ${labelRule(base.labels)}
   agent: ${answers.agent}
   # Layered run-budget (issue #21): the night stops on the first condition that

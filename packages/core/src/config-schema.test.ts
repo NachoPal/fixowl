@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   globalConfigSchema,
   globalConfigSchemaChecked,
+  hostSchedulerRole,
   repoFileConfigSchema,
   resolveRepoSettings,
   RUNTIME_TOKEN_REMOVED_MESSAGE,
   runnerBaseDir,
+  workflowHasSchedule,
 } from "./config-schema.ts";
 
 const app = {
@@ -106,6 +108,7 @@ describe("resolveRepoSettings", () => {
     expect(settings).toEqual({
       name: "NachoPal/storyengine",
       schedule: "37 1 * * *",
+      scheduleTrigger: "both",
       labels: { any: ["overnight"] },
       agent: "claude",
       maxIssuesPerRun: 4,
@@ -120,6 +123,40 @@ describe("resolveRepoSettings", () => {
       labelModels: {},
       heuristicConflictOrdering: false,
     });
+  });
+
+  it("resolves schedule_trigger: repo > defaults > built-in (both)", () => {
+    // Unset resolves to `both`, preserving pre-choice behavior.
+    const base = globalConfigSchema.parse(minimalConfig);
+    expect(resolveRepoSettings(base, "NachoPal/storyengine").scheduleTrigger).toBe("both");
+
+    // A defaults value is inherited when the repo does not override it.
+    const fromDefaults = globalConfigSchema.parse({
+      ...minimalConfig,
+      defaults: { schedule_trigger: "github-cron" },
+    });
+    expect(resolveRepoSettings(fromDefaults, "NachoPal/storyengine").scheduleTrigger).toBe(
+      "github-cron",
+    );
+
+    // A per-repo value wins over defaults.
+    const repoOverride = globalConfigSchema.parse({
+      ...minimalConfig,
+      defaults: { schedule_trigger: "github-cron" },
+      repos: [{ name: "NachoPal/storyengine", schedule_trigger: "host-scheduler" }],
+    });
+    expect(resolveRepoSettings(repoOverride, "NachoPal/storyengine").scheduleTrigger).toBe(
+      "host-scheduler",
+    );
+  });
+
+  it("rejects an unknown schedule_trigger value", () => {
+    expect(() =>
+      globalConfigSchema.parse({
+        ...minimalConfig,
+        defaults: { schedule_trigger: "cron-only" },
+      }),
+    ).toThrow();
   });
 
   it("resolves heuristic_conflict_ordering: repo > defaults > built-in (off)", () => {
@@ -226,6 +263,21 @@ describe("resolveRepoSettings", () => {
 
   it("resolves the runner dir default", () => {
     expect(runnerBaseDir(globalConfigSchema.parse(minimalConfig))).toBe("~/.fixowl/runners");
+  });
+});
+
+describe("scheduling-trigger helpers", () => {
+  it("maps each trigger to its host-scheduler role", () => {
+    expect(hostSchedulerRole("github-cron")).toBe("none");
+    expect(hostSchedulerRole("host-scheduler")).toBe("primary");
+    expect(hostSchedulerRole("both")).toBe("fallback");
+  });
+
+  it("includes on.schedule only when the workflow relies on the cron", () => {
+    expect(workflowHasSchedule("github-cron")).toBe(true);
+    expect(workflowHasSchedule("both")).toBe(true);
+    // host-scheduler is dispatch-only: no cron in the workflow.
+    expect(workflowHasSchedule("host-scheduler")).toBe(false);
   });
 });
 

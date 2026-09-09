@@ -239,6 +239,52 @@ export function decideFallbackDispatch(
   };
 }
 
+/**
+ * Decide whether the *host scheduler* (mode `host-scheduler`) should dispatch
+ * the workflow now. Unlike {@link decideFallbackDispatch}, this is the PRIMARY
+ * trigger: the workflow is dispatch-only (no `schedule:` cron), so there is no
+ * cron run to back up and "no schedule run found" must NOT be read as "the cron
+ * missed" (issue #81). It dispatches on every scheduled fire, deduping only
+ * against a scheduled-slot run - a cron `schedule` run, or a prior marker-tagged
+ * dispatch - that already covers the current occurrence, so a double launchd
+ * fire (a DST edge, a manual re-arm) does not start two paid nights.
+ *
+ * The occurrence window is anchored to `cronSchedule` exactly as the fallback
+ * path anchors it (degrading to the UTC calendar day when the schedule is absent
+ * or non-daily). Manual `workflow_dispatch` runs never carry the marker, so they
+ * neither suppress a scheduled dispatch nor count as one.
+ */
+export function decidePrimaryDispatch(
+  runs: readonly WorkflowRunLite[],
+  now: Date,
+  cronSchedule?: string,
+  marker: string = SCHEDULED_FALLBACK_MARKER,
+): FallbackDecision {
+  const cronTime = cronSchedule !== undefined ? tryParseDailyCron(cronSchedule) : undefined;
+  const window = cronTime !== undefined ? "the current occurrence" : "today (UTC)";
+  const covers = (run: WorkflowRunLite): boolean =>
+    cronTime !== undefined
+      ? new Date(run.createdAt).getTime() >= anchorOccurrence(cronTime, now).getTime()
+      : isSameUtcDay(new Date(run.createdAt), now);
+  const existing = runs.find((run) => covers(run) && isScheduledSlotRun(run, marker));
+  if (existing !== undefined) {
+    return {
+      dispatch: false,
+      reason:
+        `a scheduled-slot run already covers ${window} (run #${existing.id}, ` +
+        `${existing.event}, status ${existing.status ?? "unknown"}, created ${existing.createdAt}); ` +
+        `the host scheduler already dispatched it - standing down`,
+      existing,
+    };
+  }
+  return {
+    dispatch: true,
+    reason:
+      `host scheduler: no run covers ${window}; ` +
+      "dispatching the nightly run via workflow_dispatch",
+  };
+}
+
 export interface SlotGuardResult {
   /** Whether this run should do the night's work. */
   proceed: boolean;

@@ -106,7 +106,7 @@ function fakeOctokit(branchExists = false): FakeOctokit {
   return { octokit, fileWrites, prsCreated, secretNames, createRef };
 }
 
-function makeCtx(admin: Octokit): CliContext {
+function makeCtx(admin: Octokit, scheduleTrigger?: string): CliContext {
   return {
     config: globalConfigSchema.parse({
       version: 1,
@@ -114,7 +114,7 @@ function makeCtx(admin: Octokit): CliContext {
         admin_token: "ghp_admin",
         app: { app_id: 123456, installation_id: 7890123, private_key: APP_PRIVATE_KEY_B64 },
       },
-      repos: [{ name: "acme/widgets" }],
+      repos: [{ name: "acme/widgets", schedule_trigger: scheduleTrigger }],
     }),
     secrets: { CLAUDE_CODE_OAUTH_TOKEN: "oauth-token" },
     admin,
@@ -126,11 +126,12 @@ const WORKFLOW_PATH = ".github/workflows/fixowl.yml";
 async function runProvision(
   options: ProvisionOptions = {},
   branchExists = false,
+  scheduleTrigger?: string,
 ): Promise<FakeOctokit & { result: Awaited<ReturnType<typeof provisionCommand>> }> {
   vi.spyOn(console, "log").mockImplementation(() => {});
   vi.spyOn(console, "warn").mockImplementation(() => {});
   const fake = fakeOctokit(branchExists);
-  const result = await provisionCommand(makeCtx(fake.octokit), undefined, {
+  const result = await provisionCommand(makeCtx(fake.octokit, scheduleTrigger), undefined, {
     registerRunner: vi.fn(async () => "configured" as const),
     ...options,
   });
@@ -224,6 +225,29 @@ describe("fixowl provision", () => {
       "FIXOWL_APP_PRIVATE_KEY: ${{ secrets.FIXOWL_APP_PRIVATE_KEY }}",
     );
     expect(workflow?.content).not.toContain("FIXOWL_GITHUB_TOKEN");
+  });
+
+  it("renders a dispatch-only workflow for a host-scheduler repo (no on.schedule cron)", async () => {
+    const { fileWrites } = await runProvision({}, false, "host-scheduler");
+    const workflow = fileWrites.find((w) => w.path === WORKFLOW_PATH);
+    expect(workflow?.content).toContain("workflow_dispatch");
+    expect(workflow?.content).not.toContain("schedule:");
+    expect(workflow?.content).not.toContain("- cron:");
+  });
+
+  it("keeps the on.schedule cron for a github-cron and a both repo", async () => {
+    for (const trigger of ["github-cron", "both"]) {
+      const { fileWrites } = await runProvision({}, false, trigger);
+      const workflow = fileWrites.find((w) => w.path === WORKFLOW_PATH);
+      expect(workflow?.content, trigger).toContain("schedule:");
+      expect(workflow?.content, trigger).toContain("- cron:");
+    }
+  });
+
+  it("--no-schedule still omits the cron even for a cron-based mode", async () => {
+    const { fileWrites } = await runProvision({ noSchedule: true }, false, "both");
+    const workflow = fileWrites.find((w) => w.path === WORKFLOW_PATH);
+    expect(workflow?.content).not.toContain("- cron:");
   });
 
   it("returns the workflow PR it opened so init can spell out the merge action", async () => {

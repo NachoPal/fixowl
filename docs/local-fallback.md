@@ -1,27 +1,66 @@
-# Local fallback trigger
+# Scheduling triggers & the host scheduler
 
 GitHub Actions `schedule` is best-effort: it silently drops or delays runs -
 worst at the top of the hour, on public repos, and on the first cycle after a
 change. When the nightly cron just doesn't fire, nothing happens and nothing
-tells you.
+tells you. Since fixowl's primary target is a **self-hosted runner**, the host
+that runs the runner can also trigger the night on time itself, far more
+reliably than GitHub's cron.
 
-The **local fallback trigger** is an opt-in safety net that runs on the same
-host as the self-hosted runner. Shortly after the cron time it checks whether
-today's scheduled run actually happened and, if it didn't, dispatches the
-workflow itself. It is deliberately narrow: it backs up the cron without hiding
-whether the cron works, and it never gets in the way of manual runs.
+## Which trigger fires the night (the three modes)
 
-## How it decides (and why it can't double-spend)
+`fixowl init` asks how each repo's nightly run should be triggered, and the
+choice is recorded as `schedule_trigger` in `~/.fixowl/config.yaml` (per repo,
+or under `defaults:`), so re-provision and later edits honor it. All three modes
+still need a `schedule:` cron time in config - it is the *when*; the mode decides
+*who fires it*.
+
+| `schedule_trigger` | Workflow `on.schedule:` | Host launchd agent | Best for |
+| --- | --- | --- | --- |
+| `github-cron` | kept (cron) | **not installed** | a GitHub-*hosted* runner, or when you accept unreliable timing |
+| `host-scheduler` **(recommended)** | **omitted** (dispatch-only) | **primary**: dispatches the workflow directly on schedule | a self-hosted runner |
+| `both` | kept (cron) | **fallback**: dispatches only if the cron run is missing | belt-and-braces (cron + backup) |
+
+- **`github-cron`** relies entirely on GitHub's cron. Simple, no host token
+  needed, but the timing is unreliable - mainly worth it on a GitHub-hosted
+  runner. No host agent is installed, and `fixowl fallback install` / `check`
+  skip a `github-cron` repo (a host agent for it would dispatch unwanted nights,
+  [issue #81](https://github.com/NachoPal/fixowl/issues/81)).
+- **`host-scheduler`** (recommended for self-hosted) renders a **dispatch-only**
+  workflow (`workflow_dispatch` only, no cron) and lets the host launchd agent
+  dispatch the night **directly on schedule** - reliable local timing with no
+  dependence on GitHub's cron. This is the launchd agent's **primary-dispatch**
+  role (`decidePrimaryDispatch`): because the workflow has no cron, "no
+  `schedule` run today" must **not** be read as "the cron missed"; it dispatches
+  on schedule and only dedupes against a run already covering the occurrence.
+- **`both`** keeps the workflow cron *and* installs the host agent in its
+  **fallback** role (`decideFallbackDispatch`): the agent fires shortly after the
+  cron and dispatches only if the cron run is missing - the belt-and-braces
+  option.
+
+Modes `host-scheduler` and `both` need the host [dispatch token](#the-token-fixowl_fallback_token);
+`github-cron` needs none.
+
+## How the host agent decides (and why it can't double-spend)
 
 The design keeps a **fixed daily usage budget**: the scheduled nightly run
 executes at most once a day, whether the cron delivered it or the fallback did -
 never both - while manual runs stay unrestricted. Two pure, unit-tested pieces
 (`packages/core/src/fallback-dispatch.ts`) enforce exactly that:
 
-1. **Pre-dispatch check** (`decideFallbackDispatch`, run by the launchd agent):
-   dispatch only if there is no `event: schedule` run covering the current
-   occurrence (see [the occurrence window](#the-occurrence-window) below). A
-   manual `workflow_dispatch` never counts, so it never suppresses the fallback.
+1. **Pre-dispatch check** (run by the launchd agent). The decision depends on the
+   agent's role:
+   - **fallback** (`decideFallbackDispatch`, mode `both`): dispatch only if there
+     is no `event: schedule` run covering the current occurrence (see
+     [the occurrence window](#the-occurrence-window) below). A manual
+     `workflow_dispatch` never counts, so it never suppresses the fallback.
+   - **primary** (`decidePrimaryDispatch`, mode `host-scheduler`): the workflow is
+     dispatch-only, so there is no cron run to wait for. Dispatch on every
+     scheduled fire, deduping only against a **scheduled-slot** run - a cron run,
+     or a prior fallback-tagged dispatch - that already covers the occurrence
+     (guards against a double launchd fire or a re-arm). This is the fix for
+     [issue #81](https://github.com/NachoPal/fixowl/issues/81): a dispatch-only
+     workflow never gets an unwanted "cron missed" dispatch.
 
 2. **In-run budget guard** (`guardScheduledSlot`, run at the start of every night
    inside the action): a *scheduled-slot* run - a cron run, or a fallback-tagged
@@ -124,22 +163,28 @@ The gap defaults to **30 minutes** (configurable via `fallback.gap_minutes`).
 30 is deliberately generous: GitHub schedules also arrive *late*, and a too-tight
 gap risks firing while a late-but-pending cron run is still queued.
 
+In **`host-scheduler`** (primary) mode there is no cron to defer to, so the agent
+fires **on** the schedule (gap 0) - it *is* the trigger. The `fallback.gap_minutes`
+setting applies only to the **`both`** (fallback) role.
+
 ## Using it
 
-Opt in during `fixowl init` (it prompts for the scoped token and installs the
-agent), or set it up later:
+Pick the trigger during `fixowl init`: choosing `host-scheduler` or `both`
+prompts for the scoped token and installs the host agent. To change it later,
+edit `schedule_trigger` in `~/.fixowl/config.yaml` (or set it under `defaults:`),
+re-run `fixowl provision` so the workflow's `on.schedule:` matches, then:
 
 ```sh
-# 1. Add FIXOWL_FALLBACK_TOKEN to ~/.fixowl/secrets.env and uncomment
-#    github.fallback_token in ~/.fixowl/config.yaml.
-# 2. Make sure the workflow is up to date (the fallback needs the `source` input
-#    and the budget guard shipped with this feature):
+# 1. For host-scheduler or both: add FIXOWL_FALLBACK_TOKEN to ~/.fixowl/secrets.env
+#    and uncomment github.fallback_token in ~/.fixowl/config.yaml.
+# 2. Bring the workflow in line with the chosen mode (adds/removes the cron; the
+#    host agent needs the `source` input and the budget guard):
 fixowl provision
-# 3. Install the launchd agent(s):
+# 3. Install the host agent(s). A `github-cron` repo is skipped automatically:
 fixowl fallback install            # all repos; or: fixowl fallback install owner/repo
 
-fixowl fallback status             # installed? next fire time?
-fixowl status                      # also shows the fallback line per repo
+fixowl fallback status             # installed? primary or fallback? next fire time?
+fixowl status                      # also shows the host-scheduler line per repo
 fixowl fallback check owner/repo   # run the check-then-dispatch now (what launchd runs)
 fixowl fallback uninstall          # remove the agent(s)
 ```

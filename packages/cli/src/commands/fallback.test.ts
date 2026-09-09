@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { WorkflowRunLite } from "@fixowl/core";
+import type { ScheduleTrigger, WorkflowRunLite } from "@fixowl/core";
 import type { CliContext } from "../context.ts";
 import { fallbackCheckCommand, type FallbackCheckDeps } from "./fallback.ts";
 
-function makeCtx(): CliContext {
+function makeCtx(scheduleTrigger?: ScheduleTrigger): CliContext {
   return {
     config: {
       version: 1,
@@ -12,7 +12,7 @@ function makeCtx(): CliContext {
         app: { app_id: 1, installation_id: 2, private_key: "pem" },
         fallback_token: "f",
       },
-      repos: [{ name: "acme/widgets" }],
+      repos: [{ name: "acme/widgets", schedule_trigger: scheduleTrigger }],
     },
   } as unknown as CliContext;
 }
@@ -78,5 +78,41 @@ describe("fixowl fallback check", () => {
     await fallbackCheckCommand(makeCtx(), "acme/widgets", deps);
 
     expect(deps.dispatch).toHaveBeenCalledTimes(1);
+  });
+
+  it("never dispatches for a github-cron repo (no host trigger)", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const deps = stubDeps({ listRecentRuns: vi.fn(async () => []) });
+
+    await fallbackCheckCommand(makeCtx("github-cron"), "acme/widgets", deps);
+
+    expect(deps.listRecentRuns).not.toHaveBeenCalled();
+    expect(deps.dispatch).not.toHaveBeenCalled();
+  });
+
+  it("host-scheduler: dispatches directly even with no schedule run (dispatch-only workflow, #81)", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const deps = stubDeps({ listRecentRuns: vi.fn(async () => []) });
+
+    await fallbackCheckCommand(makeCtx("host-scheduler"), "acme/widgets", deps);
+
+    expect(deps.dispatch).toHaveBeenCalledWith({ owner: "acme", repo: "widgets" }, "main");
+  });
+
+  it("host-scheduler: stands down when its own prior tagged dispatch covers the occurrence", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const tagged: WorkflowRunLite = {
+      id: 3,
+      event: "workflow_dispatch",
+      status: "in_progress",
+      conclusion: null,
+      createdAt: "2026-09-05T05:40:00Z",
+      displayTitle: "fixowl night run [scheduled-fallback]",
+    };
+    const deps = stubDeps({ listRecentRuns: vi.fn(async () => [tagged]) });
+
+    await fallbackCheckCommand(makeCtx("host-scheduler"), "acme/widgets", deps);
+
+    expect(deps.dispatch).not.toHaveBeenCalled();
   });
 });

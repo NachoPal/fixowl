@@ -90,7 +90,8 @@ fixowl init          # guided setup, start to finish
    Manifest flow (permissions pre-filled and explained, credentials captured
    automatically; a headless variant covers SSH hosts),
 2. the coding agent and its credential,
-3. one or more repos: schedule (local `HH:MM`, converted to a UTC cron), labels,
+3. one or more repos: schedule (local `HH:MM`, converted to a UTC cron), how the
+   night is triggered (see [Scheduling trigger](#scheduling-trigger)), labels,
    and how many issues a night may take on,
 
 then runs the rest for you and stops with an explanation if a step fails:
@@ -153,6 +154,8 @@ github:
     private_key: ${FIXOWL_APP_PRIVATE_KEY}   # base64 of the downloaded App .pem; sealed into repos as an Actions secret
 defaults:
   schedule: "37 1 * * *"                  # UTC
+  schedule_trigger: host-scheduler        # host launchd dispatches on schedule (recommended for self-hosted);
+                                          #   also: github-cron (cron only) | both (cron + host fallback)
   labels: { any: [overnight] }            # any/all combinations supported
   agent: claude
   max_issues_per_run: 4                   # run budget: at most this many PRs ship
@@ -254,16 +257,31 @@ targets, and repo-specific prompt instructions. The Dockerfile contract: the
 image contains the agent CLI, git, your toolchain, and (for web verification)
 Playwright with chromium. Samples live in [templates/dockerfiles/](templates/dockerfiles/).
 
+## Scheduling trigger
+
+GitHub Actions' `schedule` cron is unreliable (it fires late and sometimes skips
+a night), and fixowl's primary target is a **self-hosted runner** - so the host
+can trigger the night itself, on time. `fixowl init` asks how each repo's night
+should be triggered (`schedule_trigger` in the config):
+
+- **`host-scheduler`** (recommended for self-hosted): the workflow is
+  dispatch-only and the host's own scheduler dispatches the night directly on
+  schedule - reliable timing, no dependence on GitHub's cron.
+- **`github-cron`**: the workflow keeps its `schedule:` cron and nothing runs on
+  the host. Simplest, but timing is unreliable - mainly worth it on a
+  GitHub-*hosted* runner.
+- **`both`**: keep the cron *and* let the host dispatch only if the cron run is
+  missing (belt-and-braces).
+
+The `host-scheduler` and `both` modes use a dedicated, least-privilege dispatch
+token and never start a duplicate run or mask whether the cron works. See
+[docs/local-fallback.md](docs/local-fallback.md).
+
 ## Runner host
 
 Any Mac or Linux box with Docker. The reference setup is a spare Intel MacBook
 Pro with Colima; the host runs nothing stack-specific, only Docker and the
 runner. See [docs/host-bootstrap.md](docs/host-bootstrap.md).
-
-GitHub's `schedule` cron is unreliable. An opt-in **local fallback trigger** on
-the runner host dispatches the night run if the cron misses - without duplicate
-runs and without masking whether the cron works. See
-[docs/local-fallback.md](docs/local-fallback.md).
 
 ## Development
 

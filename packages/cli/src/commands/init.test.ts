@@ -2,8 +2,9 @@ import { mkdtempSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Octokit } from "@octokit/rest";
-import { getAgentAdapter } from "@fixowl/core";
+import { getAgentAdapter, globalConfigSchema } from "@fixowl/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { parse as parseYaml } from "yaml";
 import { parseSecretsEnv } from "../config-load.ts";
 import type { EngineStatus } from "../docker/engine-check.ts";
 import { SELECTOR_LABEL_META } from "../github/repo-provisioning.ts";
@@ -42,6 +43,20 @@ describe("fixowl init --non-interactive", () => {
       CLAUDE_CODE_OAUTH_TOKEN: "",
     });
     expect(statSync(secretsPath).mode & 0o777).toBe(0o600);
+  });
+
+  it("scaffolds a valid config that defaults to the recommended host scheduler", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "fixowl-init-"));
+    const configPath = join(dir, "config.yaml");
+
+    await initCommand({ configPath, nonInteractive: true, checkEngine: stubEngine });
+
+    // The scaffolded YAML must parse and carry the scheduling-trigger default,
+    // resolving the App private_key ref so the schema accepts it.
+    const parsed = parseYaml(readFileSync(configPath, "utf8")) as Record<string, unknown>;
+    (parsed.github as { app: { private_key: string } }).app.private_key = "pem";
+    const config = globalConfigSchema.parse(parsed);
+    expect(config.defaults?.schedule_trigger).toBe("host-scheduler");
   });
 
   it("points App setup at the one-click manifest flow, with manual creation as a footnote", async () => {
@@ -93,7 +108,13 @@ describe("fixowl init agent picker (step 2/4)", () => {
         agent: choice.value,
         agentEnv,
         repos: [
-          { name: "owner/repo", schedule: "37 1 * * *", labels: ["fix"], maxIssuesPerRun: 3 },
+          {
+            name: "owner/repo",
+            schedule: "37 1 * * *",
+            scheduleTrigger: "both",
+            labels: ["fix"],
+            maxIssuesPerRun: 3,
+          },
         ],
         app: { appId: "123", installationId: "456" },
       });
