@@ -74,6 +74,17 @@ loop could never verify check runs on one. A config that still sets the old
   token at all**: it only installs and starts the local service. So after
   provisioning you can **revoke** the admin token, or **downgrade it to
   read-only**, and nightly operation is unaffected.
+- **The recommended no-admin-token setup is `fixowl provision --manual`.**
+  Everything the admin token does for provisioning (labels, secret names,
+  workflow PR, starter-files PR) can be done by the maintainer themselves;
+  `--manual` renders those same artifacts (via the same renderers, so they
+  never drift from what `provision` would produce) into
+  `./fixowl-manual/<repo>/` and prints copy-paste `gh` commands instead of
+  calling the GitHub API, so it never needs an admin token at all. Runner
+  registration still needs *some* Administration: write, spent either as a
+  one-time `fixowl start --register` (revoke the token immediately after) or
+  fully manually via the GitHub UI's own "New self-hosted runner" flow, which
+  needs no PAT.
 - Keeping the admin token at **Administration: read** (rather than revoking it)
   buys one thing: the local online check in `fixowl start` and `fixowl status`,
   which lists the repo's runners. That is inherently an Administration read, so

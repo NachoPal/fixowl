@@ -110,6 +110,11 @@ provisioning you can revoke it, or downgrade it to read-only if you want
 runner? Use `fixowl provision --no-register`, then `fixowl start --register` on
 the runner host.
 
+Don't want to hand fixowl an admin token at all? `fixowl provision --manual`
+renders the same workflow, `.fixowl.yml`, and issue template and prints the
+`gh label create` / `gh secret set` commands to run yourself, instead of
+calling the GitHub API. See [docs/security.md](docs/security.md).
+
 Those stay available on their own for later changes, and `fixowl init
 --non-interactive` just scaffolds `~/.fixowl/{config.yaml,secrets.env}` for you
 to fill in by hand.
