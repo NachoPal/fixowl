@@ -19,6 +19,16 @@ export function githubClient(token: string): Octokit {
 }
 
 /**
+ * An unauthenticated client for read-only calls against public repos - used by
+ * `fixowl provision --manual`, which must not require any token at all. Good
+ * for the occasional call (e.g. resolving the fixowl action's HEAD sha); it
+ * hits GitHub's much lower unauthenticated rate limit.
+ */
+export function publicClient(): Octokit {
+  return new Octokit({ log: QUIET });
+}
+
+/**
  * A GitHub App client for the CLI (used by validate/init to confirm the App
  * identity and its permissions). The same client handles both app-JWT endpoints
  * (`GET /app`, `GET /app/installations/{id}`) and installation-token endpoints;
