@@ -10,7 +10,7 @@ import {
   type ResolvedRepoSettings,
   type ScheduleTrigger,
 } from "@fixowl/core";
-import { parseDocument, parse as parseYaml, type Document } from "yaml";
+import { isScalar, parseDocument, parse as parseYaml, type Document } from "yaml";
 import { CONFIG_PATH, SECRETS_PATH, substituteSecretRefs } from "../config-load.ts";
 import { makeContext, targetRepos, type CliContext } from "../context.ts";
 import { renderSecretsEnv } from "../init/config-file.ts";
@@ -49,6 +49,11 @@ interface AgentSwitch {
  * changed are mutated, and a per-repo key is dropped when its new value equals
  * the resolved default. The produced text is re-validated before it overwrites
  * the real file.
+ *
+ * Limitation: the config schema has no per-repo opt-out when a `defaults:` value
+ * is set, so blanking an optional field (usage budget, run budget, model,
+ * effort) that has an active default makes this repo INHERIT that default rather
+ * than opt out; the write-back warns when that happens.
  */
 export async function editCommand(
   ctx: CliContext,
@@ -180,8 +185,10 @@ function toPrefill(current: ResolvedRepoSettings): RepoSettingsPrefill {
  * Apply one repo's edit to the config TEXT, surgically. Parses the text with
  * `parseDocument` (comments and untouched keys survive), applies the optional
  * agent switch and the field change-set, and returns the produced text plus
- * whether anything changed. Pure and I/O-free, so `edit` threads the text
- * through the repo loop and tests can exercise the write-back directly.
+ * whether anything changed. Operates only on the passed text (no file I/O), so
+ * `edit` threads the text through the repo loop and tests can exercise the
+ * write-back directly; the one side effect is a `log.warn` when blanking an
+ * optional field would make the repo inherit an active default (see below).
  */
 export function applyRepoEditToText(
   configText: string,
@@ -266,7 +273,17 @@ function applyRepoChanges(
   };
 
   if (answers.schedule !== current.schedule) {
-    place("schedule", answers.schedule, answers.schedule === d.schedule);
+    if (answers.schedule === d.schedule) {
+      doc.deleteIn(["repos", index, "schedule"]);
+    } else {
+      // Mutate the existing scalar in place when present so its trailing
+      // `# UTC - <note>` comment survives a schedule change; fall back to
+      // setIn when the repo had no schedule key (nothing to preserve).
+      const node = doc.getIn(["repos", index, "schedule"], true);
+      if (isScalar(node)) node.value = answers.schedule;
+      else doc.setIn(["repos", index, "schedule"], answers.schedule);
+    }
+    changed = true;
   }
   if (answers.scheduleTrigger !== current.scheduleTrigger) {
     place(
@@ -342,6 +359,10 @@ function applyRepoChanges(
  * Place an optional field: undefined (blank) or a value equal to the default
  * drops the per-repo key; any other value writes it. `label_models` has no
  * default inheritance, so it is handled inline in `applyRepoChanges`.
+ *
+ * Blanking a field that has an ACTIVE default does NOT opt the repo out - the
+ * schema has no per-repo opt-out - it makes the repo inherit the default, so
+ * that case emits a one-line warning before dropping the key.
  */
 function placeOptional(
   doc: Document,
@@ -350,6 +371,12 @@ function placeOptional(
   value: number | string | undefined,
   defaultValue: number | string | undefined,
 ): void {
+  if (value === undefined && defaultValue !== undefined) {
+    log.warn(
+      `clearing this repo's "${key}" override makes it INHERIT the default (${defaultValue}), ` +
+        "not opt out - a single repo cannot opt out of a value set in the defaults: block",
+    );
+  }
   if (value === undefined || value === defaultValue) doc.deleteIn(["repos", index, key]);
   else doc.setIn(["repos", index, key], value);
 }
