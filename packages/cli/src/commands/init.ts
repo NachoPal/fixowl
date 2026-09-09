@@ -45,7 +45,7 @@ import {
 import { log } from "../log.ts";
 import { createPrompter, maskSecret, type Prompter } from "../prompt.ts";
 import { fallbackInstallCommand } from "./fallback.ts";
-import { provisionCommand } from "./provision.ts";
+import { provisionCommand, type ProvisionResult } from "./provision.ts";
 import { startCommand } from "./start.ts";
 import { validateCommand } from "./validate.ts";
 
@@ -1044,6 +1044,63 @@ async function chooseEffort(
 // Step 4: validate, provision, and optionally start
 // ---------------------------------------------------------------------------
 
+/** The width of the ACTIONS NEEDED banner rule. */
+const ACTIONS_RULE = "═".repeat(64);
+
+export interface ActionsNeeded {
+  /** The rendered ACTIONS NEEDED block, ready to hand to `log.info`. */
+  block: string;
+  /** Whether init should pause for the user to merge before starting the runner. */
+  pause: boolean;
+}
+
+/**
+ * Turn the PRs `fixowl provision` opened into a prominent, unmissable "ACTIONS
+ * NEEDED" block for the end of init. The workflow PR(s) are REQUIRED - scheduled
+ * runs stay inert until they are merged onto the default branch - so their
+ * presence makes init pause before it offers to start the runner. Starter-files
+ * PR(s) are listed as an optional follow-up (edit the verify commands, then
+ * merge). When provisioning opened nothing to merge, the block degrades to a
+ * short "nothing to merge" note and init does not pause.
+ */
+export function renderActionsNeeded(result: ProvisionResult): ActionsNeeded {
+  const required = result.prs.filter((pr) => pr.kind === "workflow");
+  const optional = result.prs.filter((pr) => pr.kind === "starter-files");
+
+  const header = `\n${ACTIONS_RULE}\n  ⚠️  ACTIONS NEEDED\n${ACTIONS_RULE}`;
+
+  if (required.length === 0 && optional.length === 0) {
+    return {
+      block: `${header}
+  Nothing to merge - provisioning opened no pull requests (the workflow and
+  starter files are already on the default branch). You're ready to start the
+  runner.`,
+      pause: false,
+    };
+  }
+
+  const lines: string[] = [header];
+  if (required.length > 0) {
+    lines.push(`
+  Merge the following PR(s) before starting the runner - scheduled runs do NOT
+  activate until the fixowl workflow is on each repo's default branch:
+`);
+    for (const pr of required) lines.push(`    • ${pr.url}   (${pr.repo})`);
+  }
+  if (optional.length > 0) {
+    lines.push(`
+  Also proposed (optional - review and edit the verify commands, then merge
+  when you're ready):
+`);
+    for (const pr of optional) lines.push(`    • ${pr.url}   (${pr.repo})`);
+  }
+  lines.push(`\n${ACTIONS_RULE}`);
+
+  // Only a required (workflow) PR is worth blocking on; a lone starter-files PR
+  // is an edit-then-merge follow-up that need not gate the runner.
+  return { block: lines.join("\n"), pause: required.length > 0 };
+}
+
 async function validateAndProvision(
   prompter: Prompter,
   configPath: string,
@@ -1075,8 +1132,9 @@ listed above (edit that file or re-run \`fixowl init\`), then continue with:
   }
 
   log.info("\n$ fixowl provision");
+  let provisionResult: ProvisionResult;
   try {
-    await provisionCommand(ctx, undefined, {});
+    provisionResult = await provisionCommand(ctx, undefined, {});
   } catch (error) {
     log.error(describeError(error));
     log.info(`
@@ -1098,6 +1156,17 @@ Fix that and re-run:
 
   log.info("");
   log.ok("provisioned");
+
+  // Spell out the required next actions - chiefly merging the provision PR(s) -
+  // as a prominent block, and pause here so the user can merge BEFORE we offer
+  // to start the runner (a runner started against an unmerged workflow does
+  // nothing at night).
+  const actions = renderActionsNeeded(provisionResult);
+  log.info(actions.block);
+  if (actions.pause) {
+    await prompter.pause("\nOnce those PR(s) are merged, press Enter to continue ");
+  }
+
   if (await prompter.confirm("\nStart the runner service now?", true)) {
     log.info("\n$ fixowl start");
     try {
@@ -1140,10 +1209,8 @@ Fix that and re-run:
   log.info(`
 🦉 fixowl is set up.
 
-  Merge the fixowl workflow PR (branch fixowl/provision-workflow) first -
-  scheduled runs do not activate until the workflow is on the default branch.
-
-  Then file an issue, add the label you chose, and check back tomorrow.
+  Once the PR(s) above are merged, file an issue, add the label you chose, and
+  check back tomorrow.
   fixowl status              # runner, last run, open fixowl PRs
   fixowl run owner/repo      # do not wait for the cron; run a night now
   fixowl logs owner/repo     # what happened last night${

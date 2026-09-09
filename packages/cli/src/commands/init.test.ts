@@ -6,7 +6,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { parseSecretsEnv } from "../config-load.ts";
 import type { EngineStatus } from "../docker/engine-check.ts";
 import { renderConfigYaml } from "../init/config-file.ts";
-import { AGENT_CHOICES, AGENT_SECRET_HELP, initCommand } from "./init.ts";
+import { AGENT_CHOICES, AGENT_SECRET_HELP, initCommand, renderActionsNeeded } from "./init.ts";
+import type { ProvisionResult } from "./provision.ts";
 
 const stubEngine = async (): Promise<EngineStatus> => ({
   ok: true,
@@ -99,6 +100,73 @@ describe("fixowl init agent picker (step 2/4)", () => {
         expect(AGENT_SECRET_HELP[name], `missing help for ${name}`).toBeTruthy();
       }
     }
+  });
+});
+
+const workflowPr = (repo: string, url: string) => ({ repo, kind: "workflow", url }) as const;
+const starterPr = (repo: string, url: string) => ({ repo, kind: "starter-files", url }) as const;
+
+describe("fixowl init ACTIONS NEEDED block (end of init)", () => {
+  it("names the workflow PR with its full URL and pauses so it can be merged first", () => {
+    const result: ProvisionResult = {
+      prs: [workflowPr("acme/widgets", "https://github.com/acme/widgets/pull/1")],
+    };
+    const { block, pause } = renderActionsNeeded(result);
+
+    expect(block).toContain("ACTIONS NEEDED");
+    expect(block).toContain("before starting the runner");
+    expect(block).toContain("https://github.com/acme/widgets/pull/1");
+    expect(block).toContain("acme/widgets");
+    // The required workflow PR must gate the start-runner prompt.
+    expect(pause).toBe(true);
+  });
+
+  it("lists every repo's workflow PR when several repos were provisioned", () => {
+    const result: ProvisionResult = {
+      prs: [
+        workflowPr("acme/widgets", "https://github.com/acme/widgets/pull/1"),
+        workflowPr("acme/gadgets", "https://github.com/acme/gadgets/pull/7"),
+      ],
+    };
+    const { block, pause } = renderActionsNeeded(result);
+
+    expect(block).toContain("https://github.com/acme/widgets/pull/1");
+    expect(block).toContain("https://github.com/acme/gadgets/pull/7");
+    expect(pause).toBe(true);
+  });
+
+  it("separates the optional starter-files PR from the required workflow PR", () => {
+    const result: ProvisionResult = {
+      prs: [
+        workflowPr("acme/widgets", "https://github.com/acme/widgets/pull/1"),
+        starterPr("acme/widgets", "https://github.com/acme/widgets/pull/2"),
+      ],
+    };
+    const { block, pause } = renderActionsNeeded(result);
+
+    expect(block).toContain("https://github.com/acme/widgets/pull/1");
+    expect(block).toContain("https://github.com/acme/widgets/pull/2");
+    expect(block).toContain("optional");
+    expect(pause).toBe(true);
+  });
+
+  it("does not pause when only an optional starter-files PR is open", () => {
+    const result: ProvisionResult = {
+      prs: [starterPr("acme/widgets", "https://github.com/acme/widgets/pull/2")],
+    };
+    const { block, pause } = renderActionsNeeded(result);
+
+    expect(block).toContain("https://github.com/acme/widgets/pull/2");
+    expect(pause).toBe(false);
+  });
+
+  it("degrades gracefully with no empty merge list when there is nothing to merge", () => {
+    const { block, pause } = renderActionsNeeded({ prs: [] });
+
+    expect(block).toContain("ACTIONS NEEDED");
+    expect(block).toContain("Nothing to merge");
+    expect(block).not.toContain("http");
+    expect(pause).toBe(false);
   });
 });
 
