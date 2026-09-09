@@ -6,9 +6,11 @@ export {
 } from "./branch-naming.ts";
 export {
   FIXOWL_BOT_EMAIL,
+  FIXOWL_DEFAULT_GIT_IDENTITY,
   fixowlCommitTrailer,
   isFixowlBranchTip,
   type CommitTip,
+  type GitIdentity,
 } from "./branch-ownership.ts";
 export {
   issueMatchesLabelRule,

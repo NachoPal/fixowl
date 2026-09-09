@@ -145,9 +145,16 @@ convert it first with `ssh-keygen -p -m PKCS8`.
 
 ## Attribution
 
-App-authored PRs and comments come from the App's `…[bot]` identity, not a human.
-Unlike `GITHUB_TOKEN`, an installation token's PRs **do** trigger the target
-repo's own CI.
+App-authored PRs, comments, and commits come from the App's `…[bot]` identity,
+not a human. Commit authorship is resolved live at night start from the installed
+App (`resolveAppBotIdentity`, `packages/action/src/app-identity.ts`): name
+`<slug>[bot]`, email `<bot-id>+<slug>[bot]@users.noreply.github.com`, so commits
+render with the App's name and avatar. This is attribution only - `commit.gpgsign`
+stays false (unattended runs must never hang on host signing), so commits are
+authored by the App but not Verified. It is best-effort: a network/read failure
+warns and falls back to the legacy `fixowl <fixowl-bot@users.noreply.github.com>`
+identity rather than aborting the night. Unlike `GITHUB_TOKEN`, an installation
+token's PRs **do** trigger the target repo's own CI.
 
 ## Security
 

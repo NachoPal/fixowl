@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { FIXOWL_BOT_EMAIL } from "@fixowl/core";
 import { describe, expect, it } from "vitest";
 import type { Exec } from "./deps.ts";
 import { extractGitDir, GitWorkspace, hostGitDirFor, restoreGitDir } from "./git-ops.ts";
@@ -89,6 +90,59 @@ function tokenFromEnv(env: Record<string, string> | undefined): string {
     .toString("utf8")
     .replace(/^x-access-token:/, "");
 }
+
+/** A fake Exec that records the argv of every git command and always succeeds. */
+function argvRecordingExec(): { exec: Exec; argvs: string[][] } {
+  const argvs: string[][] = [];
+  const exec: Exec = {
+    async run(argv) {
+      argvs.push([...argv]);
+      return { code: 0, stdout: "", stderr: "", timedOut: false };
+    },
+  };
+  return { exec, argvs };
+}
+
+/** The value passed to `git config <key> <value>`, or undefined if unset. */
+function configValue(argvs: string[][], key: string): string | undefined {
+  const found = argvs.find((argv) => {
+    const i = argv.indexOf("config");
+    return i !== -1 && argv[i + 1] === key;
+  });
+  if (found === undefined) return undefined;
+  return found[found.indexOf("config") + 2];
+}
+
+describe("GitWorkspace configureIdentity", () => {
+  it("authors commits under the resolved App bot identity", async () => {
+    const { exec, argvs } = argvRecordingExec();
+    const identity = {
+      name: "fixowl-app[bot]",
+      email: "42+fixowl-app[bot]@users.noreply.github.com",
+    };
+    const ws = new GitWorkspace(exec, "/ws", "/gitdir", undefined, identity);
+
+    await ws.configureIdentity();
+
+    expect(configValue(argvs, "user.name")).toBe(identity.name);
+    expect(configValue(argvs, "user.email")).toBe(identity.email);
+    // Unattended runs must never hang on host signing.
+    expect(configValue(argvs, "commit.gpgsign")).toBe("false");
+    expect(configValue(argvs, "tag.gpgsign")).toBe("false");
+  });
+
+  it("falls back to the default legacy identity when none is provided", async () => {
+    const { exec, argvs } = argvRecordingExec();
+    const ws = new GitWorkspace(exec, "/ws", "/gitdir");
+
+    await ws.configureIdentity();
+
+    expect(configValue(argvs, "user.name")).toBe("fixowl");
+    expect(configValue(argvs, "user.email")).toBe(FIXOWL_BOT_EMAIL);
+    expect(configValue(argvs, "commit.gpgsign")).toBe("false");
+    expect(configValue(argvs, "tag.gpgsign")).toBe("false");
+  });
+});
 
 describe("GitWorkspace token provider", () => {
   it("consults the token provider before each git command (never captured once)", async () => {

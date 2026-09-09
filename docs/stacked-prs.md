@@ -116,8 +116,11 @@ remote branch `issue/<n>-*` only marks an issue as touched:
 
 **Ownership rule.** A PR-less `issue/<n>-*` branch is treated as fixowl's own -
 and so eligible for the reset above - only when its **tip commit** proves it:
-the author email is fixowl's bot identity (`fixowl-bot@users.noreply.github.com`,
-set by `configureIdentity`) **or** the subject starts with fixowl's commit
-trailer `fix #<n>:`. Either signal is sufficient; a branch matching neither is
-preserved. The check is pure logic in `packages/core/src/branch-ownership.ts`
-(`isFixowlBranchTip`); the tip is read by `GitWorkspace.remoteBranchTip`.
+the author email is a recognized fixowl bot identity - the currently installed
+App's resolved bot email (`<id>+<slug>[bot]@users.noreply.github.com`, set by
+`configureIdentity`) **or** the legacy `fixowl-bot@users.noreply.github.com` that
+older versions committed under (issue #69 mixed-version compat) - **or** the
+subject starts with fixowl's commit trailer `fix #<n>:`. Either signal is
+sufficient; a branch matching neither is preserved. The check is pure logic in
+`packages/core/src/branch-ownership.ts` (`isFixowlBranchTip`); the tip is read by
+`GitWorkspace.remoteBranchTip`.

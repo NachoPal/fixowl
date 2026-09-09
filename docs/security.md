@@ -188,9 +188,10 @@ loop could never verify check runs on one. A config that still sets the old
   the token is refreshed for the whole night with zero human action and no
   in-workflow re-mint step (`actions/create-github-app-token` would mint once at
   job start and auto-revoke at job end, capping the night at its 1-hour token).
-- **`fixowl[bot]` attribution.** App-authored PRs and comments come from the
-  App's bot identity, not a human. Unlike `GITHUB_TOKEN`, an installation
-  token's PRs **do** trigger the target repo's own CI.
+- **`fixowl[bot]` attribution.** App-authored PRs, comments, and commits come
+  from the App's bot identity, not a human (commit attribution detail in
+  [docs/app-auth.md](app-auth.md#attribution)). Unlike `GITHUB_TOKEN`, an
+  installation token's PRs **do** trigger the target repo's own CI.
 - **At-rest secret is the private key.** A leaked installation *token* is bounded
   - it dies within ~1 hour. The sensitive at-rest secret is the App **private
   key** (sealed as `FIXOWL_APP_PRIVATE_KEY`); treat it like the admin token. It

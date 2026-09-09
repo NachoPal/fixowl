@@ -1,6 +1,6 @@
 import { existsSync, renameSync, rmSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-import { type CommitTip, FIXOWL_BOT_EMAIL } from "@fixowl/core";
+import { type CommitTip, FIXOWL_DEFAULT_GIT_IDENTITY, type GitIdentity } from "@fixowl/core";
 import type { Exec, ExecResult } from "./deps.ts";
 
 /**
@@ -69,6 +69,13 @@ export class GitWorkspace {
      * Omitted in tests that push to a local remote needing no auth.
      */
     private readonly tokenProvider?: () => Promise<string> | string,
+    /**
+     * The commit author/committer identity, resolved at night start from the
+     * installed App's real bot account (app-identity.ts::resolveAppBotIdentity)
+     * so commits render with the App's name and avatar. Omitted in tests; falls
+     * back to the stable default identity.
+     */
+    private readonly identity: GitIdentity = FIXOWL_DEFAULT_GIT_IDENTITY,
   ) {}
 
   private async authEnv(): Promise<Record<string, string> | undefined> {
@@ -112,8 +119,8 @@ export class GitWorkspace {
   }
 
   async configureIdentity(): Promise<void> {
-    await this.git("config", "user.name", "fixowl");
-    await this.git("config", "user.email", FIXOWL_BOT_EMAIL);
+    await this.git("config", "user.name", this.identity.name);
+    await this.git("config", "user.email", this.identity.email);
     // Unattended commits must never wait on the host's signing setup
     // (a global commit.gpgsign with a hardware key would hang the night run).
     await this.git("config", "commit.gpgsign", "false");
