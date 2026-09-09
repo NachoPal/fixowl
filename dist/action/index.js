@@ -66460,11 +66460,17 @@ function issueBranchPrefix(issueNumber) {
 
 // packages/core/src/branch-ownership.ts
 var FIXOWL_BOT_EMAIL = "fixowl-bot@users.noreply.github.com";
+var FIXOWL_DEFAULT_GIT_IDENTITY = {
+  name: "fixowl",
+  email: FIXOWL_BOT_EMAIL
+};
 function fixowlCommitTrailer(issueNumber) {
   return `fix #${issueNumber}:`;
 }
-function isFixowlBranchTip(tip, issueNumber) {
-  if (tip.authorEmail.trim().toLowerCase() === FIXOWL_BOT_EMAIL) return true;
+function isFixowlBranchTip(tip, issueNumber, appBotEmail) {
+  const email3 = tip.authorEmail.trim().toLowerCase();
+  if (email3 === FIXOWL_BOT_EMAIL) return true;
+  if (appBotEmail !== void 0 && email3 === appBotEmail.trim().toLowerCase()) return true;
   return tip.subject.trimStart().startsWith(fixowlCommitTrailer(issueNumber));
 }
 
@@ -86031,6 +86037,28 @@ function guardScheduledSlot(params) {
     proceed: true,
     reason: "first scheduled-slot run today; proceeding"
   };
+}
+
+// packages/action/src/app-identity.ts
+async function resolveAppBotIdentity(octokit, log3) {
+  try {
+    const { data: app } = await octokit.apps.getAuthenticated();
+    const slug = app?.slug;
+    if (slug === void 0 || slug === null || slug === "") {
+      throw new Error("GET /app returned no app slug");
+    }
+    const login = `${slug}[bot]`;
+    const { data: user } = await octokit.users.getByUsername({ username: login });
+    if (typeof user?.id !== "number") {
+      throw new Error(`GET /users/${login} returned no numeric id`);
+    }
+    return { name: login, email: `${user.id}+${login}@users.noreply.github.com` };
+  } catch (error62) {
+    log3.warn(
+      `could not resolve the App bot commit identity; falling back to ${FIXOWL_DEFAULT_GIT_IDENTITY.name} <${FIXOWL_DEFAULT_GIT_IDENTITY.email}>: ${error62 instanceof Error ? error62.message : String(error62)}`
+    );
+    return FIXOWL_DEFAULT_GIT_IDENTITY;
+  }
 }
 
 // packages/action/src/artifact-upload.ts
@@ -125626,16 +125654,18 @@ function restoreGitDir(workspaceDir, gitDir) {
   renameSync(gitDir, inWorkspace);
 }
 var GitWorkspace = class {
-  constructor(exec, dir, gitDir, tokenProvider) {
+  constructor(exec, dir, gitDir, tokenProvider, identity = FIXOWL_DEFAULT_GIT_IDENTITY) {
     this.exec = exec;
     this.dir = dir;
     this.gitDir = gitDir;
     this.tokenProvider = tokenProvider;
+    this.identity = identity;
   }
   exec;
   dir;
   gitDir;
   tokenProvider;
+  identity;
   async authEnv() {
     if (this.tokenProvider === void 0) return void 0;
     const token = await this.tokenProvider();
@@ -125673,8 +125703,8 @@ var GitWorkspace = class {
     rmSync(planted, { recursive: true, force: true });
   }
   async configureIdentity() {
-    await this.git("config", "user.name", "fixowl");
-    await this.git("config", "user.email", FIXOWL_BOT_EMAIL);
+    await this.git("config", "user.name", this.identity.name);
+    await this.git("config", "user.email", this.identity.email);
     await this.git("config", "commit.gpgsign", "false");
     await this.git("config", "tag.gpgsign", "false");
   }
@@ -126389,7 +126419,13 @@ async function runNight(deps, inputs) {
   const standDown = await checkScheduledSlotBudget(deps, inputs);
   if (standDown !== void 0) return standDown;
   const gitDir = extractGitDir(inputs.workspaceDir);
-  const git = new GitWorkspace(deps.exec, inputs.workspaceDir, gitDir, inputs.pushTokenProvider);
+  const git = new GitWorkspace(
+    deps.exec,
+    inputs.workspaceDir,
+    gitDir,
+    inputs.pushTokenProvider,
+    inputs.gitIdentity
+  );
   try {
     return await runNightWithGit(deps, inputs, git);
   } finally {
@@ -126466,7 +126502,7 @@ async function runNightWithGit(deps, inputs, git) {
   const { attempted: skipped, orphaned } = await resolveAttemptedBranches(github, withBranch);
   for (const item of orphaned) {
     const tip = await git.remoteBranchTip(item.branch);
-    if (!isFixowlBranchTip(tip, item.issue.number)) {
+    if (!isFixowlBranchTip(tip, item.issue.number, inputs.gitIdentity?.email)) {
       const warning2 = `issue #${item.issue.number}: branch ${item.branch} exists and is not fixowl's (tip commit by ${tip.authorEmail || "unknown"}); delete it or open a PR to proceed. Skipping - fixowl will not reset a branch it did not create.`;
       warnings.push(warning2);
       log3.warn(warning2);
@@ -128335,6 +128371,7 @@ async function run() {
   }
   const octokit = makeRuntimeOctokit(cred);
   const pushTokenProvider = makePushTokenProvider(octokit);
+  const gitIdentity = await resolveAppBotIdentity(octokit, log2);
   const { data: repoData } = await octokit.repos.get({ owner, repo });
   const guardToken = process.env.GITHUB_TOKEN;
   const runsOctokit = guardToken !== void 0 && guardToken !== "" ? new Octokit2({ auth: guardToken }) : void 0;
@@ -128373,6 +128410,7 @@ async function run() {
       tempDir,
       runUrl,
       pushTokenProvider,
+      gitIdentity,
       env: process.env
     }
   );

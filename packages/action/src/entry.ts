@@ -7,6 +7,7 @@ import {
   type LabelModelMap,
   type LabelRule,
 } from "@fixowl/core";
+import { resolveAppBotIdentity } from "./app-identity.ts";
 import { GitHubArtifactUploader } from "./artifact-upload.ts";
 import { DockerEngine } from "./container-exec.ts";
 import type { Logger } from "./deps.ts";
@@ -141,6 +142,11 @@ async function run(): Promise<void> {
   // The provider shares the octokit auth strategy's refresh cycle, so git
   // pushes and API calls always use a live installation token.
   const pushTokenProvider = makePushTokenProvider(octokit);
+  // Resolve the installed App's real bot commit identity so host-side commits are
+  // authored as `<app-slug>[bot]` and render with the App's name/avatar (the same
+  // bot that already authors the PR and comments). Best-effort: a read failure
+  // falls back to the default identity and never aborts the night.
+  const gitIdentity = await resolveAppBotIdentity(octokit, log);
   const { data: repoData } = await octokit.repos.get({ owner, repo });
 
   // The scheduled-slot budget guard lists workflow runs (Actions: read). That
@@ -199,6 +205,7 @@ async function run(): Promise<void> {
       tempDir,
       runUrl,
       pushTokenProvider,
+      gitIdentity,
       env: process.env,
     },
   );

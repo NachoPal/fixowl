@@ -103,6 +103,18 @@ See [docs/releasing.md](docs/releasing.md).
   docs/app-auth.md - never reintroduce it as a second co-equal onboarding path
   (the Tier-1 lesson), and there is no API for the App avatar (manual upload of
   `assets/fixowl-app-avatar.png`, optional).
+- Commits are authored as the installed App's real bot identity (`<slug>[bot]`
+  with the `<id>+<slug>[bot]@users.noreply.github.com` no-reply email), resolved
+  at night start by `resolveAppBotIdentity` (`packages/action/src/app-identity.ts`)
+  from `apps.getAuthenticated` (app JWT, GET /app) + a public `GET /users/<slug>[bot]`
+  read - no new scope, best-effort (warn + fall back to `FIXOWL_DEFAULT_GIT_IDENTITY`,
+  never abort the night). It threads through `NightInputs.gitIdentity` into
+  `GitWorkspace::configureIdentity` alongside the token provider; `gpgsign` stays
+  false (unattended runs must not hang on host signing, so commits are attributed
+  but never Verified). `isFixowlBranchTip` (`packages/core/src/branch-ownership.ts`)
+  is App-identity-aware: it accepts the resolved App bot email AND the legacy
+  `fixowl-bot@...` (issue #69 mixed-version compat), with the `fix #<n>:` subject
+  as the safety net. Don't hardcode the per-App slug/id or drop the email signal.
 - The container name format (`fixowl-<repo>-<issue|classify>-<purpose>`) is owned by
   `packages/core/src/container-naming.ts` (`containerName`, `containerNamePrefix`,
   `parseContainerName`). The action re-exports `containerName` from `container-exec.ts`;

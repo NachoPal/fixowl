@@ -16,6 +16,7 @@ import {
   type BudgetConditionName,
   type BudgetLimits,
   type BudgetState,
+  type GitIdentity,
   type LabelModelMap,
   type LabelRule,
   type ModelSelection,
@@ -91,6 +92,14 @@ export interface NightInputs {
    * remote.
    */
   pushTokenProvider?: () => Promise<string> | string;
+  /**
+   * The commit author/committer identity for the night, resolved at start from
+   * the installed App's real bot account so commits render with the App's name
+   * and avatar (app-identity.ts::resolveAppBotIdentity). Its email is also passed
+   * to `isFixowlBranchTip` so orphan-branch ownership recognizes App-authored
+   * branches. Omitted in tests; GitWorkspace falls back to the default identity.
+   */
+  gitIdentity?: GitIdentity;
   /**
    * Whether this run is a scheduled-slot run (the cron, or a fallback-tagged
    * dispatch) - as opposed to a plain manual dispatch. Only scheduled-slot runs
@@ -168,7 +177,13 @@ export async function runNight(deps: NightDeps, inputs: NightInputs): Promise<Ni
   // night, so no container mount ever includes it and a `.git` a hostile
   // agent plants in the workspace is inert on the host (see git-ops.ts).
   const gitDir = extractGitDir(inputs.workspaceDir);
-  const git = new GitWorkspace(deps.exec, inputs.workspaceDir, gitDir, inputs.pushTokenProvider);
+  const git = new GitWorkspace(
+    deps.exec,
+    inputs.workspaceDir,
+    gitDir,
+    inputs.pushTokenProvider,
+    inputs.gitIdentity,
+  );
   try {
     return await runNightWithGit(deps, inputs, git);
   } finally {
@@ -291,7 +306,7 @@ async function runNightWithGit(
   // warn loudly rather than destroying someone else's commits.
   for (const item of orphaned) {
     const tip = await git.remoteBranchTip(item.branch);
-    if (!isFixowlBranchTip(tip, item.issue.number)) {
+    if (!isFixowlBranchTip(tip, item.issue.number, inputs.gitIdentity?.email)) {
       const warning =
         `issue #${item.issue.number}: branch ${item.branch} exists and is not fixowl's ` +
         `(tip commit by ${tip.authorEmail || "unknown"}); delete it or open a PR to proceed. ` +
