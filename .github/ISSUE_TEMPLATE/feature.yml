@@ -1,0 +1,30 @@
+name: Feature request
+description: Suggest a new capability or improvement for fixowl
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the idea. If you want to add support for a new coding agent or
+        model, please use the **New coding-agent / model adapter** template instead.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / motivation
+      description: What are you trying to do, and what makes it hard today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What you'd like fixowl to do. Sketch the shape if you can.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered (optional)
+      description: Other approaches you weighed and why you set them aside.
+    validations:
+      required: false

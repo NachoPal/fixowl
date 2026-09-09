@@ -1,0 +1,48 @@
+name: Bug report
+description: Report something in fixowl that is broken or behaves incorrectly
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Please include enough detail to reproduce it.
+        For a **security vulnerability**, do not file a public issue - follow
+        [SECURITY.md](https://github.com/NachoPal/fixowl/blob/main/SECURITY.md).
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: The current behavior, and where (command, file, workflow step).
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+      description: The behavior you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps, commands, and config needed to reproduce.
+      placeholder: |
+        1. ...
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment
+      description: fixowl version, OS, Node/pnpm version, Docker engine, agent used.
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / evidence (optional)
+      description: Relevant log output, the night summary, or a PR/run link.
+    validations:
+      required: false

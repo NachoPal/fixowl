@@ -52,8 +52,8 @@ In the morning you review. **fixowl never merges.**
 - **Agent-agnostic**: adapters for `claude` (default), `aider`, `codex`, and a
   deterministic `script` adapter used for e2e tests (test-only: it executes
   issue bodies as shell, so the action refuses it without an explicit
-  `FIXOWL_UNSAFE_SCRIPT_AGENT=1` opt-in). Adding one is a few lines in
-  `packages/core/src/agent-adapters.ts`.
+  `FIXOWL_UNSAFE_SCRIPT_AGENT=1` opt-in). Adding one is a two-file change - see
+  the guide in [docs/adding-an-agent-adapter.md](docs/adding-an-agent-adapter.md).
 - **Cloud-portable by construction**: the generated workflow has no
   `container:` key and no host assumptions; swapping `runs-on` to
   `ubuntu-latest` is the entire migration.
@@ -282,6 +282,24 @@ sandbox and fake GitHub/Docker.
 Releases are cut by a manual workflow from the version committed in the code
 (`packages/cli/package.json`, the single source of truth). See
 [docs/releasing.md](docs/releasing.md).
+
+## Contributing
+
+Contributions are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) has the setup,
+conventions, CI gates, and the hard invariants a change must not break; all
+participation is under the [Code of Conduct](CODE_OF_CONDUCT.md).
+
+**The contribution we most want: a new coding-agent or model adapter.** fixowl's
+runner is agent-agnostic, so teaching it to drive another agent, CLI harness, or
+model subscription is usually a two-file change with its own first-class,
+code-grounded guide:
+**[docs/adding-an-agent-adapter.md](docs/adding-an-agent-adapter.md).** If your
+subscription or model isn't supported yet, that's exactly the on-ramp - or open a
+[new-adapter request](https://github.com/NachoPal/fixowl/issues/new/choose).
+
+Good places to start:
+[`good first issue`](https://github.com/NachoPal/fixowl/labels/good%20first%20issue)
+and [`help wanted`](https://github.com/NachoPal/fixowl/labels/help%20wanted).
 
 ## License
 

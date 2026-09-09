@@ -1,0 +1,52 @@
+name: New coding-agent / model adapter
+description: Request or propose support for a new coding agent, CLI harness, or model
+labels: ["enhancement", "help wanted"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        fixowl is agent-agnostic and we'd love more adapters. If you plan to build
+        it yourself, the code-grounded guide is
+        [docs/adding-an-agent-adapter.md](https://github.com/NachoPal/fixowl/blob/main/docs/adding-an-agent-adapter.md).
+  - type: input
+    id: agent
+    attributes:
+      label: Agent / CLI
+      description: The coding agent or CLI you want fixowl to drive.
+      placeholder: e.g. codex, aider, cursor-agent, ...
+    validations:
+      required: true
+  - type: input
+    id: invocation
+    attributes:
+      label: Headless invocation
+      description: How the agent runs non-interactively (the command + key flags).
+      placeholder: e.g. `mycli run --prompt-file <file> --non-interactive`
+    validations:
+      required: false
+  - type: textarea
+    id: auth
+    attributes:
+      label: Authentication
+      description: >
+        What credential it needs and its shape. fixowl passes credentials as an
+        env-var allowlist into the container, so an API key or single token fits;
+        a refreshable OAuth token file does not fit yet - note which this is.
+    validations:
+      required: true
+  - type: textarea
+    id: models
+    attributes:
+      label: Models & reasoning effort
+      description: The model ids and effort levels the CLI accepts (for the catalog).
+    validations:
+      required: false
+  - type: dropdown
+    id: contributing
+    attributes:
+      label: Are you planning to implement this?
+      options:
+        - "Yes, I'd like to build it"
+        - "No, this is a request"
+    validations:
+      required: true
