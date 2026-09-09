@@ -59,7 +59,8 @@ In the morning you review. **fixowl never merges.**
   `ubuntu-latest` is the entire migration.
 - **Sandboxed and never-merging**: the agent container gets no GitHub token,
   no docker socket, dropped capabilities, and resource limits; pushes happen
-  on the host by the harness. See [docs/security.md](docs/security.md).
+  on the host by the harness. See [SECURITY.md](SECURITY.md) for the trust
+  model, or [docs/security.md](docs/security.md) for the full design.
 
 ### Ordering the night
 
