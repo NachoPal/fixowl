@@ -117,9 +117,12 @@ renders the same workflow, `.fixowl.yml`, and issue template and prints the
 `gh label create` / `gh secret set` commands to run yourself, instead of
 calling the GitHub API. See [docs/security.md](docs/security.md).
 
-Those stay available on their own for later changes, and `fixowl init
---non-interactive` just scaffolds `~/.fixowl/{config.yaml,secrets.env}` for you
-to fill in by hand.
+Those stay available on their own for later changes: to update an
+already-configured repo, `fixowl edit [repo]` re-walks the per-repo questions
+pre-filled with your current values in a keep-or-change style, writes only what
+you changed (comments in `config.yaml` are preserved), and offers to
+re-provision - no hand-editing needed. And `fixowl init --non-interactive` just
+scaffolds `~/.fixowl/{config.yaml,secrets.env}` for you to fill in by hand.
 
 **The night run authenticates as a GitHub App** (`app` in the config). Its
 installation token reads Checks, so the [CI-gated fix loop](docs/ci-fix-loop.md)
