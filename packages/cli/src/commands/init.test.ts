@@ -1,12 +1,21 @@
 import { mkdtempSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { Octokit } from "@octokit/rest";
 import { getAgentAdapter } from "@fixowl/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { parseSecretsEnv } from "../config-load.ts";
 import type { EngineStatus } from "../docker/engine-check.ts";
+import { SELECTOR_LABEL_META } from "../github/repo-provisioning.ts";
 import { renderConfigYaml } from "../init/config-file.ts";
-import { AGENT_CHOICES, AGENT_SECRET_HELP, initCommand, renderActionsNeeded } from "./init.ts";
+import type { Prompter } from "../prompt.ts";
+import {
+  AGENT_CHOICES,
+  AGENT_SECRET_HELP,
+  initCommand,
+  offerToCreateSelectorLabels,
+  renderActionsNeeded,
+} from "./init.ts";
 import type { ProvisionResult } from "./provision.ts";
 
 const stubEngine = async (): Promise<EngineStatus> => ({
@@ -213,5 +222,99 @@ describe("fixowl init container-engine report", () => {
     expect(warned).toContain("no working docker engine");
     expect(warned).toContain("fixowl start");
     expect(warned).toContain("fixowl validate");
+  });
+});
+
+interface FakeLabelOctokit {
+  octokit: Octokit;
+  created: Array<{ name: string; description: string }>;
+}
+
+/** A fake admin Octokit recording selector labels created via ensureLabels. */
+function fakeLabelOctokit(fail = false): FakeLabelOctokit {
+  const created: Array<{ name: string; description: string }> = [];
+  const notFound = Object.assign(new Error("not found"), { status: 404 });
+  const octokit = {
+    rest: {
+      issues: {
+        getLabel: vi.fn(async () => {
+          throw notFound;
+        }),
+        createLabel: vi.fn(async ({ name, description }: { name: string; description: string }) => {
+          if (fail) throw new Error("insufficient scope");
+          created.push({ name, description });
+          return { data: {} };
+        }),
+      },
+    },
+  } as unknown as Octokit;
+  return { octokit, created };
+}
+
+/** A prompter whose confirm always answers `answer`; other calls throw. */
+function confirmingPrompter(answer: boolean): { prompter: Prompter; questions: string[] } {
+  const questions: string[] = [];
+  const prompter = {
+    confirm: vi.fn(async (question: string) => {
+      questions.push(question);
+      return answer;
+    }),
+  } as unknown as Prompter;
+  return { prompter, questions };
+}
+
+describe("offerToCreateSelectorLabels", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("does nothing when every chosen label already exists", async () => {
+    const { prompter, questions } = confirmingPrompter(true);
+    const { octokit, created } = fakeLabelOctokit();
+
+    await offerToCreateSelectorLabels(prompter, octokit, "acme/widgets", ["heavy"], ["heavy"]);
+
+    expect(questions).toEqual([]);
+    expect(created).toEqual([]);
+  });
+
+  it("offers, then creates the missing labels with the selector metadata on yes", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const { prompter, questions } = confirmingPrompter(true);
+    const { octokit, created } = fakeLabelOctokit();
+
+    await offerToCreateSelectorLabels(
+      prompter,
+      octokit,
+      "acme/widgets",
+      ["heavy", "quick"],
+      ["quick"],
+    );
+
+    expect(questions[0]).toContain("heavy");
+    expect(questions[0]).not.toContain("quick");
+    expect(created).toEqual([{ name: "heavy", description: SELECTOR_LABEL_META.description }]);
+  });
+
+  it("creates nothing when the user declines", async () => {
+    const { prompter } = confirmingPrompter(false);
+    const { octokit, created } = fakeLabelOctokit();
+
+    await offerToCreateSelectorLabels(prompter, octokit, "acme/widgets", ["heavy"], []);
+
+    expect(created).toEqual([]);
+  });
+
+  it("is best-effort: a creation failure warns and does not throw", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { prompter } = confirmingPrompter(true);
+    const { octokit } = fakeLabelOctokit(true);
+
+    await expect(
+      offerToCreateSelectorLabels(prompter, octokit, "acme/widgets", ["heavy"], []),
+    ).resolves.toBeUndefined();
+
+    expect(warnSpy.mock.calls.flat().join("\n")).toContain("provision");
   });
 });

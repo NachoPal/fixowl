@@ -35,6 +35,11 @@ import { appClient, appJwtClient, githubClient } from "../github/client.ts";
 import { describeGitHubError } from "../github/errors.ts";
 import { startManifestCapture } from "../github/manifest-server.ts";
 import {
+  ensureLabels,
+  SELECTOR_LABEL_META,
+  splitRepoFullName,
+} from "../github/repo-provisioning.ts";
+import {
   parseLabels,
   parseSchedule,
   renderConfigYaml,
@@ -841,6 +846,8 @@ coding agent runs with.`);
     const labels = parseLabels(labelsAnswer);
     const modelSelection = await stepModelSelection(
       prompter,
+      admin,
+      name,
       agent,
       await fetchLabelCandidates(admin, name, labels),
     );
@@ -925,6 +932,8 @@ type LabelPick = { kind: "label"; name: string } | { kind: "other" };
  */
 async function stepModelSelection(
   prompter: Prompter,
+  admin: Octokit,
+  name: string,
   agent: string,
   labelCandidates: readonly string[],
 ): Promise<ModelSelectionAnswers> {
@@ -942,7 +951,7 @@ async function stepModelSelection(
   );
   if (wantsLabels) {
     const labelModels: Record<string, { model: string; effort: string }> = {};
-    for (const label of await chooseSelectorLabels(prompter, labelCandidates)) {
+    for (const label of await chooseSelectorLabels(prompter, admin, name, labelCandidates)) {
       const model = await chooseModel(prompter, catalog, `  Model for "${label}"`);
       const effort = await chooseEffort(prompter, catalog, `  Effort for "${label}"`);
       labelModels[label] = { model, effort };
@@ -971,6 +980,17 @@ async function stepModelSelection(
  */
 async function chooseSelectorLabels(
   prompter: Prompter,
+  admin: Octokit,
+  name: string,
+  candidates: readonly string[],
+): Promise<string[]> {
+  const chosen = await pickSelectorLabels(prompter, candidates);
+  await offerToCreateSelectorLabels(prompter, admin, name, chosen, candidates);
+  return chosen;
+}
+
+async function pickSelectorLabels(
+  prompter: Prompter,
   candidates: readonly string[],
 ): Promise<string[]> {
   if (candidates.length === 0) return await askSelectorLabelNames(prompter);
@@ -987,6 +1007,50 @@ async function chooseSelectorLabels(
   const chosen = picks.flatMap((pick) => (pick.kind === "label" ? [pick.name] : []));
   if (!picks.some((pick) => pick.kind === "other")) return chosen;
   return [...new Set([...chosen, ...(await askSelectorLabelNames(prompter))])];
+}
+
+/**
+ * Offers to create any chosen selector labels that don't exist in the repo yet,
+ * detected against the already-fetched candidate list (no extra GitHub read).
+ * On yes, creates them now with the admin token (Issues: write) via the same
+ * idempotent helper provision uses, with a selector-appropriate description.
+ *
+ * Purely an early-feedback UX win: provision (Step 4) back-fills any labels
+ * regardless, so this is best-effort - a creation failure warns and continues,
+ * never aborting init.
+ */
+export async function offerToCreateSelectorLabels(
+  prompter: Prompter,
+  admin: Octokit,
+  name: string,
+  chosen: readonly string[],
+  existing: readonly string[],
+): Promise<void> {
+  const missing = chosen.filter((label) => !existing.includes(label));
+  if (missing.length === 0) return;
+
+  const one = missing.length === 1;
+  const create = await prompter.confirm(
+    `\n  ${missing.length} selector label${one ? "" : "s"} ${one ? "doesn't" : "don't"} ` +
+      `exist yet: ${missing.join(", ")}. Create ${one ? "it" : "them"} now?`,
+    true,
+  );
+  if (!create) return;
+
+  try {
+    const created = await ensureLabels(
+      admin,
+      splitRepoFullName(name),
+      missing,
+      SELECTOR_LABEL_META,
+    );
+    log.ok(created.length > 0 ? `labels created: ${created.join(", ")}` : "labels already present");
+  } catch (error) {
+    log.warn(
+      `could not create selector labels now (${describeGitHubError(error)}); ` +
+        `they'll be created when you provision.`,
+    );
+  }
 }
 
 async function askSelectorLabelNames(prompter: Prompter): Promise<string[]> {
