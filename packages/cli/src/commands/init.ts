@@ -260,7 +260,7 @@ Mint it at ${PAT_URL}`);
 // Step 1: the admin token and the GitHub App runtime credential
 // ---------------------------------------------------------------------------
 
-async function stepTokens(
+export async function stepTokens(
   prompter: Prompter,
   secrets: Record<string, string>,
   secretsPath: string,
