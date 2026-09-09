@@ -104,6 +104,38 @@ export function secretConfirmation(raw: string, keeps: boolean): string {
   return `✓ received ${maskSecret(raw)}\n`;
 }
 
+/**
+ * The inline hint appended to every masked prompt. Secret input is captured
+ * silently (nothing is echoed), so without this the user sees a blank line and
+ * cannot tell that input was accepted or that Enter submits it (issue #107).
+ */
+export const SECRET_HINT = "(paste, then press Enter)";
+
+/** The full label printed before a masked prompt, including the keep-suffix and the Enter hint. */
+export function secretLabel(question: string, suffix: string): string {
+  return `${question}${suffix} ${SECRET_HINT}: `;
+}
+
+/** The glyph echoed once per typed/pasted secret character as live, value-free feedback. */
+export const SECRET_MASK_GLYPH = "•";
+
+/**
+ * Whether a decoded keypress is a content character to represent with a mask
+ * glyph: a single printable char, never Enter, control/meta chords, or escape
+ * sequences. Editing keys (backspace/delete) are handled separately by the
+ * reader. This only ever inspects whether a key is printable, never its value,
+ * so the secret itself is never revealed.
+ */
+export function isMaskableKeypress(
+  sequence: string | undefined,
+  key: { name?: string; ctrl?: boolean; meta?: boolean } | undefined,
+): boolean {
+  if (key?.ctrl === true || key?.meta === true) return false;
+  if (sequence === undefined || sequence.length !== 1) return false;
+  const code = sequence.charCodeAt(0);
+  return code >= 0x20 && code !== 0x7f; // printable only: excludes control chars, DEL, Enter, Tab
+}
+
 /** The recap left behind once a selector block is erased. */
 export function selectionSummary(question: string, labels: readonly string[]): string {
   return `${question}: ${labels.length === 0 ? "(none)" : labels.join(", ")}\n`;
@@ -145,16 +177,57 @@ export function createPrompter(): Prompter {
     }
   }
 
+  /**
+   * Reads one masked line. readline's own echo is muted so the raw secret never
+   * reaches the screen, scrollback, or logs; on a TTY a keypress listener echoes
+   * one mask glyph per typed/pasted character (and erases on backspace) so the
+   * user sees the paste register. The listener only ever inspects whether a key
+   * is printable via `isMaskableKeypress`, never its value.
+   */
+  async function readMaskedLine(): Promise<string> {
+    output.muted = true; // swallow readline's echo of the typed characters
+    if (!keyboardDriven()) {
+      const raw = await rl.question("");
+      output.muted = false;
+      return raw;
+    }
+    const stdin = process.stdin;
+    emitKeypressEvents(stdin);
+    let dots = 0;
+    const onKey = (
+      sequence: string | undefined,
+      key: { name?: string; ctrl?: boolean; meta?: boolean } | undefined,
+    ): void => {
+      if (key?.name === "backspace" || key?.name === "delete") {
+        if (dots > 0) {
+          dots -= 1;
+          process.stdout.write("\b \b"); // erase one mask glyph, leaving the label intact
+        }
+        return;
+      }
+      if (isMaskableKeypress(sequence, key)) {
+        dots += 1;
+        process.stdout.write(SECRET_MASK_GLYPH);
+      }
+    };
+    stdin.on("keypress", onKey);
+    try {
+      return await rl.question("");
+    } finally {
+      stdin.off("keypress", onKey);
+      output.muted = false;
+      process.stdout.write("\n"); // terminate the mask line; readline's own newline was muted
+    }
+  }
+
   async function secret(question: string, options: SecretOptions = {}): Promise<string> {
     const keeps = options.existing !== undefined && options.existing !== "";
     const suffix = keeps ? ` [keep ${maskSecret(options.existing ?? "")}]` : "";
     for (;;) {
-      // The prompt is written before muting so the label stays visible; the
-      // answer itself is never echoed (paste still works).
-      write(`${question}${suffix}: `);
-      output.muted = true;
-      const raw = (await rl.question("")).trim();
-      output.muted = false;
+      // The prompt (with an Enter hint) is written before muting so the label
+      // stays visible; the answer itself is never echoed (paste still works).
+      write(secretLabel(question, suffix));
+      const raw = (await readMaskedLine()).trim();
       write(secretConfirmation(raw, keeps) || "\n");
       if (raw === "" && keeps) return options.existing ?? "";
       const problem = raw === "" ? "please paste a value" : options.validate?.(raw);
