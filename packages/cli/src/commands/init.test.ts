@@ -14,8 +14,10 @@ import {
   AGENT_CHOICES,
   AGENT_SECRET_HELP,
   initCommand,
+  NO_ADMIN_SIGNPOST,
   offerToCreateSelectorLabels,
   renderActionsNeeded,
+  stepTokens,
 } from "./init.ts";
 import type { ProvisionResult } from "./provision.ts";
 
@@ -86,6 +88,52 @@ describe("fixowl init --non-interactive", () => {
     await initCommand({ configPath, nonInteractive: true, checkEngine: stubEngine });
 
     expect(readFileSync(configPath, "utf8")).toBe(before);
+  });
+});
+
+describe("fixowl init admin-token step (step 1/4)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("logs the no-admin signpost before pausing for the admin token", async () => {
+    // Drive the real credentials step and capture the ordered output. The
+    // no-admin signpost must be logged BEFORE the "admin token ready" pause, so
+    // deleting the ${NO_ADMIN_SIGNPOST} interpolation from stepTokens would make
+    // this fail. We abort at that pause, before stepTokens reaches any network.
+    const events: Array<{ kind: "log" | "pause"; text: string }> = [];
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      events.push({ kind: "log", text: args.join(" ") });
+    });
+
+    const stopAtPause = new Error("stop-at-admin-token-pause");
+    const prompter = {
+      pause: vi.fn(async (message: string) => {
+        events.push({ kind: "pause", text: message });
+        throw stopAtPause;
+      }),
+    } as unknown as Prompter;
+    const secretsPath = join(mkdtempSync(join(tmpdir(), "fixowl-init-")), "secrets.env");
+
+    await expect(stepTokens(prompter, {}, secretsPath)).rejects.toBe(stopAtPause);
+
+    const signpostIndex = events.findIndex(
+      (event) => event.kind === "log" && event.text.includes(NO_ADMIN_SIGNPOST),
+    );
+    const adminPauseIndex = events.findIndex(
+      (event) => event.kind === "pause" && event.text.includes("admin token ready"),
+    );
+    expect(signpostIndex).toBeGreaterThanOrEqual(0);
+    expect(adminPauseIndex).toBeGreaterThanOrEqual(0);
+    expect(signpostIndex).toBeLessThan(adminPauseIndex);
+
+    // The emitted signpost names the exact command, the doc, and stays a
+    // plain-dash short note (no em dash).
+    const signpost = events[signpostIndex]?.text ?? "";
+    expect(signpost).toContain("fixowl provision <repo> --manual");
+    expect(signpost).toContain("docs/security.md");
+    expect(signpost).toContain("no admin token needed");
+    expect(signpost).not.toContain("—");
   });
 });
 
