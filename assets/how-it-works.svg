@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 780" width="1200" height="780" role="img" aria-labelledby="t d">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 908" width="1200" height="908" role="img" aria-labelledby="t d">
   <title id="t">How fixowl works</title>
-  <desc id="d">A sequence diagram with three actors: your machine running the fixowl CLI, your repo on GitHub, and a self-hosted runner host with Docker. Setup happens once: fixowl provision pushes labels, sealed secrets and the workflow file to GitHub, and fixowl start installs and runs the self-hosted runner service. Every night the cron in the workflow dispatches a job to the runner while your machine is asleep; the fixowl action selects issues labeled overnight, enforces the repo's native blocked-by prerequisites (deferring any issue whose prerequisite isn't shipping tonight) and then groups the rest by file conflicts, runs the agent in a Docker container per issue with no GitHub token inside, and verifies the result. The runner then pushes the branch and opens exactly one pull request per issue with evidence attached. In the morning you review the pull request. fixowl never merges.</desc>
+  <desc id="d">A sequence diagram with three actors: your machine running the fixowl CLI, your repo on GitHub, and a self-hosted runner host with Docker. Setup happens once: fixowl provision pushes labels, sealed secrets and the workflow file to GitHub, and fixowl start installs and runs the self-hosted runner service. Every night the cron in the workflow dispatches a job to the runner while your machine is asleep; the fixowl action selects issues labeled overnight and orders them by the repo's native blocked-by prerequisites, deferring any issue whose prerequisite isn't shipping tonight. Issues are otherwise independent by default; grouping the rest by file conflicts is an optional, off-by-default step. For each issue the action runs the agent in a Docker container with no GitHub token inside, runs a cheap local .fixowl.yml pre-check, then pushes the branch and opens the pull request as a draft. A bounded CI-gated fix loop then waits for the base branch's required checks: when they pass the draft flips to ready for review; when they fail or time out the failures are fed back to the agent and it retries, up to ci_max_tries, leaving an annotated draft if the budget is exhausted. In the morning you review the pull request. fixowl never merges.</desc>
 
   <style>
     .bg    { fill: #0a0f1e; }
@@ -20,9 +20,14 @@
     .step  { font: 400 15px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #dbe4f0; }
     .num   { font: 700 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #0a0f1e; }
     .green { font: 600 13.5px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #4ade80; }
+    .amber { font: 600 13.5px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #fbbf24; }
+    .optband { fill: #0e1830; stroke: #3f6ea5; stroke-width: 1.3; stroke-dasharray: 6 4; }
+    .optt  { font: 700 11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #93c5fd; letter-spacing: 0.8px; }
+    .optl  { font: 400 13px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #8aa0c2; }
     .ap    { stroke: #a78bfa; stroke-width: 2.5; fill: none; marker-end: url(#ap); }
     .ag    { stroke: #4ade80; stroke-width: 2.5; fill: none; marker-end: url(#ag); }
     .ac    { stroke: #b9c6da; stroke-width: 2.5; fill: none; marker-end: url(#ac); }
+    .loop  { stroke: #f59e0b; stroke-width: 2; fill: none; stroke-dasharray: 5 4; marker-end: url(#aa); }
   </style>
 
   <defs>
@@ -35,19 +40,22 @@
     <marker id="ac" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
       <path d="M0,0 L10,4 L0,8 z" fill="#b9c6da"/>
     </marker>
+    <marker id="aa" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+      <path d="M0,0 L10,4 L0,8 z" fill="#f59e0b"/>
+    </marker>
   </defs>
 
-  <rect class="bg" x="0" y="0" width="1200" height="780" rx="18"/>
+  <rect class="bg" x="0" y="0" width="1200" height="908" rx="18"/>
 
   <!-- phase bands (drawn first: lifelines and content sit on top) -->
   <rect class="band" x="20" y="124" width="1160" height="146" rx="12"/>
-  <rect class="band" x="20" y="286" width="1160" height="362" rx="12"/>
-  <rect class="band" x="20" y="664" width="1160" height="96" rx="12"/>
+  <rect class="band" x="20" y="286" width="1160" height="490" rx="12"/>
+  <rect class="band" x="20" y="792" width="1160" height="96" rx="12"/>
 
   <!-- lifelines -->
-  <line class="life" x1="170" y1="104" x2="170" y2="744"/>
-  <line class="life" x1="590" y1="104" x2="590" y2="744"/>
-  <line class="life" x1="985" y1="104" x2="985" y2="744"/>
+  <line class="life" x1="170" y1="104" x2="170" y2="872"/>
+  <line class="life" x1="590" y1="104" x2="590" y2="872"/>
+  <line class="life" x1="985" y1="104" x2="985" y2="872"/>
 
   <!-- actors -->
   <rect class="card" x="30" y="28" width="280" height="76" rx="12"/>
@@ -82,16 +90,16 @@
   <line class="ap" x1="596" y1="356" x2="979" y2="356"/>
 
   <!-- your machine is out of the loop at night -->
-  <text class="idle" x="170" y="452" text-anchor="middle">your machine is asleep;</text>
-  <text class="idle" x="170" y="472" text-anchor="middle">nothing runs here</text>
+  <text class="idle" x="170" y="556" text-anchor="middle">your machine is asleep;</text>
+  <text class="idle" x="170" y="576" text-anchor="middle">nothing runs here</text>
 
   <!-- where the schedule lives -->
-  <rect class="note" x="452" y="430" width="276" height="62" rx="10"/>
-  <text class="mono2" x="590" y="456" text-anchor="middle">.github/workflows/fixowl.yml</text>
-  <text class="mono2" x="590" y="478" text-anchor="middle">cron: 37 1 * * *</text>
+  <rect class="note" x="452" y="522" width="276" height="62" rx="10"/>
+  <text class="mono2" x="590" y="548" text-anchor="middle">.github/workflows/fixowl.yml</text>
+  <text class="mono2" x="590" y="570" text-anchor="middle">cron: 37 1 * * *</text>
 
   <!-- the action pipeline, on the runner lane -->
-  <rect class="pipe" x="795" y="376" width="380" height="194" rx="12"/>
+  <rect class="pipe" x="795" y="376" width="380" height="222" rx="12"/>
   <text class="ttl" x="815" y="404">the fixowl action</text>
 
   <circle cx="822" cy="427" r="10" fill="#a78bfa"/>
@@ -100,30 +108,43 @@
 
   <circle cx="822" cy="455" r="10" fill="#a78bfa"/>
   <text class="num"  x="822" y="459" text-anchor="middle">2</text>
-  <text class="step" x="845" y="461">enforce blocked-by prerequisites</text>
+  <text class="step" x="845" y="461">order by native blocked-by edges</text>
 
-  <circle cx="822" cy="483" r="10" fill="#a78bfa"/>
-  <text class="num"  x="822" y="487" text-anchor="middle">3</text>
-  <text class="step" x="845" y="489">defer unmet; group rest by conflicts</text>
+  <!-- Layer 2 same-file grouping is opt-in and off by default -->
+  <rect class="optband" x="843" y="471" width="316" height="42" rx="8"/>
+  <text class="optt" x="1001" y="488" text-anchor="middle">OPTIONAL · OFF BY DEFAULT</text>
+  <text class="optl" x="1001" y="505" text-anchor="middle">then group the rest by file conflicts</text>
 
-  <circle cx="822" cy="511" r="10" fill="#a78bfa"/>
-  <text class="num"  x="822" y="515" text-anchor="middle">4</text>
-  <text class="step" x="845" y="517">run the agent in a Docker container</text>
+  <circle cx="822" cy="533" r="10" fill="#a78bfa"/>
+  <text class="num"  x="822" y="537" text-anchor="middle">3</text>
+  <text class="step" x="845" y="539">run the agent in a Docker container</text>
 
-  <circle cx="822" cy="539" r="10" fill="#a78bfa"/>
-  <text class="num"  x="822" y="543" text-anchor="middle">5</text>
-  <text class="step" x="845" y="545">verify: tests · Playwright screenshots</text>
+  <circle cx="822" cy="561" r="10" fill="#a78bfa"/>
+  <text class="num"  x="822" y="565" text-anchor="middle">4</text>
+  <text class="step" x="845" y="567">cheap local pre-check (.fixowl.yml)</text>
 
-  <text class="green" x="815" y="563">no GitHub token inside the container</text>
+  <text class="green" x="815" y="590">no GitHub token inside the container</text>
 
-  <text class="mono" x="787" y="598" text-anchor="middle">git push issue/&lt;n&gt;-&lt;slug&gt;</text>
-  <text class="l2"   x="787" y="617" text-anchor="middle">opens exactly one pull request per issue + evidence</text>
-  <line class="ag" x1="979" y1="630" x2="596" y2="630"/>
+  <!-- push and open the PR as a draft -->
+  <text class="mono" x="787" y="626" text-anchor="middle">git push issue/&lt;n&gt;-&lt;slug&gt;</text>
+  <text class="l2"   x="787" y="645" text-anchor="middle">opens exactly one pull request per issue, as a draft</text>
+  <line class="ag" x1="979" y1="656" x2="596" y2="656"/>
+
+  <!-- the CI-gated fix loop -->
+  <rect class="pipe" x="360" y="668" width="815" height="100" rx="12"/>
+  <text class="l1"    x="380" y="694">CI-gated fix loop</text>
+  <text class="green" x="512" y="694">· fixowl never merges</text>
+  <text class="green" x="380" y="718">✓ required checks pass → the draft flips to ready for review</text>
+  <text class="amber" x="380" y="740">✗ checks fail or time out → failures fed back, the agent retries (≤ ci_max_tries)</text>
+  <text class="l2"    x="380" y="760">budget exhausted → an annotated draft is left for you to review</text>
+
+  <!-- retry arc: the loop feeds back to the agent -->
+  <path class="loop" d="M1168,720 C 1193,660 1193,555 1177,536"/>
 
   <!-- band 3: morning -->
-  <text class="bandt" x="40" y="690">IN THE MORNING</text>
+  <text class="bandt" x="40" y="818">IN THE MORNING</text>
 
-  <text class="l1"    x="380" y="714" text-anchor="middle">you review the pull request</text>
-  <text class="green" x="380" y="733" text-anchor="middle">fixowl never merges</text>
-  <line class="ac" x1="584" y1="744" x2="176" y2="744"/>
+  <text class="l1"    x="380" y="842" text-anchor="middle">you review the pull request</text>
+  <text class="green" x="380" y="861" text-anchor="middle">fixowl never merges</text>
+  <line class="ac" x1="584" y1="872" x2="176" y2="872"/>
 </svg>
