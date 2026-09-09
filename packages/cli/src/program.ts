@@ -49,10 +49,6 @@ export function createProgram(): Command {
     .description(
       "create labels, seal secrets, propose the workflow via PR, and register the runner on this host",
     )
-    .option(
-      "--pr",
-      "deprecated no-op: the workflow is always proposed via PR now (will be removed next release)",
-    )
     .option("--no-schedule", "generate the workflow with workflow_dispatch only (no cron)")
     .option(
       "--no-register",
