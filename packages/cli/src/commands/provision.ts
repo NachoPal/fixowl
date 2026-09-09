@@ -23,6 +23,7 @@ import {
   openPullRequest,
   putRepoSecret,
   resolveActionRef,
+  SELECTOR_LABEL_META,
   splitRepoFullName,
   upsertFile,
 } from "../github/repo-provisioning.ts";
@@ -83,12 +84,14 @@ export async function provisionCommand(
     const { data: repoData } = await ctx.admin.rest.repos.get({ ...ref });
     const defaultBranch = repoData.default_branch;
 
-    // 1. Labels: issue-pickup labels plus the model-selector labels.
+    // 1. Labels: issue-pickup labels plus the model-selector labels. Selector
+    // labels get their own description/color - they choose a model + effort,
+    // they do not cause pickup.
     const selectorLabels = Object.keys(settings.labelModels);
-    const created = await ensureLabels(ctx.admin, ref, [
-      ...labelsInRule(settings.labels),
-      ...selectorLabels,
-    ]);
+    const created = [
+      ...(await ensureLabels(ctx.admin, ref, labelsInRule(settings.labels))),
+      ...(await ensureLabels(ctx.admin, ref, selectorLabels, SELECTOR_LABEL_META)),
+    ];
     log.ok(created.length > 0 ? `labels created: ${created.join(", ")}` : "labels already present");
 
     // 2. Secrets: the GitHub App runtime-credential trio plus every agent env

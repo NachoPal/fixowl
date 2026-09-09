@@ -15,11 +15,41 @@ export function splitRepoFullName(fullName: string): RepoRef {
 }
 
 export const FIXOWL_LABEL_COLOR = "5319e7";
+/** A distinct blue for selector labels, so they read differently from pickup labels. */
+export const FIXOWL_SELECTOR_LABEL_COLOR = "1d76db";
 
+/** Metadata a pickup label carries when fixowl creates it. */
+export const PICKUP_LABEL_META: LabelMeta = {
+  color: FIXOWL_LABEL_COLOR,
+  description: "fixowl picks this issue up on the next scheduled run",
+};
+
+/**
+ * Metadata a model/effort selector label carries. A selector label does not
+ * cause pickup; it only chooses the model + reasoning effort once an issue is
+ * already selected, so it gets its own description and color.
+ */
+export const SELECTOR_LABEL_META: LabelMeta = {
+  color: FIXOWL_SELECTOR_LABEL_COLOR,
+  description: "fixowl runs this issue with a specific model + reasoning effort",
+};
+
+/** The color + description fixowl stamps on a label it creates. */
+export interface LabelMeta {
+  color: string;
+  description: string;
+}
+
+/**
+ * Idempotently ensures every named label exists, creating any that are missing
+ * with the given metadata (defaults to the pickup-label look). Returns the
+ * names it actually created.
+ */
 export async function ensureLabels(
   octokit: Octokit,
   ref: RepoRef,
   labels: readonly string[],
+  meta: LabelMeta = PICKUP_LABEL_META,
 ): Promise<string[]> {
   const created: string[] = [];
   for (const name of labels) {
@@ -30,8 +60,8 @@ export async function ensureLabels(
       await octokit.rest.issues.createLabel({
         ...ref,
         name,
-        color: FIXOWL_LABEL_COLOR,
-        description: "fixowl picks this issue up on the next scheduled run",
+        color: meta.color,
+        description: meta.description,
       });
       created.push(name);
     }
