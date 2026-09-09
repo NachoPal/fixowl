@@ -1,5 +1,9 @@
 # Security model
 
+See [SECURITY.md](../SECURITY.md) for the user-facing trust model (the policy
+GitHub surfaces in this repo's Security tab) and how to report a
+vulnerability. This document is the full design rationale behind it.
+
 fixowl runs an LLM coding agent unattended against issues that, on a public
 repo, anyone can write. The design assumes prompt injection will eventually
 land and makes the write-path blast radius a reviewable diff. What an
