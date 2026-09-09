@@ -32,9 +32,10 @@ minted after the first expires.
 ## Setup: the one-click manifest flow
 
 `fixowl init` uses GitHub's [App Manifest flow](https://docs.github.com/en/apps/sharing-github-apps/registering-a-github-app-from-a-manifest):
-it pre-fills the whole App - name, permissions, webhook off - and opens your
-browser to GitHub's confirmation page. **Nothing is created until you review
-that page and click "Create GitHub App"** (the name is editable there). GitHub
+it pre-fills the whole App - name, a one-line description, permissions, webhook
+off - and opens your browser to GitHub's confirmation page. **Nothing is created
+until you review that page and click "Create GitHub App"** (the name and
+description are editable there). GitHub
 then hands the App ID, slug, and private key straight back to the CLI, which
 saves them automatically: the key base64-encoded into `secrets.env`, the App ID
 into the config. No permission-ticking, no key download, no base64 by hand.
@@ -85,14 +86,22 @@ After the App step:
    to PKCS#8, see below) and renders a workflow whose fixowl step env carries the
    trio.
 
-### Optional: the fixowl avatar
+### Optional: give the App the fixowl owl logo
 
-New Apps get a GitHub-generated identicon. There is **no manifest field and no
-API** to set an App's logo ([confirmed limitation](https://github.community/t/app-manifest-flow-no-way-to-define-logo/14877));
-it is a one-time manual upload if you want it: your App's settings page >
-Display information > upload
-[`assets/fixowl-app-avatar.png`](../assets/fixowl-app-avatar.png). Purely
-cosmetic - skip it freely.
+Purely cosmetic, and safe to skip - but if you want the owl branding, it takes
+one manual upload. New Apps get a GitHub-generated identicon; there is **no
+manifest field and no API** to set an App's logo ([confirmed limitation](https://github.community/t/app-manifest-flow-no-way-to-define-logo/14877)),
+so the wizard cannot do it for you and it is the one branding step you do by
+hand:
+
+1. Open your App's settings page: `https://github.com/settings/apps/<slug>`
+   (the wizard prints this link, or find the App under **Settings ->
+   Developer settings -> GitHub Apps**).
+2. Under **Display information**, upload
+   [`assets/fixowl-app-avatar.png`](../assets/fixowl-app-avatar.png).
+
+That is it - the change is visual only and affects nothing about how fixowl
+runs.
 
 ### Config shape
 

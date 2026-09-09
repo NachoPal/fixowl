@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  APP_MANIFEST_DESCRIPTION,
   APP_MANIFEST_PERMISSIONS,
   APP_PERMISSION_RATIONALE,
   appInstallUrl,
@@ -41,6 +42,14 @@ describe("buildAppManifest", () => {
     expect(manifest.name).toBe("fixowl-octocat");
     expect(manifest.url).toBe("https://github.com/NachoPal/fixowl");
     expect(manifest.redirect_url).toBe("http://127.0.0.1:8123/callback");
+  });
+
+  it("carries a concise, accurate description for GitHub's create page", () => {
+    expect(manifest.description).toBe(APP_MANIFEST_DESCRIPTION);
+    // Short enough to read cleanly on the confirmation page, and states the
+    // one invariant that matters (never merges) without overclaiming.
+    expect(APP_MANIFEST_DESCRIPTION.length).toBeLessThanOrEqual(120);
+    expect(APP_MANIFEST_DESCRIPTION).toMatch(/never merges/);
   });
 });
 
