@@ -65,11 +65,26 @@ fixowl init
 ```
 
 `fixowl provision` spends the admin token (including its Administration: write,
-for runner registration). After it succeeds the admin token is no longer needed
-for routine operation - **revoke it, or downgrade it to read-only** if you want
-`fixowl status` to confirm the runner is online. If you provision from a
-different machine than the one that runs the runner, run `fixowl provision
---no-register` there and `fixowl start --register` on the runner host.
+for runner registration). The **automated night run never uses the admin
+token** - it runs purely as the GitHub App. Only `Administration: write` is
+genuinely one-time: it is spent for runner registration and nothing needs it
+again after, so once the runner is registered you can **drop it** - revoke the
+token, or downgrade it to `Administration: read` if you want `fixowl status` to
+confirm the runner is online.
+
+The admin PAT's **other write scopes**, though, are needed for every
+CLI-driven config change, not just first setup: editing config means re-running
+`fixowl provision`, which regenerates the workflow and opens/refreshes a PR
+(Contents/Workflows/Pull requests: write, plus Secrets/Issues: write when those
+change). So keep the admin PAT (you may strip only Administration: write after
+registration) if you plan to keep managing config through the CLI; revoke it
+entirely only once you are done with CLI config edits - after that, config
+changes go through the manual route below. See [docs/security.md](security.md)
+for the full breakdown.
+
+If you provision from a different machine than the one that runs the runner,
+run `fixowl provision --no-register` there and `fixowl start --register` on the
+runner host.
 
 `fixowl start` writes each runner's `.env` with `DOCKER_HOST` pointing at the
 Colima socket and a PATH that covers Homebrew on Intel (`/usr/local/bin`) and

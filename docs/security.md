@@ -70,14 +70,37 @@ GitHub exposes no grantable "Checks" permission to PATs, so the CI-gated fix
 loop could never verify check runs on one. A config that still sets the old
 `runtime_token` key is rejected at load with a migration message.
 
-- **The admin token is setup-only.** It is spent by `fixowl provision` (labels,
-  secrets, workflow) and by runner registration - registration is the only
-  step needing **Administration: write**, and it now happens during provision
-  (`fixowl start --register` covers registering on a host you did not provision
-  on). Once the runner is registered, routine `fixowl start` uses **no admin
-  token at all**: it only installs and starts the local service. So after
-  provisioning you can **revoke** the admin token, or **downgrade it to
-  read-only**, and nightly operation is unaffected.
+- **The admin token is not spent by the automated night run.** Every scheduled
+  run pushes and calls the API purely as the GitHub App; it never touches the
+  admin token. But "setup-only" needs one qualification if you manage config
+  through the CLI - the admin PAT's scopes split into two very different
+  lifetimes:
+  - **`Administration: write` is the only truly one-time scope.** It is needed
+    *only* for **runner registration** (`registerRunner`,
+    `packages/cli/src/runner/register.ts`), spent by `fixowl provision` on the
+    host you provision on, or by the explicit `fixowl start --register` on
+    another host. The default `fixowl start` never registers and needs no admin
+    token. Once the runner is registered, nothing ever needs Administration:
+    write again, so you can safely **drop it**: revoke the token, or
+    **downgrade it to `Administration: read`** (which keeps the
+    `fixowl status` / `fixowl start` online-runner check working, see below).
+  - **The admin PAT's other write scopes are needed for every CLI
+    re-provision, not just first setup.** Editing config through the CLI means
+    re-running `fixowl provision`, which regenerates the workflow from
+    `~/.fixowl/config.yaml` and **opens or refreshes a PR** carrying it
+    (`packages/cli/src/commands/provision.ts`: renders the workflow, upserts it
+    to the `fixowl/provision-workflow` branch, opens the PR), and re-runs
+    `ensureLabels` / `putRepoSecret` when labels or secrets changed. So a
+    CLI-driven config change needs **Contents: write + Workflows: write** (to
+    write `.github/workflows/*.yml`) + **Pull requests: write** (the refresh
+    PR), plus **Secrets/Issues: write** when those change - all still on the
+    admin PAT, none of it Administration: write.
+  - Net: **keep the admin PAT** (you may strip only `Administration: write`
+    after registration) if you want to keep managing config through the CLI;
+    **revoke it entirely** only once you are done with CLI-driven config
+    changes - after that, config edits go through the manual route
+    (`fixowl provision --manual`, below). Either way the automated night run is
+    unaffected.
 - **The recommended no-admin-token setup is `fixowl provision --manual`.**
   Everything the admin token does for provisioning (labels, secret names,
   workflow PR, starter-files PR) can be done by the maintainer themselves;
