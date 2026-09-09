@@ -42,11 +42,32 @@ export interface ProvisionOptions {
   registerRunner?: (params: RegisterRunnerParams) => Promise<"configured" | "already">;
 }
 
+/**
+ * A pull request provisioning opened (or found already open) that the operator
+ * still has to act on. `workflow` is REQUIRED - scheduled runs stay inert until
+ * it is merged onto the default branch, so `fixowl init` blocks on it before it
+ * offers to start the runner. `starter-files` is optional (the operator edits
+ * the verify commands, then merges when ready).
+ */
+export interface ProvisionedPr {
+  /** owner/repo the PR belongs to. */
+  repo: string;
+  kind: "workflow" | "starter-files";
+  /** Full https://github.com/... URL. */
+  url: string;
+}
+
+/** What `provisionCommand` opened that the operator must still merge. */
+export interface ProvisionResult {
+  prs: ProvisionedPr[];
+}
+
 export async function provisionCommand(
   ctx: CliContext,
   repoArg: string | undefined,
   options: ProvisionOptions,
-): Promise<void> {
+): Promise<ProvisionResult> {
+  const prs: ProvisionedPr[] = [];
   const actionRef = await resolveActionRef(ctx.admin, ACTION_REPO);
   for (const repoFullName of targetRepos(ctx.config, repoArg)) {
     log.info(`\nprovisioning ${repoFullName}`);
@@ -121,6 +142,10 @@ export async function provisionCommand(
     });
     if (result.action === "unchanged") {
       log.ok("workflow already up to date on the provision branch");
+      // The branch may still carry an open, unmerged PR from a prior run; if so,
+      // surface it as a required action rather than dropping it.
+      const url = await findOpenPrUrl(ctx, ref, workflowBranch);
+      if (url !== undefined) prs.push({ repo: repoFullName, kind: "workflow", url });
     } else {
       const url = await openPrIfMissing(ctx, ref, {
         head: workflowBranch,
@@ -134,6 +159,7 @@ export async function provisionCommand(
       log.warn(
         "merge the workflow PR to activate scheduled runs (the runner ignores it until then)",
       );
+      prs.push({ repo: repoFullName, kind: "workflow", url });
     }
 
     // 4. Starter repo files, proposed via PR so maintainers stay in the loop
@@ -150,6 +176,8 @@ export async function provisionCommand(
       const branch = "fixowl/provision-files";
       if (await branchExists(ctx.admin, ref, branch)) {
         log.warn(`branch ${branch} already exists; review or delete its PR first`);
+        const url = await findOpenPrUrl(ctx, ref, branch);
+        if (url !== undefined) prs.push({ repo: repoFullName, kind: "starter-files", url });
       } else {
         await createBranch(ctx.admin, ref, branch, defaultBranch);
         for (const file of missing) {
@@ -169,6 +197,7 @@ export async function provisionCommand(
             "Edit the verify commands for this repo before merging.",
         });
         log.ok(`starter files proposed: ${url} (${missing.map((f) => f.path).join(", ")})`);
+        prs.push({ repo: repoFullName, kind: "starter-files", url });
       }
     }
 
@@ -194,6 +223,7 @@ export async function provisionCommand(
       );
     }
   }
+  return { prs };
 }
 
 /**
@@ -222,12 +252,21 @@ async function openPrIfMissing(
   ref: { owner: string; repo: string },
   params: { head: string; base: string; title: string; body: string },
 ): Promise<string> {
-  const { data: existing } = await ctx.admin.rest.pulls.list({
+  const existing = await findOpenPrUrl(ctx, ref, params.head);
+  if (existing !== undefined) return existing;
+  return await openPullRequest(ctx.admin, ref, params);
+}
+
+/** The URL of the open PR whose head is `head`, or undefined when none is open. */
+async function findOpenPrUrl(
+  ctx: CliContext,
+  ref: { owner: string; repo: string },
+  head: string,
+): Promise<string | undefined> {
+  const { data } = await ctx.admin.rest.pulls.list({
     ...ref,
     state: "open",
-    head: `${ref.owner}:${params.head}`,
+    head: `${ref.owner}:${head}`,
   });
-  const first = existing[0];
-  if (first !== undefined) return first.html_url;
-  return await openPullRequest(ctx.admin, ref, params);
+  return data[0]?.html_url;
 }

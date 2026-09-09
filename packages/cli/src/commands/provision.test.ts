@@ -126,15 +126,15 @@ const WORKFLOW_PATH = ".github/workflows/fixowl.yml";
 async function runProvision(
   options: ProvisionOptions = {},
   branchExists = false,
-): Promise<FakeOctokit> {
+): Promise<FakeOctokit & { result: Awaited<ReturnType<typeof provisionCommand>> }> {
   vi.spyOn(console, "log").mockImplementation(() => {});
   vi.spyOn(console, "warn").mockImplementation(() => {});
   const fake = fakeOctokit(branchExists);
-  await provisionCommand(makeCtx(fake.octokit), undefined, {
+  const result = await provisionCommand(makeCtx(fake.octokit), undefined, {
     registerRunner: vi.fn(async () => "configured" as const),
     ...options,
   });
-  return fake;
+  return { ...fake, result };
 }
 
 describe("fixowl provision", () => {
@@ -224,6 +224,18 @@ describe("fixowl provision", () => {
       "FIXOWL_APP_PRIVATE_KEY: ${{ secrets.FIXOWL_APP_PRIVATE_KEY }}",
     );
     expect(workflow?.content).not.toContain("FIXOWL_GITHUB_TOKEN");
+  });
+
+  it("returns the workflow PR it opened so init can spell out the merge action", async () => {
+    const { result } = await runProvision();
+
+    expect(result.prs).toContainEqual({
+      repo: "acme/widgets",
+      kind: "workflow",
+      url: "https://github.com/pr/1",
+    });
+    // Every returned PR carries a full https URL init can print verbatim.
+    for (const pr of result.prs) expect(pr.url).toMatch(/^https:\/\//);
   });
 
   it("skips registration with --no-register (for provisioning off the runner host)", async () => {
