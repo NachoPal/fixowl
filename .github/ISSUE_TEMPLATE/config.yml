@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Contributing guide
+    url: https://github.com/NachoPal/fixowl/blob/main/CONTRIBUTING.md
+    about: Dev setup, conventions, and the hard invariants before you open a PR.
+  - name: Add a new agent adapter
+    url: https://github.com/NachoPal/fixowl/blob/main/docs/adding-an-agent-adapter.md
+    about: The code-grounded guide for teaching fixowl a new coding agent or model.
+  - name: Report a security vulnerability
+    url: https://github.com/NachoPal/fixowl/blob/main/SECURITY.md
+    about: Please report vulnerabilities privately - do not open a public issue.
