@@ -111,6 +111,15 @@ export function renderManifestRationale(indent: string): string {
   return rows.map((row) => `${indent}${row.head.padEnd(width)}  ${row.why}`).join("\n");
 }
 
+/**
+ * The App `description`, shown on GitHub's create-App confirmation page (and on
+ * the App's public page afterwards). One accurate line: what fixowl is and the
+ * one guarantee that matters - it never merges. Kept short so it reads cleanly
+ * on the create page; the user can still edit it there.
+ */
+export const APP_MANIFEST_DESCRIPTION =
+  "Overnight GitHub issue-fixing agent: opens one draft PR per labeled issue and never merges.";
+
 /** GitHub caps App names at 34 characters; the user can still edit on the page. */
 const APP_NAME_MAX = 34;
 
@@ -138,6 +147,7 @@ export function buildAppManifest(options: AppManifestOptions): Record<string, un
   return {
     name: options.name,
     url: options.homepageUrl,
+    description: APP_MANIFEST_DESCRIPTION,
     public: false,
     default_permissions: APP_MANIFEST_PERMISSIONS,
     redirect_url: options.redirectUrl,

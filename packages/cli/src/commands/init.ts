@@ -500,10 +500,19 @@ async function detectInstallationId(
       ? appInstallUrl(options.slug)
       : "https://github.com/settings/apps -> your App -> Install App";
   if (options.freshlyCreated) {
+    const settingsHint =
+      options.slug !== undefined
+        ? `https://github.com/settings/apps/${options.slug}`
+        : "https://github.com/settings/apps -> your App";
     log.info(`
 Install the App - this is where YOU pick which repositories fixowl may touch:
   ${installHint}
-Choose "Only select repositories" and pick your target repo(s).`);
+Choose "Only select repositories" and pick your target repo(s).
+
+Optional: give the App the fixowl owl logo (purely cosmetic - new Apps get a
+GitHub-generated identicon; there is no API to set a logo, so it is a one-time
+manual upload). At ${settingsHint}
+  -> Display information -> upload assets/fixowl-app-avatar.png`);
     await prompter.pause("\nPress Enter once the App is installed ");
   }
 
