@@ -111,7 +111,7 @@ Publishing is immutable - you cannot retag the existing `0.2.0-rc.1` artifact as
 an already-published version without republishing, that is a manual
 `npm dist-tag add fixowl@<version> latest`, outside this workflow.)
 
-Then bump the base version in `packages/cli/package.json` and root to the next
+Then bump the base version in `packages/cli/package.json` to the next
 target (e.g. `0.3.0`) for the following cycle.
 
 ## Dry run

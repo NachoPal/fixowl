@@ -12,8 +12,10 @@ version: 1
 dockerfile: Dockerfile
 
 verify:
-  # Commands run in a fresh container after the agent finishes. Any failure
-  # turns the PR into a draft.
+  # Commands run in a fresh container after the agent finishes, as a cheap
+  # pre-filter: if they fail, fixowl feeds the output back to the agent and
+  # retries without pushing (no CI spend). They do not decide ready-vs-draft -
+  # the target repo's required CI does that.
   checks:
     - { name: tests, run: "npm test" }
   # Optional: start the app, wait for the URL, capture a screenshot as PR
