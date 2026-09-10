@@ -445,9 +445,11 @@ Opening your browser. Review the pre-filled App on GitHub's page and click
 
 /**
  * The headless variant: the manifest form is written to an HTML file the user
- * opens in ANY browser (copy it to a laptop when this host is remote), and the
- * redirect lands on github.com with the code in the address bar - no localhost
- * server, nothing to reach this machine. Same one-hour conversion window.
+ * opens in ANY browser (copy it to a laptop when this host is remote). After
+ * "Create GitHub App" the browser navigates to the non-listening loopback URL
+ * and shows "refused to connect", while the full URL (code and all) stays in
+ * the address bar for the user to copy back - no github.com landing, no
+ * localhost server on this host. Same one-hour conversion window.
  */
 async function headlessManifestFlow(
   prompter: Prompter,
