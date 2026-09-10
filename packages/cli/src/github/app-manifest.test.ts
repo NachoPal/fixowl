@@ -8,6 +8,7 @@ import {
   defaultAppName,
   exchangeManifestCode,
   extractManifestCode,
+  HEADLESS_REDIRECT_URL,
   manifestSubmitUrl,
   renderManifestFormPage,
   renderManifestRationale,
@@ -139,10 +140,44 @@ describe("extractManifestCode", () => {
     );
   });
 
+  it("accepts the headless loopback URL the browser shows after 'refused to connect'", () => {
+    // The headless flow lands the code on a non-listening loopback URL; the user
+    // copies the whole thing from the address bar (with or without the scheme).
+    expect(
+      extractManifestCode(`${HEADLESS_REDIRECT_URL}?code=headless_abc123&state=deadbeef`),
+    ).toBe("headless_abc123");
+    expect(
+      extractManifestCode("127.0.0.1:9280/fixowl/app-created?code=headless_abc123&state=s"),
+    ).toBe("headless_abc123");
+  });
+
   it("rejects answers with no code in them", () => {
     expect(extractManifestCode("")).toBeUndefined();
     expect(extractManifestCode("https://github.com/settings/apps")).toBeUndefined();
     expect(extractManifestCode("not a code!!")).toBeUndefined();
+  });
+});
+
+describe("HEADLESS_REDIRECT_URL", () => {
+  // A github.com redirect target does not surface a copyable code (it keeps the
+  // user on GitHub's own /settings/apps/manifest surface); the headless flow
+  // relies on the browser retaining the code in the address bar when the loopback
+  // connection is refused. Guard against a regression back to a github.com target.
+  const url = new URL(HEADLESS_REDIRECT_URL);
+
+  it("is an http loopback URL, never a github.com page", () => {
+    expect(url.protocol).toBe("http:");
+    expect(url.hostname).toBe("127.0.0.1");
+    expect(HEADLESS_REDIRECT_URL).not.toContain("github.com");
+  });
+
+  it("uses a non-restricted high port (Chrome refuses a fixed list with ERR_UNSAFE_PORT)", () => {
+    // A small sample of Chrome's blocked ports; the point is the port is a normal
+    // high one so the browser shows a clean ERR_CONNECTION_REFUSED, not ERR_UNSAFE_PORT.
+    const chromeUnsafePorts = new Set([1, 7, 9, 11, 13, 15, 17, 19, 20, 21, 22, 23, 25, 587]);
+    const port = Number(url.port);
+    expect(port).toBeGreaterThanOrEqual(1024);
+    expect(chromeUnsafePorts.has(port)).toBe(false);
   });
 });
 
