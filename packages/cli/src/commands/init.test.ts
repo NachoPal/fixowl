@@ -13,6 +13,7 @@ import type { Prompter } from "../prompt.ts";
 import {
   AGENT_CHOICES,
   AGENT_SECRET_HELP,
+  CLAUDE_AUTH_CHOICES,
   initCommand,
   NO_ADMIN_SIGNPOST,
   offerToCreateSelectorLabels,
@@ -140,22 +141,32 @@ describe("fixowl init admin-token step (step 1/4)", () => {
 });
 
 describe("fixowl init agent picker (step 2/4)", () => {
+  // The exclusive env allowlist stepAgent resolves for each picker choice:
+  // claude asks a sub-choice (subscription vs API key), codex names its key.
+  const resolvedEnvs: ReadonlyArray<{ agent: string; env: readonly string[] }> = [
+    ...CLAUDE_AUTH_CHOICES.map((c) => ({ agent: "claude", env: [c.value] })),
+    ...AGENT_CHOICES.filter((c) => c.env !== undefined).map((c) => ({
+      agent: c.value,
+      env: [...(c.env ?? [])],
+    })),
+  ];
+
   it("carries an env allowlist the core adapter accepts for every choice", () => {
-    for (const choice of AGENT_CHOICES) {
+    for (const { agent, env } of resolvedEnvs) {
       // getAgentAdapter throws on an unknown agent or a forbidden env var, so a
       // clean call proves the wizard's choice is a real, safe adapter override.
-      const adapter = getAgentAdapter(choice.value, choice.env);
-      expect(adapter.env).toEqual([...choice.env]);
+      const adapter = getAgentAdapter(agent, env);
+      expect(adapter.env).toEqual([...env]);
     }
   });
 
   it("flows each picker choice into a correct agents block in the written config", () => {
-    for (const choice of AGENT_CHOICES) {
+    for (const { agent, env } of resolvedEnvs) {
       // Mirror stepAgent: the choice's env is opted into the adapter allowlist,
       // then rendered into config.yaml. Assert on the emitted, parsed config.
-      const agentEnv = getAgentAdapter(choice.value, choice.env).env;
+      const agentEnv = getAgentAdapter(agent, env).env;
       const yaml = renderConfigYaml({
-        agent: choice.value,
+        agent,
         agentEnv,
         repos: [
           {
@@ -170,16 +181,23 @@ describe("fixowl init agent picker (step 2/4)", () => {
       });
 
       const agentsBlock = yaml.slice(yaml.indexOf("\nagents:\n"));
-      expect(agentsBlock).toContain(`${choice.value}: { env: [${agentEnv.join(", ")}] }`);
+      expect(agentsBlock).toContain(`${agent}: { env: [${agentEnv.join(", ")}] }`);
     }
   });
 
-  it("provides real credential guidance for every agent's env var", () => {
-    for (const choice of AGENT_CHOICES) {
-      for (const name of choice.env) {
+  it("provides real credential guidance for every resolvable env var", () => {
+    for (const { env } of resolvedEnvs) {
+      for (const name of env) {
         expect(AGENT_SECRET_HELP[name], `missing help for ${name}`).toBeTruthy();
       }
     }
+  });
+
+  it("offers claude exactly two mutually exclusive auth credentials", () => {
+    expect(CLAUDE_AUTH_CHOICES.map((c) => c.value)).toEqual([
+      "CLAUDE_CODE_OAUTH_TOKEN",
+      "ANTHROPIC_API_KEY",
+    ]);
   });
 });
 
@@ -452,13 +470,33 @@ describe("promptRepoSettings billing-aware spend cap", () => {
     expect(answers.usageBudgetPercent).toBeUndefined();
   });
 
-  it("offers the usage-window budget for a subscription agent (claude)", async () => {
+  it("offers the usage-window budget for claude on a subscription token", async () => {
     const { prompter, questions } = scriptedRepoPrompter();
-    const answers = await promptRepoSettings(prompter, admin, "claude", "acme/widgets", prefill);
+    const answers = await promptRepoSettings(prompter, admin, "claude", "acme/widgets", prefill, [
+      "CLAUDE_CODE_OAUTH_TOKEN",
+    ]);
     expect(questions.some((q) => q.includes("Usage budget"))).toBe(true);
     expect(questions.some((q) => q.includes("Token budget"))).toBe(false);
     expect(answers.usageBudgetPercent).toBe(85);
     expect(answers.totalTokenBudget).toBeUndefined();
+  });
+
+  it("offers the usage-window budget for claude when no env is supplied (name default)", async () => {
+    const { prompter, questions } = scriptedRepoPrompter();
+    const answers = await promptRepoSettings(prompter, admin, "claude", "acme/widgets", prefill);
+    expect(questions.some((q) => q.includes("Usage budget"))).toBe(true);
+    expect(answers.usageBudgetPercent).toBe(85);
+  });
+
+  it("offers the total-token budget for claude on an API key (api-credit auth)", async () => {
+    const { prompter, questions } = scriptedRepoPrompter();
+    const answers = await promptRepoSettings(prompter, admin, "claude", "acme/widgets", prefill, [
+      "ANTHROPIC_API_KEY",
+    ]);
+    expect(questions.some((q) => q.includes("Token budget"))).toBe(true);
+    expect(questions.some((q) => q.includes("Usage budget"))).toBe(false);
+    expect(answers.totalTokenBudget).toBe(2_000_000);
+    expect(answers.usageBudgetPercent).toBeUndefined();
   });
 
   it("offers neither spend cap for the zero-spend script agent", async () => {

@@ -20,6 +20,32 @@ export const PROMPT_MOUNT_PATH = "/fixowl/prompt.md";
  */
 export const WORKSPACE_MOUNT_PATH = "/workspace";
 
+/**
+ * The two credentials that authenticate the native `claude` adapter, and the
+ * env var each rides in. Claude Code accepts either:
+ *  - `CLAUDE_CODE_OAUTH_TOKEN` - a long-lived token tied to a Claude
+ *    subscription (`claude setup-token`); the run bills against the
+ *    subscription's rolling usage window (readable out-of-band, agent-usage.ts).
+ *  - `ANTHROPIC_API_KEY` - a Console API key; the run bills as metered API
+ *    usage, with no usage window to read. The `total_token_budget` cap is
+ *    accepted for this credential in config, but is NOT yet enforced in-band:
+ *    the claude spend meter abstains fail-open (agent-spend.ts). See the argv
+ *    comment below for why (verify_before_fix parses claude fix-mode stdout as
+ *    plain text, so fixowl must not switch it to `--output-format json`).
+ *
+ * PRECEDENCE (the reason both must never reach the container at once): in
+ * headless `claude -p` mode `ANTHROPIC_API_KEY` WINS over
+ * `CLAUDE_CODE_OAUTH_TOKEN` when both are set (Claude Code auth precedence:
+ * API key is checked before the OAuth token, and in `-p` a present key is
+ * always used). So if both were passed, a "subscription" run would silently
+ * bill as API usage. fixowl avoids the fight structurally: `fixowl init` writes
+ * an EXCLUSIVE per-agent env allowlist (exactly one of these vars), so only the
+ * credential the operator chose ever enters the container. The adapter's
+ * default allowlist lists both only so either can be the chosen credential.
+ */
+export const CLAUDE_OAUTH_TOKEN_ENV = "CLAUDE_CODE_OAUTH_TOKEN";
+export const ANTHROPIC_API_KEY_ENV = "ANTHROPIC_API_KEY";
+
 export interface AgentAdapter {
   name: string;
   /** Env var allowlist. Default-deny: anything not listed never reaches the container. */
@@ -35,13 +61,29 @@ export interface AgentAdapter {
 
 const claude: AgentAdapter = {
   name: "claude",
-  env: ["CLAUDE_CODE_OAUTH_TOKEN"],
+  // Both credentials are allowlisted so either can be the chosen one; `fixowl
+  // init` writes an EXCLUSIVE override (exactly one) so they never both reach
+  // the container - see CLAUDE_OAUTH_TOKEN_ENV / ANTHROPIC_API_KEY_ENV above for
+  // the precedence footgun this avoids. Neither is a GitHub credential, so both
+  // stay off FORBIDDEN_AGENT_ENV.
+  env: [CLAUDE_OAUTH_TOKEN_ENV, ANTHROPIC_API_KEY_ENV],
   promptVia: "stdin",
   // --dangerously-skip-permissions is safe here because the container is the
   // sandbox: no GitHub token, no docker socket, cap-drop ALL, resource limits.
   // The CLI hard-refuses this flag under uid 0, so the container must run
   // non-root (docker `--user`, injected in DockerEngine.run).
   // The Claude Code CLI accepts --model and --effort in -p (headless) mode.
+  //
+  // claude fix-mode stdout is consumed as PLAIN TEXT: verify_before_fix's
+  // parseVerdict (issue-pipeline.ts / verdict.ts, from #143) reads a
+  // `FIXOWL_VERDICT: {...}` line the agent prints to stdout, and classify parses
+  // the final message out of raw stdout (main.ts::parseClassification). So fixowl
+  // must NOT switch fix mode to `--output-format json`: the JSON wrapper escapes
+  // the verdict marker's quotes and breaks parseVerdict. As a consequence the
+  // in-band token meter for claude abstains (agent-spend.ts), so enforcing
+  // `total_token_budget` for claude-on-ANTHROPIC_API_KEY is a documented
+  // follow-up that needs a json-safe verdict path; codex remains the metered
+  // API-credit agent.
   argv: (mode, selection) => [
     "claude",
     "-p",
@@ -53,27 +95,10 @@ const claude: AgentAdapter = {
   ],
 };
 
-const aider: AgentAdapter = {
-  name: "aider",
-  // Deliberately empty: aider needs a paid API key, so the operator must opt in
-  // explicitly via `agents: { aider: { env: [ANTHROPIC_API_KEY] } }` in config.
-  env: [],
-  promptVia: "file",
-  // aider takes --model and sets reasoning budget via --reasoning-effort.
-  argv: (_mode, selection) => [
-    "aider",
-    "--message-file",
-    PROMPT_MOUNT_PATH,
-    "--yes-always",
-    ...(selection?.model !== undefined ? ["--model", selection.model] : []),
-    ...(selection?.effort !== undefined ? ["--reasoning-effort", selection.effort] : []),
-  ],
-};
-
 const codex: AgentAdapter = {
   name: "codex",
-  // Deliberately empty, exactly like aider: codex needs a paid credential, so
-  // the operator opts one in explicitly via config, e.g.
+  // Deliberately empty: codex needs a paid credential, so the operator opts one
+  // in explicitly via config, e.g.
   // `agents: { codex: { env: [OPENAI_API_KEY] } }`. This is the API-key auth
   // path; the ChatGPT/Codex subscription is a separate, file-based credential
   // that does not ride the env allowlist and is not supported yet.
@@ -126,7 +151,7 @@ const script: AgentAdapter = {
   argv: () => ["bash", "-c", SCRIPT_EXTRACT_AND_RUN],
 };
 
-const ADAPTERS: Record<string, AgentAdapter> = { claude, aider, codex, script };
+const ADAPTERS: Record<string, AgentAdapter> = { claude, codex, script };
 
 /**
  * Env var names that would hand the agent a GitHub credential. "The coding

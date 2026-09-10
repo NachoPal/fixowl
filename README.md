@@ -58,7 +58,8 @@ In the morning you review. **fixowl never merges.**
   own required CI - not the local `.fixowl.yml` checks, which now run only as a
   cheap pre-filter - is the authority that flips it to ready-for-review in a
   bounded fix loop. See [docs/ci-fix-loop.md](docs/ci-fix-loop.md).
-- **Agent-agnostic**: adapters for `claude` (default), `aider`, `codex`, and a
+- **Agent-agnostic**: adapters for `claude` (default; on a Claude subscription
+  token or an Anthropic API key), `codex`, and a
   deterministic `script` adapter used for e2e tests (test-only: it executes
   issue bodies as shell, so the action refuses it without an explicit
   `FIXOWL_UNSAFE_SCRIPT_AGENT=1` opt-in). Adding one is a two-file change - see
@@ -212,10 +213,34 @@ unknown value. For
 `claude`, models are aliases like `opus`/`sonnet`/`haiku`/`fable` and efforts
 are `low`/`medium`/`high`/`xhigh`/`max` (both passed as `--model`/`--effort`).
 
+### Using claude
+
+`claude` (the default) runs Claude Code headlessly in the per-issue container,
+and authenticates **one of two mutually exclusive ways** - `fixowl init` asks
+which right after you pick the agent:
+
+```yaml
+agents:
+  # A: a Claude SUBSCRIPTION OAuth token (`claude setup-token`).
+  claude: { env: [CLAUDE_CODE_OAUTH_TOKEN] }
+  # B: an Anthropic Console API KEY, billed as metered API usage.
+  claude: { env: [ANTHROPIC_API_KEY] }
+```
+
+The choice also decides the run budget (see below): the **subscription** token
+bills against a rolling usage window, so it is bounded by `usage_budget_percent`;
+the **API key** bills per token, so it is bounded by `total_token_budget`.
+
+> **Never both at once.** In headless (`claude -p`) mode Claude Code uses
+> `ANTHROPIC_API_KEY` in preference to `CLAUDE_CODE_OAUTH_TOKEN` when both are
+> present, so a "subscription" run would silently bill as API usage. fixowl
+> avoids this by writing an **exclusive** allowlist - exactly one of the two -
+> so only the credential you chose ever reaches the container.
+
 ### Using codex
 
 `codex` runs OpenAI's Codex CLI (`codex exec`) headlessly in the same per-issue
-container. Like `aider`, it holds no credential by default: you opt its API key
+container. It holds no credential by default: you opt its API key
 into the allowlist explicitly, so no repo starts spending by accident:
 
 ```yaml
@@ -261,16 +286,22 @@ that trips, and the night summary names which:
   aborting the night. Opted out when unset. Silently no-ops for an API-credit
   agent, which has no such window - use `total_token_budget` instead.
 - **`total_token_budget`** - the API-credit counterpart, for **pay-per-token**
-  agents (`codex` on `OPENAI_API_KEY`, `aider` on `ANTHROPIC_API_KEY`): stop
+  agents (`codex` on `OPENAI_API_KEY`, or `claude` on `ANTHROPIC_API_KEY`): stop
   before starting a new issue once the night's accumulated token spend reaches
   this total. Unlike the usage window, this is measured **in-band** - fixowl
   accumulates the token counts the agent reports in its own output
-  (`codex exec --json` `turn.completed.usage`; aider's `Tokens:` line), with no
+  (`codex exec --json` `turn.completed.usage`), with no
   provider endpoint to poll (OpenAI's spend API needs an org Admin key and
   buckets by day, unusable for a live gate). Denominated in tokens, not dollars:
   tokens are the one quantity every API-credit agent reports directly, with no
   price table to drift. Abstains (falls through) when the agent's spend is
   unmeasurable this run. Opted out when unset.
+  > **codex is the metered agent today.** `claude` on `ANTHROPIC_API_KEY` accepts
+  > this cap in config, but it is **not yet enforced in-band** for claude: reading
+  > claude's per-run usage needs `claude -p --output-format json`, and that JSON
+  > wrapper breaks the plain-text verdict the verify-before-fix triage parses from
+  > claude's fix output, so the claude meter abstains fail-open (a documented
+  > follow-up). Such a run is still bounded by count and wall-clock.
 - **`run_budget_minutes`** - a graceful wall-clock cap: don't *start* a new issue
   after this many minutes. Distinct from the workflow's blunt `timeout-minutes`
   hard-kill ceiling. Opted out when unset.

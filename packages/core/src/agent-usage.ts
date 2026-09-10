@@ -7,7 +7,8 @@
  *
  * The abstraction is model-agnostic in the spirit of `agent-adapters.ts`: the run
  * loop asks `getUsageReader(agentName)` and never mentions Claude. An agent whose
- * usage is not observable (aider/script/API-key auth) returns a reader that yields
+ * usage is not observable (script, or claude under API-key auth, which has no
+ * OAuth token to read the window with) returns a reader that yields
  * `undefined`, which opts that run out of the usage condition automatically -
  * adding a new agent's reader needs no run-loop change.
  *

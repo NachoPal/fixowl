@@ -5,14 +5,24 @@
  * subscription `usage_budget_percent` window (`agent-usage.ts`).
  *
  * The crucial difference from `agent-usage.ts` is WHERE the number comes from.
- * A subscription agent (claude) has a rolling usage window the host reads
- * out-of-band from the provider. An API-credit agent (codex on OPENAI_API_KEY,
- * aider on ANTHROPIC_API_KEY) has no real-time per-key spend endpoint fixowl can
- * poll - OpenAI's Usage/Costs API needs an org Admin key and buckets by day - so
- * spend is instead measured IN-BAND: the agent reports its own token usage in the
+ * A subscription agent (claude on CLAUDE_CODE_OAUTH_TOKEN) has a rolling usage
+ * window the host reads out-of-band from the provider. An API-credit agent
+ * (codex on OPENAI_API_KEY, or claude on ANTHROPIC_API_KEY) has no real-time
+ * per-key spend endpoint fixowl can poll - OpenAI's Usage/Costs API needs an org
+ * Admin key and buckets by day - so spend is instead measured IN-BAND: the agent
+ * reports its own token usage in the
  * output fixowl already captures (`ExecResult.stdout`), and the run loop
  * accumulates it across issues. There is no network edge and no credential here;
  * this module is a pure parser.
+ *
+ * NOTE: only codex is metered in-band today. claude-on-ANTHROPIC_API_KEY is NOT
+ * metered here (its meter abstains, fail-open): reading claude's per-run token
+ * usage would require `claude -p --output-format json`, but claude fix-mode
+ * stdout is parsed as PLAIN TEXT by verify_before_fix's parseVerdict (#143), and
+ * the JSON wrapper breaks that. So the `total_token_budget` cap is accepted in
+ * config for claude-on-API-key but not yet enforced at runtime for it - a
+ * documented follow-up (add a json-safe claude token meter once verify_before_fix
+ * can read a json result). See agent-adapters.ts (claude argv comment).
  *
  * Denomination is TOKENS, not dollars. Tokens are the one quantity every
  * API-credit agent reports directly and identically; a dollar figure would need
@@ -138,61 +148,27 @@ export function parseCodexUsage(stdout: string): SpendSample | undefined {
   return found ? acc : undefined;
 }
 
-/** Matches an aider usage line, e.g. `Tokens: 1663k sent, 2.1k received.` */
-const AIDER_TOKENS_RE = /Tokens:\s*([\d.]+)\s*([kKmM]?)\s*sent,\s*([\d.]+)\s*([kKmM]?)\s*received/g;
-
-/** Expands aider's `k`/`M` suffix (`1663k` -> 1_663_000) to whole tokens. */
-function aiderCount(mantissa: string, suffix: string): number {
-  const base = Number(mantissa);
-  if (!Number.isFinite(base)) return 0;
-  const factor = suffix === "" ? 1 : suffix.toLowerCase() === "k" ? 1_000 : 1_000_000;
-  return Math.round(base * factor);
-}
-
-/**
- * Sum the token usage aider prints, e.g. `Tokens: 1663k sent, 0 received. Cost:
- * $4.99 message, $9.68 session.` Each exchange prints one line; they are summed
- * for the run total (mirrors the codex per-turn sum). `sent` maps to
- * `inputTokens`, `received` to `outputTokens`; aider does not break out cached /
- * reasoning tokens, so those stay 0. Returns `undefined` when no line is found.
- *
- * OPEN VERIFICATION (Open risk 2): aider was not run (not installed); this format
- * is from aider's docs/issues, not a captured run. Confirm against a real aider
- * transcript before relying on the aider token cap. The abstain-on-no-match keeps
- * a format drift fail-open (falls through to count / wall-clock).
- */
-export function parseAiderUsage(stdout: string): SpendSample | undefined {
-  let acc = EMPTY_SPEND;
-  let found = false;
-  for (const match of stdout.matchAll(AIDER_TOKENS_RE)) {
-    const inputTokens = aiderCount(match[1] ?? "", match[2] ?? "");
-    const outputTokens = aiderCount(match[3] ?? "", match[4] ?? "");
-    if (inputTokens === 0 && outputTokens === 0) continue;
-    found = true;
-    acc = addSamples(acc, {
-      totalTokens: inputTokens + outputTokens,
-      inputTokens,
-      cachedInputTokens: 0,
-      outputTokens,
-      reasoningOutputTokens: 0,
-    });
-  }
-  return found ? acc : undefined;
-}
-
 const codexMeter: SpendMeter = { parse: (stdout) => parseCodexUsage(stdout) };
-const aiderMeter: SpendMeter = { parse: (stdout) => parseAiderUsage(stdout) };
 
 /** A meter for agents whose spend is not measurable in-band; always abstains. */
 const noSpendMeter: SpendMeter = { parse: () => undefined };
 
-const SPEND_METERS: Record<string, SpendMeter> = { codex: codexMeter, aider: aiderMeter };
+/**
+ * Only codex is metered in-band. `claude` is deliberately absent, so
+ * `getSpendMeter("claude")` returns `noSpendMeter` and abstains (fail-open): the
+ * `total_token_budget` cap is accepted in config for a claude-on-ANTHROPIC_API_KEY
+ * (api-credit) run but not yet enforced at runtime, because reading claude's
+ * per-run token usage would require `claude -p --output-format json`, which
+ * breaks verify_before_fix's plain-text verdict parsing (#143). Documented
+ * follow-up: add a json-safe claude token meter once verify_before_fix can read a
+ * json result. See agent-adapters.ts (claude argv comment).
+ */
+const SPEND_METERS: Record<string, SpendMeter> = { codex: codexMeter };
 
 /**
- * The spend meter for `agentName`. Unknown agents (and subscription agents like
- * `claude`, and the zero-spend `script`) get `noSpendMeter`, so the token
- * condition simply opts out for them - the run stays bounded by count, the
- * subscription usage window, and wall-clock.
+ * The spend meter for `agentName`. Unknown agents and the zero-spend `script`
+ * get `noSpendMeter`, so the token condition simply opts out for them - the run
+ * stays bounded by count, the subscription usage window, and wall-clock.
  */
 export function getSpendMeter(agentName: string): SpendMeter {
   return SPEND_METERS[agentName] ?? noSpendMeter;

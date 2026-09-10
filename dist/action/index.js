@@ -85377,15 +85377,33 @@ function containerName(repoFullName, issueNumber, purpose) {
 // packages/core/src/agent-adapters.ts
 var PROMPT_MOUNT_PATH = "/fixowl/prompt.md";
 var WORKSPACE_MOUNT_PATH = "/workspace";
+var CLAUDE_OAUTH_TOKEN_ENV = "CLAUDE_CODE_OAUTH_TOKEN";
+var ANTHROPIC_API_KEY_ENV = "ANTHROPIC_API_KEY";
 var claude = {
   name: "claude",
-  env: ["CLAUDE_CODE_OAUTH_TOKEN"],
+  // Both credentials are allowlisted so either can be the chosen one; `fixowl
+  // init` writes an EXCLUSIVE override (exactly one) so they never both reach
+  // the container - see CLAUDE_OAUTH_TOKEN_ENV / ANTHROPIC_API_KEY_ENV above for
+  // the precedence footgun this avoids. Neither is a GitHub credential, so both
+  // stay off FORBIDDEN_AGENT_ENV.
+  env: [CLAUDE_OAUTH_TOKEN_ENV, ANTHROPIC_API_KEY_ENV],
   promptVia: "stdin",
   // --dangerously-skip-permissions is safe here because the container is the
   // sandbox: no GitHub token, no docker socket, cap-drop ALL, resource limits.
   // The CLI hard-refuses this flag under uid 0, so the container must run
   // non-root (docker `--user`, injected in DockerEngine.run).
   // The Claude Code CLI accepts --model and --effort in -p (headless) mode.
+  //
+  // claude fix-mode stdout is consumed as PLAIN TEXT: verify_before_fix's
+  // parseVerdict (issue-pipeline.ts / verdict.ts, from #143) reads a
+  // `FIXOWL_VERDICT: {...}` line the agent prints to stdout, and classify parses
+  // the final message out of raw stdout (main.ts::parseClassification). So fixowl
+  // must NOT switch fix mode to `--output-format json`: the JSON wrapper escapes
+  // the verdict marker's quotes and breaks parseVerdict. As a consequence the
+  // in-band token meter for claude abstains (agent-spend.ts), so enforcing
+  // `total_token_budget` for claude-on-ANTHROPIC_API_KEY is a documented
+  // follow-up that needs a json-safe verdict path; codex remains the metered
+  // API-credit agent.
   argv: (mode, selection) => [
     "claude",
     "-p",
@@ -85396,26 +85414,10 @@ var claude = {
     ...selection?.effort !== void 0 ? ["--effort", selection.effort] : []
   ]
 };
-var aider = {
-  name: "aider",
-  // Deliberately empty: aider needs a paid API key, so the operator must opt in
-  // explicitly via `agents: { aider: { env: [ANTHROPIC_API_KEY] } }` in config.
-  env: [],
-  promptVia: "file",
-  // aider takes --model and sets reasoning budget via --reasoning-effort.
-  argv: (_mode, selection) => [
-    "aider",
-    "--message-file",
-    PROMPT_MOUNT_PATH,
-    "--yes-always",
-    ...selection?.model !== void 0 ? ["--model", selection.model] : [],
-    ...selection?.effort !== void 0 ? ["--reasoning-effort", selection.effort] : []
-  ]
-};
 var codex = {
   name: "codex",
-  // Deliberately empty, exactly like aider: codex needs a paid credential, so
-  // the operator opts one in explicitly via config, e.g.
+  // Deliberately empty: codex needs a paid credential, so the operator opts one
+  // in explicitly via config, e.g.
   // `agents: { codex: { env: [OPENAI_API_KEY] } }`. This is the API-key auth
   // path; the ChatGPT/Codex subscription is a separate, file-based credential
   // that does not ride the env allowlist and is not supported yet.
@@ -85454,7 +85456,7 @@ var script = {
   promptVia: "file",
   argv: () => ["bash", "-c", SCRIPT_EXTRACT_AND_RUN]
 };
-var ADAPTERS = { claude, aider, codex, script };
+var ADAPTERS = { claude, codex, script };
 var FORBIDDEN_AGENT_ENV = [
   "FIXOWL_APP_PRIVATE_KEY",
   "FIXOWL_APP_ID",
@@ -85605,35 +85607,9 @@ function parseCodexUsage(stdout) {
   }
   return found ? acc : void 0;
 }
-var AIDER_TOKENS_RE = /Tokens:\s*([\d.]+)\s*([kKmM]?)\s*sent,\s*([\d.]+)\s*([kKmM]?)\s*received/g;
-function aiderCount(mantissa, suffix) {
-  const base = Number(mantissa);
-  if (!Number.isFinite(base)) return 0;
-  const factor = suffix === "" ? 1 : suffix.toLowerCase() === "k" ? 1e3 : 1e6;
-  return Math.round(base * factor);
-}
-function parseAiderUsage(stdout) {
-  let acc = EMPTY_SPEND;
-  let found = false;
-  for (const match of stdout.matchAll(AIDER_TOKENS_RE)) {
-    const inputTokens = aiderCount(match[1] ?? "", match[2] ?? "");
-    const outputTokens = aiderCount(match[3] ?? "", match[4] ?? "");
-    if (inputTokens === 0 && outputTokens === 0) continue;
-    found = true;
-    acc = addSamples(acc, {
-      totalTokens: inputTokens + outputTokens,
-      inputTokens,
-      cachedInputTokens: 0,
-      outputTokens,
-      reasoningOutputTokens: 0
-    });
-  }
-  return found ? acc : void 0;
-}
 var codexMeter = { parse: (stdout) => parseCodexUsage(stdout) };
-var aiderMeter = { parse: (stdout) => parseAiderUsage(stdout) };
 var noSpendMeter = { parse: () => void 0 };
-var SPEND_METERS = { codex: codexMeter, aider: aiderMeter };
+var SPEND_METERS = { codex: codexMeter };
 function getSpendMeter(agentName) {
   return SPEND_METERS[agentName] ?? noSpendMeter;
 }
@@ -85724,17 +85700,6 @@ var AGENT_MODEL_CATALOG = {
       { id: "fable", description: "Alias for the latest Fable model." }
     ],
     efforts: ["low", "medium", "high", "xhigh", "max"]
-  },
-  // aider: `--model` takes a model name or one of aider's built-in aliases, and
-  // `--reasoning-effort` sets the reasoning budget. The alias set below is a
-  // sensible starting point; extend it with any model your API key can reach.
-  aider: {
-    models: [
-      { id: "sonnet", description: "aider alias for the latest Anthropic Sonnet." },
-      { id: "opus", description: "aider alias for the latest Anthropic Opus." },
-      { id: "haiku", description: "aider alias for the latest Anthropic Haiku." }
-    ],
-    efforts: ["low", "medium", "high"]
   },
   // codex (`codex exec`): `-m` takes a model id and reasoning effort is set via
   // `-c model_reasoning_effort=<level>`. The real model list is server-provided
@@ -85847,7 +85812,8 @@ var repoEntrySchema = external_exports.object({
   /** Stop before starting a new issue once the agent's usage window hits this % (0..100). */
   usage_budget_percent: external_exports.number().min(0).max(100).optional(),
   /**
-   * Total-token hard cap for an API-credit agent (codex/aider): stop before a new
+   * Total-token hard cap for an API-credit agent (codex, or claude on an API
+   * key): stop before a new
    * issue once the night's accumulated token spend reaches this. The API-credit
    * counterpart to `usage_budget_percent`; measured in-band (agent-spend.ts).
    */
@@ -85977,7 +85943,7 @@ var FIXOWL_DEFAULTS = {
    * written before this feature behaves exactly as it did. 240 min sits
    * comfortably under the workflow's blunt `timeout-minutes: 300` ceiling.
    * `totalTokenBudget` is likewise a starter, offered by `init` only for an
-   * API-credit agent (codex/aider); unset stays opted out.
+   * API-credit agent (codex, or claude on an API key); unset stays opted out.
    */
   usageBudgetPercent: 85,
   totalTokenBudget: 3e6,

@@ -151,7 +151,7 @@ function configuredModelIds(settings: ResolvedRepoSettings): string[] {
 
 /**
  * Verify a repo's chosen model ids against the agent provider's live model list.
- * No-op for agents with no queryable list (claude/aider), so the catalog stays
+ * No-op for agents with no queryable list (claude), so the catalog stays
  * their only source of truth. Fail-open per `liveModelCheck`: an unreachable
  * list warns and defers to the catalog; a fetched list missing a model fails.
  * Exported for direct testing with a faked `fetchJson`.

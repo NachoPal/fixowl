@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getSpendMeter, parseAiderUsage, parseCodexUsage } from "./agent-spend.ts";
+import { getSpendMeter, parseCodexUsage } from "./agent-spend.ts";
 
 // A `codex exec --json` transcript built from the DOCUMENTED schema (codex-cli
 // 0.153.4 + OpenAI's non-interactive docs): stdout is JSONL; `turn.completed`
@@ -53,34 +53,11 @@ describe("parseCodexUsage", () => {
   });
 });
 
-describe("parseAiderUsage", () => {
-  it("sums each exchange's sent/received tokens, expanding k/M suffixes", () => {
-    const out = [
-      "Applied edit to foo.ts",
-      "Tokens: 1.2k sent, 800 received. Cost: $0.01 message, $0.01 session.",
-      "Tokens: 3k sent, 1k received. Cost: $0.02 message, $0.03 session.",
-    ].join("\n");
-    expect(parseAiderUsage(out)).toEqual({
-      totalTokens: 6000, // (1200+800) + (3000+1000)
-      inputTokens: 4200,
-      cachedInputTokens: 0,
-      outputTokens: 1800,
-      reasoningOutputTokens: 0,
-    });
-  });
-
-  it("abstains (undefined) when no Tokens line is present", () => {
-    expect(parseAiderUsage("no usage here")).toBeUndefined();
-  });
-});
-
 describe("getSpendMeter", () => {
-  it("meters codex and aider, and abstains for subscription/zero-spend/unknown agents", () => {
+  it("meters codex, and abstains for claude/zero-spend/unknown agents", () => {
     expect(getSpendMeter("codex").parse(CODEX_ONE_TURN, "")?.totalTokens).toBe(2000);
-    expect(
-      getSpendMeter("aider").parse("Tokens: 1k sent, 0 received. Cost: $0 message, $0 session.", "")
-        ?.totalTokens,
-    ).toBe(1000);
+    // claude is not metered in-band: its fix-mode stdout stays plain text so
+    // verify_before_fix can parse the verdict, so the meter abstains fail-open.
     expect(getSpendMeter("claude").parse(CODEX_ONE_TURN, "")).toBeUndefined();
     expect(getSpendMeter("script").parse(CODEX_ONE_TURN, "")).toBeUndefined();
     expect(getSpendMeter("nope").parse(CODEX_ONE_TURN, "")).toBeUndefined();

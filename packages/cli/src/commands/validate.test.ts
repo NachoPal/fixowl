@@ -212,8 +212,8 @@ describe("validateModelsAgainstLiveList", () => {
     expect(s.warn[0]).toContain("built-in catalog");
   });
 
-  it("is a no-op for agents with no live model list (claude/aider unaffected)", async () => {
-    for (const agent of ["claude", "aider"]) {
+  it("is a no-op for agents with no live model list (claude unaffected)", async () => {
+    for (const agent of ["claude"]) {
       const s = sinks();
       let fetched = false;
       await validateModelsAgainstLiveList({

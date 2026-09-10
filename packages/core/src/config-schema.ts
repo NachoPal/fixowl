@@ -89,7 +89,8 @@ const repoEntrySchema = z.object({
   /** Stop before starting a new issue once the agent's usage window hits this % (0..100). */
   usage_budget_percent: z.number().min(0).max(100).optional(),
   /**
-   * Total-token hard cap for an API-credit agent (codex/aider): stop before a new
+   * Total-token hard cap for an API-credit agent (codex, or claude on an API
+   * key): stop before a new
    * issue once the night's accumulated token spend reaches this. The API-credit
    * counterpart to `usage_budget_percent`; measured in-band (agent-spend.ts).
    */
@@ -264,7 +265,7 @@ export const FIXOWL_DEFAULTS = {
    * written before this feature behaves exactly as it did. 240 min sits
    * comfortably under the workflow's blunt `timeout-minutes: 300` ceiling.
    * `totalTokenBudget` is likewise a starter, offered by `init` only for an
-   * API-credit agent (codex/aider); unset stays opted out.
+   * API-credit agent (codex, or claude on an API key); unset stays opted out.
    */
   usageBudgetPercent: 85,
   totalTokenBudget: 3_000_000,
