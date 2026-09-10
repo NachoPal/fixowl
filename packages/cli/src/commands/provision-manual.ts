@@ -65,7 +65,9 @@ export async function manualProvisionCommand(
       );
     }
 
+    const cloudRunner = settings.runnerMode === "github-hosted";
     const workflow = renderFixowlWorkflow({
+      runsOn: cloudRunner ? "ubuntu-latest" : undefined,
       schedule: options.noSchedule ? null : settings.schedule,
       labels: settings.labels,
       agent: adapter.name,
@@ -115,7 +117,7 @@ export async function manualProvisionCommand(
       ...adapter.env,
     ];
 
-    log.info(renderManualSteps({ repoFullName, outDir, files, labels, secretNames }));
+    log.info(renderManualSteps({ repoFullName, outDir, files, labels, secretNames, cloudRunner }));
   }
 }
 
@@ -125,8 +127,9 @@ function renderManualSteps(params: {
   files: Array<{ path: string }>;
   labels: string[];
   secretNames: string[];
+  cloudRunner: boolean;
 }): string {
-  const { repoFullName, outDir, files, labels, secretNames } = params;
+  const { repoFullName, outDir, files, labels, secretNames, cloudRunner } = params;
   const labelCmds = labels
     .map(
       (name) =>
@@ -156,9 +159,15 @@ ${files.map((f) => `  ${f.path}`).join("\n")}
    verify commands for this repo first). Never commit the workflow straight to
    the default branch - review it like any other CI change.
 
-4. Runner: register a self-hosted runner from the GitHub UI (Settings > Actions
+4. ${
+    cloudRunner
+      ? `Runner: none to set up. This repo is configured github-hosted, so the
+   workflow runs on GitHub's \`ubuntu-latest\` cloud runner and nothing runs on
+   your machine.`
+      : `Runner: register a self-hosted runner from the GitHub UI (Settings > Actions
    > Runners > New self-hosted runner) and follow the printed commands, or run
    \`fixowl start --register\` once with a short-lived admin token you revoke
-   immediately after. Then \`fixowl start\` needs no admin token at all.
+   immediately after. Then \`fixowl start\` needs no admin token at all.`
+  }
 `;
 }
