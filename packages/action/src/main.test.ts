@@ -865,6 +865,34 @@ describe("runNight", () => {
       expect(summary.warnings.filter((w) => w.includes("unobservable"))).toHaveLength(1);
     });
 
+    it("api-credit agent: usage budget is not read and never warns (structurally unobservable)", async () => {
+      const { workspaceDir, inputs } = await setup();
+      const github = new FakeGitHub(structuredClone(threeIssues));
+      const engine = makeEngine({ workspaceDir });
+      const fetcher = usageFetcher(() => 0.99);
+
+      // claude on ANTHROPIC_API_KEY bills as api-credit: no usage window to read.
+      const summary = await runNight(
+        {
+          github,
+          engine,
+          exec: realExec,
+          log: silentLog,
+          httpJson: fetcher.httpJson,
+          clock: instantClock(),
+        },
+        {
+          ...claudeBudgetInputs(inputs),
+          env: { ANTHROPIC_API_KEY: "sk-test" },
+          usageBudgetPercent: 50,
+        },
+      );
+
+      expect(fetcher.calls()).toBe(0);
+      expect(summary.warnings.filter((w) => w.includes("unobservable"))).toHaveLength(0);
+      expect(summary.results.map((r) => r.status)).toEqual(["pr-opened", "pr-opened", "pr-opened"]);
+    });
+
     it("no usage budget set: the usage endpoint is never read", async () => {
       const { workspaceDir, inputs } = await setup();
       const github = new FakeGitHub(structuredClone(threeIssues));

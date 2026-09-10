@@ -85761,6 +85761,17 @@ var AGENT_MODEL_CATALOG = {
     efforts: ["minimal", "low", "medium", "high", "xhigh"]
   }
 };
+var AGENT_BILLING = {
+  claude: "subscription",
+  codex: "api-credit",
+  script: "none"
+};
+function agentBilling(agent, env) {
+  if (agent === "claude" && env !== void 0 && env.includes(ANTHROPIC_API_KEY_ENV)) {
+    return "api-credit";
+  }
+  return AGENT_BILLING[agent] ?? "api-credit";
+}
 function agentCatalogEntry(agent) {
   return AGENT_MODEL_CATALOG[agent];
 }
@@ -127112,13 +127123,14 @@ async function runNightWithGit(deps, inputs, git) {
   };
   const stopConditions = buildStopConditions(budgetLimits);
   const usageReader = getUsageReader(inputs.agentName);
+  const usageBudgetObservable = agentBilling(inputs.agentName, Object.keys(agentEnv)) === "subscription";
   let usageWarned = false;
   let tokensUsed = 0;
   let tokensMeasured = false;
   let tokensWarned = false;
   const assembleBudgetState = async (shipped2) => {
     let usage;
-    if (inputs.usageBudgetPercent !== void 0 && deps.httpJson !== void 0) {
+    if (inputs.usageBudgetPercent !== void 0 && usageBudgetObservable && deps.httpJson !== void 0) {
       usage = await usageReader.read({ env: agentEnv, fetchJson: deps.httpJson });
       if (usage === void 0 && !usageWarned) {
         usageWarned = true;

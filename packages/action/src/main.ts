@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   FIXOWL_DEFAULTS,
+  agentBilling,
   buildStopConditions,
   evaluateBudget,
   getAgentAdapter,
@@ -319,6 +320,18 @@ async function runNightWithGit(
   };
   const stopConditions = buildStopConditions(budgetLimits);
   const usageReader = getUsageReader(inputs.agentName);
+  // `usage_budget_percent` is a subscription usage-window budget. An api-credit
+  // agent (codex, or claude on an API key) has no observable window, so the
+  // budget is structurally inapplicable - reading it would only warn every
+  // night about a config mismatch that `fixowl validate` already catches once.
+  // Skip the read entirely for api-credit; the transient (429/network) miss that
+  // still warrants a warn-and-fall-through (issue #114) only happens on the
+  // subscription path this leaves untouched.
+  // Auth-aware: bill by the credentials actually present (Object.keys(agentEnv)),
+  // not the adapter's full allowlist - claude's allowlist lists both auth vars,
+  // but only the resolved one decides subscription vs api-credit.
+  const usageBudgetObservable =
+    agentBilling(inputs.agentName, Object.keys(agentEnv)) === "subscription";
   let usageWarned = false;
   // In-band token accumulator for the `total_token_budget` axis. Unlike usage
   // (an out-of-band per-gate read), spend is a running sum folded from each
@@ -332,7 +345,11 @@ async function runNightWithGit(
     let usage: UsageSnapshot | undefined;
     // Only read usage when a usage budget is set AND a network edge is injected;
     // the in-process tests inject none, so usage stays undefined (abstain).
-    if (inputs.usageBudgetPercent !== undefined && deps.httpJson !== undefined) {
+    if (
+      inputs.usageBudgetPercent !== undefined &&
+      usageBudgetObservable &&
+      deps.httpJson !== undefined
+    ) {
       usage = await usageReader.read({ env: agentEnv, fetchJson: deps.httpJson });
       if (usage === undefined && !usageWarned) {
         usageWarned = true;

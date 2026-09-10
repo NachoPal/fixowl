@@ -28,7 +28,16 @@ vi.mock("../github/app-key.ts", () => ({
   toPkcs8Pem: (value: string) => value,
 }));
 
-const { validateRuntimeCredential, validateModelsAgainstLiveList } = await import("./validate.ts");
+vi.mock("../docker/engine-check.ts", () => ({
+  checkDockerEngine: () => Promise.resolve({ ok: true, detail: "stubbed" }),
+}));
+
+const {
+  validateCommand,
+  validateRuntimeCredential,
+  validateModelsAgainstLiveList,
+  usageBudgetBillingMismatch,
+} = await import("./validate.ts");
 
 function ctxWith(github: Record<string, unknown>): CliContext {
   return { config: { github, repos: [{ name: "o/r" }] } } as unknown as CliContext;
@@ -127,6 +136,7 @@ interface Settings {
   agent: string;
   defaultModel?: string;
   labelModels?: Record<string, { model?: string; effort?: string }>;
+  usageBudgetPercent?: number;
 }
 
 function settingsFor(s: Settings): ResolvedRepoSettings {
@@ -134,6 +144,7 @@ function settingsFor(s: Settings): ResolvedRepoSettings {
     agent: s.agent,
     defaultModel: s.defaultModel,
     labelModels: s.labelModels ?? {},
+    usageBudgetPercent: s.usageBudgetPercent,
   } as unknown as ResolvedRepoSettings;
 }
 
@@ -248,5 +259,86 @@ describe("validateModelsAgainstLiveList", () => {
     });
     expect(s.failed).toHaveLength(1);
     expect(s.failed[0]).toContain("gpt-5-missing");
+  });
+});
+
+describe("usageBudgetBillingMismatch", () => {
+  it("warns when usage_budget_percent is set for an api-credit agent (codex)", () => {
+    const msg = usageBudgetBillingMismatch(
+      settingsFor({ agent: "codex", usageBudgetPercent: 85 }),
+      ["OPENAI_API_KEY"],
+    );
+    expect(msg).toContain("usage_budget_percent");
+    expect(msg).toContain("codex");
+    expect(msg).toContain("total_token_budget");
+  });
+
+  it("warns for claude on an API key (auth-aware api-credit)", () => {
+    const msg = usageBudgetBillingMismatch(
+      settingsFor({ agent: "claude", usageBudgetPercent: 85 }),
+      ["ANTHROPIC_API_KEY"],
+    );
+    expect(msg).toContain("total_token_budget");
+  });
+
+  it("does not warn for a subscription agent (claude on OAuth)", () => {
+    const msg = usageBudgetBillingMismatch(
+      settingsFor({ agent: "claude", usageBudgetPercent: 85 }),
+      ["CLAUDE_CODE_OAUTH_TOKEN"],
+    );
+    expect(msg).toBeUndefined();
+  });
+
+  it("does not warn when no usage budget is set", () => {
+    const msg = usageBudgetBillingMismatch(settingsFor({ agent: "codex" }), ["OPENAI_API_KEY"]);
+    expect(msg).toBeUndefined();
+  });
+});
+
+describe("validateCommand budget/billing warning", () => {
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+  const savedApiKey = process.env.ANTHROPIC_API_KEY;
+
+  beforeEach(() => {
+    warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    // The unpinned claude allowlist includes ANTHROPIC_API_KEY; it must be
+    // absent from the environment for this OAuth-only scenario.
+    delete process.env.ANTHROPIC_API_KEY;
+    mocks.getAuthenticatedApp.mockResolvedValue({ data: { slug: "app", id: 1 } });
+    mocks.getInstallation.mockResolvedValue({ data: { permissions: FULL_PERMS } });
+    mocks.listReposPaginate.mockResolvedValue([{ full_name: "o/r" }]);
+  });
+
+  afterEach(() => {
+    if (savedApiKey === undefined) delete process.env.ANTHROPIC_API_KEY;
+    else process.env.ANTHROPIC_API_KEY = savedApiKey;
+    vi.restoreAllMocks();
+  });
+
+  function validateCtx(): CliContext {
+    const admin = {
+      rest: {
+        users: { getAuthenticated: () => Promise.resolve({ data: { login: "me" } }) },
+        repos: { get: () => Promise.resolve({ data: { default_branch: "main" } }) },
+      },
+    };
+    return {
+      admin,
+      secrets: { CLAUDE_CODE_OAUTH_TOKEN: "oauth" },
+      config: {
+        github: APP_GITHUB,
+        repos: [{ name: "o/r", agent: "claude", usage_budget_percent: 85 }],
+      },
+    } as unknown as CliContext;
+  }
+
+  it("does not warn about usage_budget_percent for unpinned claude on OAuth only", async () => {
+    await validateCommand(validateCtx());
+    const budgetWarnings = warnSpy.mock.calls
+      .map((call: unknown[]) => String(call[0]))
+      .filter((message: string) => message.includes("usage_budget_percent"));
+    expect(budgetWarnings).toEqual([]);
   });
 });
