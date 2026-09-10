@@ -31,8 +31,17 @@ export interface SelectByPriorityParams {
   priority: PrioritySettings;
   /** The run cap (`max_issues_per_run`); also the page size. */
   maxIssues: number;
-  /** One bounded page for a labels AND-query, oldest-first (the `listOpenIssuesPage` edge). */
-  fetchPage: (labelsQuery: string, page: number, perPage: number) => Promise<IssueLite[]>;
+  /**
+   * One bounded page for a labels AND-query, oldest-first (the `listOpenIssuesPage`
+   * edge). `issues` are the PR-filtered survivors; `fetched` is the RAW page size
+   * (issues + PRs) GitHub returned - the exhaustion signal, since a PR intermixed
+   * into a full page shortens `issues` without draining the query.
+   */
+  fetchPage: (
+    labelsQuery: string,
+    page: number,
+    perPage: number,
+  ) => Promise<{ issues: IssueLite[]; fetched: number }>;
   /**
    * Reduce a fetched page to the issues that actually get a slot: the branch
    * filter (drops attempted / resets orphaned) and the Layer-A triage gate, both
@@ -45,7 +54,9 @@ export interface SelectByPriorityParams {
 
 export async function selectIssuesByPriority(params: SelectByPriorityParams): Promise<IssueLite[]> {
   const { rule, priority, maxIssues, fetchPage, keepEligible } = params;
-  const perPage = Math.max(1, maxIssues);
+  // GitHub caps per_page at 100; clamp so page offsets stay aligned with what the
+  // API actually returns (a requested perPage > 100 would never yield a "full" page).
+  const perPage = Math.min(Math.max(1, maxIssues), 100);
   const pickupQueries = labelQueriesForRule(rule);
   const tiers = priorityTiers(priority);
 
@@ -61,8 +72,8 @@ export async function selectIssuesByPriority(params: SelectByPriorityParams): Pr
       const labelsQuery = tier === UNLABELED_TIER ? pickup : `${pickup},${tier}`;
       let page = 1;
       for (;;) {
-        const rawPage = await fetchPage(labelsQuery, page, perPage);
-        if (rawPage.length === 0) break; // query exhausted
+        const { issues: rawPage, fetched } = await fetchPage(labelsQuery, page, perPage);
+        if (fetched === 0) break; // query exhausted
         // Re-filter with the full rule (covers the combined any+all case, like
         // selectIssues), drop already-seen numbers, and for the unlabeled tier
         // keep only issues carrying NONE of the configured priority labels.
@@ -79,9 +90,11 @@ export async function selectIssuesByPriority(params: SelectByPriorityParams): Pr
           if (selected.length >= maxIssues) break;
         }
         if (selected.length >= maxIssues) break;
-        // A short page means this query is drained; move to the next query / tier
-        // instead of paging past the end.
-        if (rawPage.length < perPage) break;
+        // A short RAW page (fewer items than requested, PRs included) means this
+        // query is drained; move to the next query / tier instead of paging past
+        // the end. Using the RAW count, not the PR-filtered length, avoids stopping
+        // early on a full page that merely happened to carry a PR.
+        if (fetched < perPage) break;
         page += 1;
       }
     }

@@ -149,10 +149,12 @@ describe("makeGitHubApi.listOpenIssuesPage", () => {
       page: 2,
     });
     // PR #2 dropped; body defaults to ""; label objects and strings both mapped.
-    expect(page).toEqual([
+    expect(page.issues).toEqual([
       { number: 1, title: "a", body: "x", labels: ["overnight"] },
       { number: 3, title: "c", body: "", labels: ["priority: high"] },
     ]);
+    // `fetched` is the RAW count (incl. the PR), the exhaustion signal.
+    expect(page.fetched).toBe(3);
   });
 });
 

@@ -94,7 +94,8 @@ const github: GitHubApi = {
   },
   async listOpenIssuesPage(_labelsQuery, { page, perPage }) {
     const start = (page - 1) * perPage;
-    return issues.slice(start, start + perPage);
+    const slice = issues.slice(start, start + perPage);
+    return { issues: slice, fetched: slice.length };
   },
   async ensurePullRequest(params) {
     const existing = pulls.find((pull) => pull.head === params.head);

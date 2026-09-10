@@ -16,17 +16,23 @@ function issue(number: number, ...priorityLabels: string[]): IssueLite {
 
 /**
  * A store keyed by labels AND-query -> the issues carrying every label in it,
- * ordered as given. `fetchPage` slices a bounded page and records every fetch so
- * a test can assert boundedness (page count).
+ * ordered as given. `fetchPage` slices a bounded RAW page and records every fetch
+ * so a test can assert boundedness (page count). Numbers in `prNumbers` stand in
+ * for PRs `listForRepo` intermixes: they occupy a raw-page slot (count toward
+ * `fetched`) but are excluded from the returned `issues`.
  */
-function makeStore(all: IssueLite[]) {
+function makeStore(all: IssueLite[], prNumbers: Set<number> = new Set()) {
   const fetches: Array<{ labelsQuery: string; page: number; perPage: number }> = [];
   const fetchPage = async (labelsQuery: string, page: number, perPage: number) => {
     fetches.push({ labelsQuery, page, perPage });
     const required = labelsQuery.split(",");
     const matching = all.filter((i) => required.every((label) => i.labels.includes(label)));
     const start = (page - 1) * perPage;
-    return matching.slice(start, start + perPage);
+    const rawSlice = matching.slice(start, start + perPage);
+    return {
+      issues: rawSlice.filter((i) => !prNumbers.has(i.number)),
+      fetched: rawSlice.length,
+    };
   };
   return { fetchPage, fetches };
 }
@@ -106,6 +112,28 @@ describe("selectIssuesByPriority", () => {
     // A short page (1 < perPage 3) exhausts each tier in one fetch, so exactly the
     // three tiers were queried once each - no wasted extra page.
     expect(fetches.map((f) => f.page)).toEqual([1, 1, 1]);
+  });
+
+  it("pages past a PR-shortened full page instead of falsely exhausting the tier", async () => {
+    // High tier: eight matching items, #1 a PR `listForRepo` intermixes. Page 1 is a
+    // FULL raw page (fetched == perPage 5) but yields only 4 real issues; the rest are
+    // on page 2. The loop must page on - the old bug broke on the short FILTERED length.
+    const all = [1, 2, 3, 4, 5, 6, 7, 8].map((n) => issue(n, "priority: high"));
+    const { fetchPage, fetches } = makeStore(all, new Set([1]));
+    const selected = await selectIssuesByPriority({
+      rule,
+      priority: priorityOn(),
+      maxIssues: 5,
+      fetchPage,
+      keepEligible: keepAll,
+    });
+    // Page 1 real issues [2,3,4,5] + one from page 2 fills the cap of 5.
+    expect(selected.map((i) => i.number)).toEqual([2, 3, 4, 5, 6]);
+    // Two high pages were fetched: the loop did not stop on the PR-shortened page 1.
+    const highPages = fetches.filter((f) => f.labelsQuery.includes("priority: high"));
+    expect(highPages.map((f) => f.page)).toEqual([1, 2]);
+    // The page size is clamped to GitHub's per_page ceiling.
+    expect(fetches.every((f) => f.perPage <= 100)).toBe(true);
   });
 
   it("works the unlabeled tier last, and only issues carrying no priority label", async () => {
