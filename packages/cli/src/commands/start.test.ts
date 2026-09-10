@@ -3,6 +3,7 @@ import type { Octokit } from "@octokit/rest";
 import type { CliContext } from "../context.ts";
 import type { EngineStatus } from "../docker/engine-check.ts";
 import type { RunnerInfo } from "../github/runner-registration.ts";
+import { ADMIN_TOKEN_MISSING_MESSAGE } from "../context.ts";
 import { startCommand, type StartDeps } from "./start.ts";
 
 const okEngine: EngineStatus = { ok: true, engine: "colima", detail: "colima (test)" };
@@ -11,6 +12,20 @@ function makeCtx(): CliContext {
   return {
     config: { repos: [{ name: "acme/widgets" }], runner: { dir: "/tmp/fixowl-runners" } },
     admin: {} as Octokit,
+  } as unknown as CliContext;
+}
+
+/**
+ * A context whose admin client is unavailable - the setup-only admin token was
+ * revoked/removed after provisioning (issue #80). Reaching for `admin` throws,
+ * exactly as makeContext's lazy getter does.
+ */
+function makeCtxNoAdmin(): CliContext {
+  return {
+    config: { repos: [{ name: "acme/widgets" }], runner: { dir: "/tmp/fixowl-runners" } },
+    get admin(): Octokit {
+      throw new Error(ADMIN_TOKEN_MISSING_MESSAGE);
+    },
   } as unknown as CliContext;
 }
 
@@ -96,6 +111,36 @@ describe("fixowl start", () => {
     );
     expect(deps.svcInstall).not.toHaveBeenCalled();
     expect(deps.registerRunner).not.toHaveBeenCalled();
+  });
+
+  it("runs the routine path with no admin token, soft-failing the online check (issue #80)", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const info = vi.spyOn(console, "log");
+    // findRunner is real here: reportOnlineStatus reaches for ctx.admin, which
+    // throws (token absent). That must be caught, not fatal.
+    const deps = stubDeps();
+
+    await expect(startCommand(makeCtxNoAdmin(), undefined, { deps })).resolves.toBeUndefined();
+
+    expect(deps.svcInstall).toHaveBeenCalledTimes(1);
+    expect(deps.svcStart).toHaveBeenCalledTimes(1);
+    expect(deps.registerRunner).not.toHaveBeenCalled();
+    const printed = info.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(printed).toContain("could not confirm online status");
+  });
+
+  it("fails clearly on --register when the admin token is absent (issue #80)", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const deps = stubDeps();
+
+    await expect(
+      startCommand(makeCtxNoAdmin(), undefined, { register: true, deps }),
+    ).rejects.toThrow(/setup-only/);
+
+    // Fails up front - before touching Docker or the service.
+    expect(deps.ensureEngineRunning).not.toHaveBeenCalled();
+    expect(deps.registerRunner).not.toHaveBeenCalled();
+    expect(deps.svcInstall).not.toHaveBeenCalled();
   });
 
   it("registers first when --register is passed (explicit setup path for another host)", async () => {

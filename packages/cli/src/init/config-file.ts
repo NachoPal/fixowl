@@ -280,7 +280,7 @@ export function renderConfigYaml(answers: ConfigAnswers): string {
 version: 1
 
 github:
-  admin_token: \${FIXOWL_ADMIN_TOKEN}      # fine-grained PAT, CLI machine only
+  admin_token: \${FIXOWL_ADMIN_TOKEN}      # fine-grained PAT, CLI machine only; setup-only and optional - remove this line (and the secret) once done provisioning. See docs/security.md.
 ${appBlock}${fallbackTokenLine}
 
 # runner:

@@ -74,22 +74,31 @@ export async function statusCommand(ctx: CliContext, repoArg: string | undefined
       log.info(`  last run: workflow not provisioned yet`);
     }
 
-    // Open fixowl PRs
-    const { data: pulls } = await ctx.admin.rest.pulls.list({
-      ...ref,
-      state: "open",
-      per_page: 100,
-    });
-    const fixowlPulls = pulls.filter((pull) => pull.head.ref.startsWith("issue/"));
-    log.info(`  open fixowl PRs: ${fixowlPulls.length}`);
-    for (const pull of fixowlPulls) {
-      log.info(`    #${pull.number} ${pull.title} (${pull.head.ref} -> ${pull.base.ref})`);
-    }
+    // Open fixowl PRs and the public-repo note. These read through the admin
+    // client too, so - like the runner/last-run checks above - degrade rather
+    // than fail when the setup-only admin token is absent or downgraded.
+    try {
+      const { data: pulls } = await ctx.admin.rest.pulls.list({
+        ...ref,
+        state: "open",
+        per_page: 100,
+      });
+      const fixowlPulls = pulls.filter((pull) => pull.head.ref.startsWith("issue/"));
+      log.info(`  open fixowl PRs: ${fixowlPulls.length}`);
+      for (const pull of fixowlPulls) {
+        log.info(`    #${pull.number} ${pull.title} (${pull.head.ref} -> ${pull.base.ref})`);
+      }
 
-    const { data: repoData } = await ctx.admin.rest.repos.get({ ...ref });
-    if (repoData.private === false) {
+      const { data: repoData } = await ctx.admin.rest.repos.get({ ...ref });
+      if (repoData.private === false) {
+        log.info(
+          `  note: public repo; GitHub disables the schedule after 60 days without repo activity`,
+        );
+      }
+    } catch (error) {
       log.info(
-        `  note: public repo; GitHub disables the schedule after 60 days without repo activity`,
+        `  open fixowl PRs: unknown - needs the admin token (${describeGitHubError(error)}); ` +
+          `see the repo's Pull requests tab`,
       );
     }
   }
