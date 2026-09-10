@@ -85911,7 +85911,18 @@ var RUNTIME_TOKEN_REMOVED_MESSAGE = "github.runtime_token (the runtime PAT) was 
 var globalConfigSchema = external_exports.object({
   version: external_exports.literal(1),
   github: external_exports.object({
-    admin_token: external_exports.string().min(1),
+    /**
+     * The setup-only admin PAT (Administration: write). OPTIONAL at load: it is
+     * needed only by the provisioning paths (`fixowl provision`,
+     * `fixowl start --register`), and docs/security.md tells operators to revoke
+     * and remove it after setup. Routine commands (`start`, `fallback check`,
+     * `status`) must load and run without it - the admin Octokit is built
+     * lazily in makeContext and only the setup paths require it (see
+     * packages/cli/src/context.ts and the AGENTS.md "admin token is setup-only"
+     * invariant). Kept as `min(1).optional()` so a present-but-empty value is
+     * still rejected.
+     */
+    admin_token: external_exports.string().min(1).optional(),
     /** The GitHub App runtime credential; required (see docs/app-auth.md). */
     app: githubAppSchema,
     /** Rejected loudly: the runtime-PAT credential no longer exists. */

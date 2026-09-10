@@ -15,7 +15,7 @@ import {
   REPO_CONFIG_PATH,
   WORKFLOW_PATH,
 } from "@fixowl/core";
-import { ACTION_REPO, targetRepos, type CliContext } from "../context.ts";
+import { ACTION_REPO, requireAdmin, targetRepos, type CliContext } from "../context.ts";
 import { resolvePrivateKey, toPkcs8Pem } from "../github/app-key.ts";
 import {
   branchExists,
@@ -71,6 +71,9 @@ export async function provisionCommand(
   repoArg: string | undefined,
   options: ProvisionOptions,
 ): Promise<ProvisionResult> {
+  // Provisioning needs Administration: write; fail clearly up front if the
+  // setup-only admin token was never set (or was already revoked).
+  requireAdmin(ctx);
   const prs: ProvisionedPr[] = [];
   const actionRef = await resolveActionRef(ctx.admin, ACTION_REPO);
   for (const repoFullName of targetRepos(ctx.config, repoArg)) {

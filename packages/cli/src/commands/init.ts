@@ -1577,7 +1577,7 @@ const STARTER_CONFIG = `# fixowl configuration. Secrets live in secrets.env next
 version: 1
 
 github:
-  admin_token: \${FIXOWL_ADMIN_TOKEN}      # fine-grained PAT, CLI machine only; setup-only, revocable after provision
+  admin_token: \${FIXOWL_ADMIN_TOKEN}      # fine-grained PAT, CLI machine only; setup-only and optional - remove this line (and the secret) once done provisioning. See docs/security.md.
   app:                                     # GitHub App: the night run's only credential (real CI-gating; auto-refreshing token). See docs/app-auth.md.
     app_id: 123456                         # App settings page, "About" section
     installation_id: 7890123               # the number in https://github.com/settings/installations/<id>

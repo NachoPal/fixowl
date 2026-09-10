@@ -1,7 +1,7 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import type { Octokit } from "@octokit/rest";
 import { runnerBaseDir } from "@fixowl/core";
-import { targetRepos, type CliContext } from "../context.ts";
+import { requireAdmin, targetRepos, type CliContext } from "../context.ts";
 import { ensureEngineRunning, type EngineStatus } from "../docker/engine-check.ts";
 import { describeGitHubError } from "../github/errors.ts";
 import { splitRepoFullName, type RepoRef } from "../github/repo-provisioning.ts";
@@ -58,6 +58,12 @@ export async function startCommand(
   options: StartOptions = {},
 ): Promise<void> {
   const deps = { ...defaultDeps, ...options.deps };
+
+  // `start --register` registers the runner (Administration: write), so it needs
+  // the setup-only admin token; fail clearly before touching Docker. Routine
+  // `start` never registers and needs no admin token (its online check below
+  // soft-fails when the token is absent or downgraded).
+  if (options.register === true) requireAdmin(ctx);
 
   const engine = await deps.ensureEngineRunning();
   if (!engine.ok) {

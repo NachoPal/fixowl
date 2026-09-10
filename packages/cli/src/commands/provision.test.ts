@@ -2,7 +2,7 @@ import { generateKeyPairSync } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Octokit } from "@octokit/rest";
 import { globalConfigSchema } from "@fixowl/core";
-import type { CliContext } from "../context.ts";
+import { ADMIN_TOKEN_MISSING_MESSAGE, type CliContext } from "../context.ts";
 import { provisionCommand, type ProvisionOptions } from "./provision.ts";
 
 /** A real base64-encoded PKCS#8 key so provision's toPkcs8Pem normalization runs. */
@@ -204,6 +204,33 @@ describe("fixowl provision", () => {
         ref: { owner: "acme", repo: "widgets" },
       }),
     );
+  });
+
+  it("fails clearly (before any API call) when the admin token is absent (issue #80)", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const getContent = vi.fn();
+    const ctx = {
+      config: globalConfigSchema.parse({
+        version: 1,
+        github: {
+          app: { app_id: 123456, installation_id: 7890123, private_key: APP_PRIVATE_KEY_B64 },
+        },
+        repos: [{ name: "acme/widgets" }],
+      }),
+      secrets: {},
+      // Setup-only admin token revoked/removed: reaching for it throws.
+      get admin(): Octokit {
+        throw new Error(ADMIN_TOKEN_MISSING_MESSAGE);
+      },
+    } as unknown as CliContext;
+
+    await expect(
+      provisionCommand(ctx, undefined, {
+        registerRunner: vi.fn(async () => "configured" as const),
+      }),
+    ).rejects.toThrow(/setup-only/);
+    // The guard runs before the first admin API call.
+    expect(getContent).not.toHaveBeenCalled();
   });
 
   it("seals the App secret trio (plus agent env) and renders the App workflow", async () => {
