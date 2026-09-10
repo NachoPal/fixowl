@@ -85379,6 +85379,8 @@ var PROMPT_MOUNT_PATH = "/fixowl/prompt.md";
 var WORKSPACE_MOUNT_PATH = "/workspace";
 var CLAUDE_OAUTH_TOKEN_ENV = "CLAUDE_CODE_OAUTH_TOKEN";
 var ANTHROPIC_API_KEY_ENV = "ANTHROPIC_API_KEY";
+var OPENAI_API_KEY_ENV = "OPENAI_API_KEY";
+var CODEX_LOGIN_THEN_EXEC = `printf %s "$${OPENAI_API_KEY_ENV}" | codex login --with-api-key 1>&2 && exec "$@"`;
 var claude = {
   name: "claude",
   // Both credentials are allowlisted so either can be the chosen one; `fixowl
@@ -85436,7 +85438,18 @@ var codex = {
   // It is NOT set in classify mode: classify parses the agent's final message out
   // of raw stdout (main.ts::parseClassification), which JSONL would break; a
   // single classify call's token spend is a negligible, accepted under-count.
+  //
+  // The run is wrapped in `bash -c '<login> && exec "$@"'` because `codex exec`
+  // does not read the API key from the environment; the login step writes
+  // codex's auth file first, from the same `OPENAI_API_KEY` that rides the env
+  // allowlist. See CODEX_LOGIN_THEN_EXEC above. The `codex exec ...` array is
+  // passed as the shell's positional args (`"$@"`), never interpolated.
   argv: (mode, selection) => [
+    "bash",
+    "-c",
+    CODEX_LOGIN_THEN_EXEC,
+    // $0 for `bash -c`; a label, not executed (the script uses only "$@").
+    "codex",
     "codex",
     "exec",
     ...mode === "fix" ? ["--json"] : [],

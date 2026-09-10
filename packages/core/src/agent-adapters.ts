@@ -46,6 +46,39 @@ export const WORKSPACE_MOUNT_PATH = "/workspace";
 export const CLAUDE_OAUTH_TOKEN_ENV = "CLAUDE_CODE_OAUTH_TOKEN";
 export const ANTHROPIC_API_KEY_ENV = "ANTHROPIC_API_KEY";
 
+/**
+ * The env var carrying codex's OpenAI API key. codex authenticates ONLY via
+ * this key (its ChatGPT-subscription OAuth-file path is unsupported), so the
+ * name is fixed here and the codex adapter's runtime login reads it by this
+ * exact name. `fixowl init` writes `codex: { env: [OPENAI_API_KEY] }`.
+ */
+export const OPENAI_API_KEY_ENV = "OPENAI_API_KEY";
+
+/**
+ * Establishes codex's file-based auth from the forwarded API key, then execs the
+ * real `codex exec ...` (which rides as the shell's positional parameters, so no
+ * model/effort value is ever interpolated into the shell string). Verified
+ * against codex-cli 0.153.4: `codex exec` does NOT authenticate from
+ * `OPENAI_API_KEY` in the environment - it detects the var but sends no bearer
+ * token, so the OpenAI endpoint returns `401 ... Missing bearer or basic
+ * authentication in header`. Auth is a file (`$CODEX_HOME/auth.json`) written by
+ * `codex login --with-api-key`, which reads the key from stdin and prints ONLY to
+ * stderr (so the fix-mode `--json` JSONL stream on stdout stays clean for
+ * parseCodexUsage). Notes:
+ *  - `printf %s "$OPENAI_API_KEY" | codex login` feeds login its own pipe; the
+ *    issue prompt fixowl pipes to the container stays on the shell's stdin and is
+ *    inherited by `exec codex exec` (login never touches it).
+ *  - `&&` makes a missing/empty key fail loudly (login exits non-zero) instead of
+ *    the previous silent 401.
+ *  - `exec` replaces the shell so codex owns the process (signals, exit code, the
+ *    container-timeout `docker rm -f <name>` all behave as before).
+ *  - auth.json lands in the container's ephemeral `HOME` (container-exec.ts sets
+ *    HOME=/tmp) and dies with the `--rm` container; the key is never written to a
+ *    host disk or an image layer, and only its NAME (`$OPENAI_API_KEY`) - never
+ *    its value - appears in the argv.
+ */
+export const CODEX_LOGIN_THEN_EXEC = `printf %s "$${OPENAI_API_KEY_ENV}" | codex login --with-api-key 1>&2 && exec "$@"`;
+
 export interface AgentAdapter {
   name: string;
   /** Env var allowlist. Default-deny: anything not listed never reaches the container. */
@@ -117,7 +150,18 @@ const codex: AgentAdapter = {
   // It is NOT set in classify mode: classify parses the agent's final message out
   // of raw stdout (main.ts::parseClassification), which JSONL would break; a
   // single classify call's token spend is a negligible, accepted under-count.
+  //
+  // The run is wrapped in `bash -c '<login> && exec "$@"'` because `codex exec`
+  // does not read the API key from the environment; the login step writes
+  // codex's auth file first, from the same `OPENAI_API_KEY` that rides the env
+  // allowlist. See CODEX_LOGIN_THEN_EXEC above. The `codex exec ...` array is
+  // passed as the shell's positional args (`"$@"`), never interpolated.
   argv: (mode, selection) => [
+    "bash",
+    "-c",
+    CODEX_LOGIN_THEN_EXEC,
+    // $0 for `bash -c`; a label, not executed (the script uses only "$@").
+    "codex",
     "codex",
     "exec",
     ...(mode === "fix" ? ["--json"] : []),

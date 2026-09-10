@@ -249,7 +249,12 @@ agents:
 ```
 
 `OPENAI_API_KEY` then rides the same default-deny env allowlist every other
-adapter uses (its value never appears in any argv). Models seed as the
+adapter uses (its value never appears in any argv). `codex exec` does not read
+that key from the environment, so at the start of each run the adapter runs
+`codex login --with-api-key` from the forwarded key to write codex's auth file,
+then execs `codex exec` - all inside the same ephemeral, `--rm` container, so the
+key is never written to a host disk or an image layer (a missing/empty key fails
+the run loudly instead of a silent 401). Models seed as the
 `gpt-5-codex` family (`gpt-5-codex`, `gpt-5.1-codex`, `gpt-5.1-codex-max`) and
 efforts are `minimal`/`low`/`medium`/`high`/`xhigh`; codex takes `-m <model>`
 and maps effort to `-c model_reasoning_effort=<level>`. The real model list is

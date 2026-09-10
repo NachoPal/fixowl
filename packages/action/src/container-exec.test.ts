@@ -196,7 +196,14 @@ describe("codex adapter end-to-end plumbing (no live codex)", () => {
     expect(joined).toContain(
       "codex exec --json --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox --ephemeral -C /workspace -m gpt-5-codex -c model_reasoning_effort=high",
     );
-    // The prompt rides stdin, never the argv.
+    // codex exec does not read OPENAI_API_KEY from the env, so the agent is run
+    // inside a `bash -c` wrapper that establishes codex's file auth from the
+    // forwarded key first. Only the env var NAME rides the argv, never a value.
+    expect(joined).toContain('codex login --with-api-key 1>&2 && exec "$@"');
+    expect(joined).toContain("$OPENAI_API_KEY");
+    expect(joined).not.toContain("sk-secret");
+    // The prompt rides stdin, never the argv; login consumes only its own pipe,
+    // so codex exec still reads the prompt from the container's stdin.
     expect(runArgv).toContain("-i");
     expect(runOptions?.stdin).toBe("Fix issue #7.");
     expect(joined).not.toContain("Fix issue #7.");
