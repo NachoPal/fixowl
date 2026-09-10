@@ -28,19 +28,24 @@
           - "scripts/**"
           - ".github/workflows/release.yml"
 
-# Other CI: any workflow EXCEPT the release workflow (that is `area: release`).
+# Other CI: anything under .github/ EXCEPT the release workflow (that is
+# `area: release`). This is the whole `.github/` surface - workflows, but also
+# dependabot.yml, labeler.yml, actionlint.yaml, issue/PR templates, and
+# release.yml (release-notes config) - so a PR that only touches non-workflow
+# `.github/` config still gets an `area:` label.
 # `all-globs-to-any-file` is true iff at least one changed file matches ALL of
 # these globs at once (labeler evaluates the two globs against the SAME file):
-# a file under .github/workflows/** AND, via Minimatch negation, not release.yml.
-# So the label fires exactly when some non-release workflow changed - a PR that
-# touches ONLY release.yml never matches (that is `area: release`), and a mixed
-# PR touching release.yml plus another workflow still gets `area: ci` for the
-# real CI change. This deliberately replaces the earlier two-rule form, whose
-# clauses labeler ORs (not ANDs), so the negated clause fired on nearly every PR.
+# a file under .github/** AND, via Minimatch negation, not release.yml.
+# So the label fires exactly when some non-release `.github/` file changed - a
+# PR that touches ONLY release.yml never matches (that is `area: release`), and
+# a mixed PR touching release.yml plus another `.github/` file still gets
+# `area: ci` for the real CI change. This deliberately replaces the earlier
+# two-rule form, whose clauses labeler ORs (not ANDs), so the negated clause
+# fired on nearly every PR.
 "area: ci":
   - changed-files:
       - all-globs-to-any-file:
-          - ".github/workflows/**"
+          - ".github/**"
           - "!.github/workflows/release.yml"
 
 # Docs: the docs/ tree and the top-level README. NOT a bare `*.md`, which also
