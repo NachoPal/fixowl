@@ -300,8 +300,10 @@ that trips, and the night summary names which:
   `claude`, the non-billing OAuth usage endpoint, using the token the host
   already holds - nothing new enters the agent container). A read failure is
   *advisory*: it abstains and falls through to the other budgets rather than
-  aborting the night. Opted out when unset. Silently no-ops for an API-credit
-  agent, which has no such window - use `total_token_budget` instead.
+  aborting the night. Opted out when unset. No-ops for an API-credit agent,
+  which has no such window - `fixowl validate` warns once when it is set for
+  such an agent (pointing you at `total_token_budget`), and the night run then
+  skips the read entirely instead of re-warning every run.
 - **`total_token_budget`** - the API-credit counterpart, for **pay-per-token**
   agents (`codex` on `OPENAI_API_KEY`, or `claude` on `ANTHROPIC_API_KEY`): stop
   before starting a new issue once the night's accumulated token spend reaches

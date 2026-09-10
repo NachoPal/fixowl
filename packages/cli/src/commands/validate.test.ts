@@ -337,8 +337,8 @@ describe("validateCommand budget/billing warning", () => {
   it("does not warn about usage_budget_percent for unpinned claude on OAuth only", async () => {
     await validateCommand(validateCtx());
     const budgetWarnings = warnSpy.mock.calls
-      .map((call) => String(call[0]))
-      .filter((message) => message.includes("usage_budget_percent"));
+      .map((call: unknown[]) => String(call[0]))
+      .filter((message: string) => message.includes("usage_budget_percent"));
     expect(budgetWarnings).toEqual([]);
   });
 });
