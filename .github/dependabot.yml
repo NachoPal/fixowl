@@ -7,8 +7,6 @@ updates:
     open-pull-requests-limit: 5
     labels:
       - "dependencies"
-      - "for: agent"
-      - "effort: low"
     groups:
       npm-minor-and-patch:
         update-types:
@@ -20,8 +18,6 @@ updates:
       interval: "weekly"
     labels:
       - "dependencies"
-      - "for: agent"
-      - "effort: low"
     groups:
       github-actions:
         patterns:
