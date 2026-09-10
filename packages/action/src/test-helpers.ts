@@ -198,7 +198,12 @@ export class FakeGitHub implements GitHubApi {
     this.labelsAdded.push({ issueNumber, labels: [...labels] });
   }
 
+  listRecentWorkflowRunsError?: Error;
+
   async listRecentWorkflowRuns(): Promise<WorkflowRunLite[]> {
+    if (this.listRecentWorkflowRunsError !== undefined) {
+      throw this.listRecentWorkflowRunsError;
+    }
     return this.workflowRuns;
   }
 

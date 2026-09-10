@@ -1433,6 +1433,24 @@ describe("runNight", () => {
       expect(summary.results[0]?.status).toBe("pr-opened");
     });
 
+    it("fails open and proceeds when listing recent workflow runs throws", async () => {
+      const { workspaceDir, inputs } = await setup();
+      const github = new FakeGitHub([issue(1, "Fix header", "x")]);
+      // A transient 5xx / secondary rate limit / missing `actions: read` must
+      // not lose the whole night (issue #77): the guard promises to fail open.
+      github.listRecentWorkflowRunsError = new Error("503 Server Error");
+      const engine = makeEngine({ workspaceDir });
+
+      const summary = await runNight(
+        { github, engine, exec: realExec, log: silentLog, clock: instantClock() },
+        { ...inputs, scheduledSlot: true, currentRunId: 200 },
+      );
+
+      // The night proceeded rather than aborting or standing down.
+      expect(summary.standDown).toBeUndefined();
+      expect(summary.results[0]?.status).toBe("pr-opened");
+    });
+
     it("never guards a plain manual dispatch, even when a slot run already ran today", async () => {
       const { workspaceDir, inputs } = await setup();
       const github = new FakeGitHub([issue(1, "Fix header", "x")]);

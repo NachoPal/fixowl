@@ -254,7 +254,19 @@ async function checkScheduledSlotBudget(
     );
     return undefined;
   }
-  const runs = await deps.github.listRecentWorkflowRuns();
+  let runs;
+  try {
+    runs = await deps.github.listRecentWorkflowRuns();
+  } catch (error) {
+    // Fail open, as the doc comment promises: a transient 5xx, a secondary rate
+    // limit, or a workflow lacking `actions: read` must not lose the whole night
+    // (a `schedule` run already exists, so the local fallback stands down too).
+    deps.log.warn(
+      "scheduled-slot budget guard disabled: listing recent workflow runs " +
+        `failed (${String(error)}); proceeding with the night`,
+    );
+    return undefined;
+  }
   const guard = guardScheduledSlot({
     runs,
     now: new Date(),
