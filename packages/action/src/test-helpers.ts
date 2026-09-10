@@ -118,7 +118,7 @@ export class FakeGitHub implements GitHubApi {
     const start = (page - 1) * perPage;
     const rawSlice = matching.slice(start, start + perPage);
     return {
-      issues: rawSlice.filter((issue) => !this.prNumbers.has(issue.number)),
+      issues: rawSlice.filter((candidate) => !this.prNumbers.has(candidate.number)),
       fetched: rawSlice.length,
     };
   }

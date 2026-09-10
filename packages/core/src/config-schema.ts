@@ -300,8 +300,9 @@ export const FIXOWL_DEFAULTS = {
   skipDuplicates: true,
   verifyBeforeFix: true,
   /**
-   * Starter priority labels `fixowl init` offers when the operator opts into
-   * priority-label selection. NOT a resolution fallback: an unset `priority`
+   * Recommended starter priority labels for when the operator opts into
+   * priority-label selection (the interactive `fixowl init`/`edit` prompt is a
+   * follow-up; configure by hand for now). NOT a resolution fallback: an unset `priority`
    * block stays disabled (selection unchanged), exactly like the run-budget axes,
    * so a config written before this feature behaves as it did. See
    * docs/priority-selection.md.

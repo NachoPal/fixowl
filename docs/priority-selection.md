@@ -24,7 +24,9 @@ repos:
   - name: you/your-repo
     priority:
       # Ordered highest -> lowest. The ARRAY ORDER is the precedence; the names
-      # are yours to choose. These three are what `fixowl init` offers.
+      # are yours to choose. These three are the recommended starter set (an
+      # interactive `fixowl init`/`edit` prompt is a follow-up; configure by hand
+      # for now).
       labels:
         - "priority: high"
         - "priority: medium"
