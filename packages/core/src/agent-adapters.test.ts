@@ -7,10 +7,17 @@ import {
   agentAdapterNames,
   ANTHROPIC_API_KEY_ENV,
   CLAUDE_OAUTH_TOKEN_ENV,
+  CODEX_LOGIN_THEN_EXEC,
   FORBIDDEN_AGENT_ENV,
   getAgentAdapter,
   PROMPT_MOUNT_PATH,
 } from "./agent-adapters.ts";
+
+// Every codex run is `bash -c '<login> && exec "$@"' codex <codex exec ...>`:
+// codex exec does not read OPENAI_API_KEY from the env, so the adapter logs in
+// first (writing codex's auth file from the forwarded key) and then execs the
+// real argv, which rides as the shell's positional params ($0="codex", $@=rest).
+const CODEX_WRAP = ["bash", "-c", CODEX_LOGIN_THEN_EXEC, "codex"] as const;
 
 describe("agent adapters", () => {
   it("claude: headless argv, prompt on stdin, both credentials allowlisted", () => {
@@ -72,6 +79,7 @@ describe("agent adapters", () => {
   it("codex: exec argv, prompt on stdin, empty default env allowlist (opt-in spend)", () => {
     const codex = getAgentAdapter("codex");
     expect(codex.argv("fix")).toEqual([
+      ...CODEX_WRAP,
       "codex",
       "exec",
       "--json",
@@ -85,6 +93,7 @@ describe("agent adapters", () => {
     // stdout, which the JSONL stream would break. --json is fix-mode only (its
     // usage events feed the in-band token budget, agent-spend.ts).
     expect(codex.argv("classify")).toEqual([
+      ...CODEX_WRAP,
       "codex",
       "exec",
       "--skip-git-repo-check",
@@ -98,9 +107,25 @@ describe("agent adapters", () => {
     expect(codex.env).toEqual([]);
   });
 
+  it("codex: logs in from the forwarded key before exec, without leaking it", () => {
+    const codex = getAgentAdapter("codex");
+    const argv = codex.argv("fix", { model: "gpt-5-codex", effort: "high" });
+    // The run is a bash wrapper that establishes codex's file auth first.
+    expect(argv.slice(0, 3)).toEqual(["bash", "-c", CODEX_LOGIN_THEN_EXEC]);
+    // Only the env var NAME appears (login reads the value from it at runtime);
+    // the wrapper never interpolates a secret value into the argv.
+    expect(CODEX_LOGIN_THEN_EXEC).toContain("$OPENAI_API_KEY");
+    expect(CODEX_LOGIN_THEN_EXEC).toContain("codex login --with-api-key");
+    // login output is kept off stdout so the fix-mode --json stream stays clean.
+    expect(CODEX_LOGIN_THEN_EXEC).toContain("1>&2");
+    // `exec "$@"` runs the real codex exec argv passed as positional params.
+    expect(CODEX_LOGIN_THEN_EXEC).toContain('exec "$@"');
+  });
+
   it("codex: appends -m and maps effort to a -c config override when selected", () => {
     const codex = getAgentAdapter("codex");
     expect(codex.argv("fix", { model: "gpt-5-codex", effort: "high" })).toEqual([
+      ...CODEX_WRAP,
       "codex",
       "exec",
       "--json",
@@ -116,6 +141,7 @@ describe("agent adapters", () => {
     ]);
     // A partial selection omits the absent flag.
     expect(codex.argv("fix", { model: "gpt-5.1-codex" })).toEqual([
+      ...CODEX_WRAP,
       "codex",
       "exec",
       "--json",
@@ -128,6 +154,7 @@ describe("agent adapters", () => {
       "gpt-5.1-codex",
     ]);
     expect(codex.argv("fix", { effort: "minimal" })).toEqual([
+      ...CODEX_WRAP,
       "codex",
       "exec",
       "--json",

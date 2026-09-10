@@ -162,6 +162,19 @@ warns about any that are unset, and passes only the resolved subset into the
 container. The **value** never appears in any argv - only the credential's *name*
 lives in the adapter.
 
+> **Not every CLI reads its key from the environment.** Forwarding the key is
+> necessary but not always sufficient: some CLIs only pick up an API key from a
+> credential *file* they manage. `codex` is one - `codex exec` detects
+> `OPENAI_API_KEY` but sends no bearer token, so codex's adapter runs
+> `codex login --with-api-key` (fed the forwarded key) to write its auth file
+> *before* `codex exec`, inside the same container run. The sanctioned pattern
+> is a `bash -c '<login> && exec "$@"'` wrapper: the login command reads the key
+> from `$THE_ENV_VAR` (name only - never a value interpolated into the string)
+> and writes only to stderr, and the real agent argv rides as the shell's
+> positional parameters (`"$@"`), so no model/effort value is interpolated into a
+> shell string and the prompt still reaches the agent on stdin. See
+> `CODEX_LOGIN_THEN_EXEC` in `agent-adapters.ts`.
+
 > **Credential shape matters.** The allowlist model assumes a credential that
 > fits in an env var (an API key or a single token). An agent authenticated by a
 > refreshable OAuth token *file* (e.g. a ChatGPT/Codex subscription) does not fit
