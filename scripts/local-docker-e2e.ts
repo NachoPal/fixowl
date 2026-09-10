@@ -92,6 +92,10 @@ const github: GitHubApi = {
   async listOpenIssuesWithLabels() {
     return issues;
   },
+  async listOpenIssuesPage(_labelsQuery, { page, perPage }) {
+    const start = (page - 1) * perPage;
+    return issues.slice(start, start + perPage);
+  },
   async ensurePullRequest(params) {
     const existing = pulls.find((pull) => pull.head === params.head);
     if (existing !== undefined) return { number: 500, url: "https://example.test/pull/500" };

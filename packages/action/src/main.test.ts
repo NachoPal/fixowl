@@ -1621,3 +1621,54 @@ describe("pre-work triage gate", () => {
     expect(markdown).toContain("pull/51");
   });
 });
+
+describe("runNight priority selection", () => {
+  const PRIORITY = {
+    labels: ["priority: high", "priority: medium", "priority: low"],
+    includeUnlabeled: true,
+  };
+  const prioritized: IssueLite[] = [
+    issue(1, "Fix one", "x", ["overnight", "priority: low"]),
+    issue(2, "Fix two", "x", ["overnight", "priority: high"]),
+    issue(3, "Fix three", "x", ["overnight", "priority: medium"]),
+    issue(4, "Fix four", "x", ["overnight", "priority: high"]),
+  ];
+
+  it("fills the cap highest-priority-first, oldest-first within a tier", async () => {
+    const { workspaceDir, inputs } = await setup();
+    const github = new FakeGitHub(structuredClone(prioritized));
+    const engine = makeEngine({ workspaceDir });
+
+    const summary = await runNight(
+      { github, engine, exec: realExec, log: silentLog, clock: instantClock() },
+      { ...inputs, maxIssues: 2, heuristicConflictOrdering: false, priority: PRIORITY },
+    );
+
+    // Both high-priority issues (#2, #4) fill the cap of 2; the low (#1) and
+    // medium (#3) are never fetched.
+    expect(summary.results.map((r) => r.issue.number)).toEqual([2, 4]);
+    expect(github.pulls.map((pr) => pr.head)).toEqual(["issue/2-fix-two", "issue/4-fix-four"]);
+  });
+
+  it("composes with the Layer A triage gate: a triaged-out high issue frees its slot", async () => {
+    const { workspaceDir, inputs } = await setup();
+    const github = new FakeGitHub(structuredClone(prioritized));
+    // #2 (high) is already fixed by a merged PR -> Layer A skips it.
+    github.triageSignals.set(2, {
+      number: 2,
+      fixedByMergedPr: { number: 99, url: "https://github.com/test/repo/pull/99" },
+    });
+    const engine = makeEngine({ workspaceDir });
+
+    const summary = await runNight(
+      { github, engine, exec: realExec, log: silentLog, clock: instantClock() },
+      { ...inputs, maxIssues: 2, heuristicConflictOrdering: false, priority: PRIORITY },
+    );
+
+    // #2 triaged out (comment + label); the cap fills with the other high (#4)
+    // then the medium (#3).
+    expect(summary.triaged?.map((t) => t.issue.number)).toEqual([2]);
+    expect(github.labelsAdded).toContainEqual({ issueNumber: 2, labels: [TRIAGED_LABEL] });
+    expect(summary.results.map((r) => r.issue.number)).toEqual([4, 3]);
+  });
+});

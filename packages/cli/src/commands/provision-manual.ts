@@ -7,6 +7,7 @@ import {
   APP_PRIVATE_KEY_SECRET,
   getAgentAdapter,
   labelsInRule,
+  priorityLabelsToEnsure,
   renderFixowlWorkflow,
   resolveRepoSettings,
   REPO_CONFIG_PATH,
@@ -83,6 +84,7 @@ export async function manualProvisionCommand(
       skipAlreadyFixed: settings.skipAlreadyFixed,
       skipDuplicates: settings.skipDuplicates,
       verifyBeforeFix: settings.verifyBeforeFix,
+      priority: settings.priority,
       actionRef: actionRef.ref,
       actionRefComment: actionRef.comment,
     });
@@ -101,7 +103,11 @@ export async function manualProvisionCommand(
     }
     log.ok(`wrote ${files.length} files under ${outDir}`);
 
-    const labels = [...labelsInRule(settings.labels), ...Object.keys(settings.labelModels)];
+    const labels = [
+      ...labelsInRule(settings.labels),
+      ...Object.keys(settings.labelModels),
+      ...priorityLabelsToEnsure(settings.priority),
+    ];
     const secretNames = [
       APP_ID_SECRET,
       APP_INSTALLATION_ID_SECRET,

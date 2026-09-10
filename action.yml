@@ -131,6 +131,22 @@ inputs:
       no-changes behavior.
     required: false
     default: "true"
+  priority-labels:
+    description: >-
+      Opt-in priority-label selection: a comma-separated, ordered (highest first)
+      list of priority labels, e.g. "priority: high,priority: medium,priority:
+      low". When set, the run fills the cap highest-priority-first and fetches
+      roughly the cap tier-by-tier instead of the whole backlog. Empty (the
+      default) leaves selection unchanged. See docs/priority-selection.md.
+    required: false
+    default: ""
+  priority-include-unlabeled:
+    description: >-
+      When priority-labels is set, whether issues carrying none of those labels
+      are still worked, as the lowest tier (so nothing is starved). On by default;
+      set "false" to work only issues that carry a priority label.
+    required: false
+    default: "true"
   source:
     description: >-
       Internal. Set to "scheduled-fallback" by fixowl's local fallback trigger so

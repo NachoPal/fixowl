@@ -20,6 +20,18 @@ export {
   type LabelRule,
 } from "./labels.ts";
 export {
+  comparePriority,
+  isUnlabeled,
+  priorityEnabled,
+  priorityLabelsToEnsure,
+  priorityRank,
+  prioritySchema,
+  priorityTiers,
+  UNLABELED_TIER,
+  type PriorityConfig,
+  type PrioritySettings,
+} from "./priority.ts";
+export {
   containerName,
   containerNamePrefix,
   CONTAINER_NAME_MAX_LENGTH,

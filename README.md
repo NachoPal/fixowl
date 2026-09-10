@@ -72,6 +72,18 @@ In the morning you review. **fixowl never merges.**
   on the host by the harness. See [SECURITY.md](SECURITY.md) for the trust
   model, or [docs/security.md](docs/security.md) for the full design.
 
+### Priority selection
+
+By default fixowl works matching open issues oldest-first, up to
+`max_issues_per_run`. Opt into **priority-label selection** and it fills the cap
+**highest-priority-first** from a family of ordered priority labels
+(`priority: high` / `medium` / `low` by default, names configurable), fetching
+roughly the cap **tier-by-tier** instead of the whole backlog - so a large repo
+never pulls thousands of issues to keep a handful. It is off unless a `priority`
+block is configured, and it never overrides `blocked_by`: a low-priority
+prerequisite of a high-priority issue still ships first. See
+[docs/priority-selection.md](docs/priority-selection.md).
+
 ### Ordering the night
 
 ![How fixowl orders one example night into stacked-PR chains. The night's selected issues (#12, #15, #18, #21, #23, #40) flow through two layers of pure planning. Layer 1 reads native GitHub blocked-by edges and is always-on and authoritative: #18 is blocked-by #15 so #15 ships first with #18 stacked under it, while #21 is blocked-by #7 which is not shipping tonight so #21 is deferred with no PR. Layer 2 is a same-file conflict heuristic that is optional and off by default (it runs only when heuristic_conflict_ordering: true is set); the diagram marks it "OPTIONAL - OFF BY DEFAULT" and shows a night with it enabled, where it groups #12 and #23 and predicts #15, #18 and #40 independent. With Layer 2 off (the default) every non-deferred survivor branches independently and only Layer 1 shapes the night. When enabled, the two merge under "prerequisites always win": chain 1 is #12 then #23, chain 2 is #15 then #18 (the blocked-by edge forces the stack the heuristic had split), chain 3 is #40 alone, and #21 stays deferred. Each chain then becomes stacked PRs where every PR targets the previous issue's branch and the first PR of a chain targets the default branch. One PR per issue; fixowl never merges.](assets/issue-ordering.svg)

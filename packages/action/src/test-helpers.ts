@@ -100,6 +100,19 @@ export class FakeGitHub implements GitHubApi {
     );
   }
 
+  /** Every (labelsQuery, page) fetched, in call order (boundedness assertions). */
+  pageFetches: Array<{ labelsQuery: string; page: number; perPage: number }> = [];
+
+  async listOpenIssuesPage(
+    labelsQuery: string,
+    { page, perPage }: { page: number; perPage: number },
+  ): Promise<IssueLite[]> {
+    this.pageFetches.push({ labelsQuery, page, perPage });
+    const matching = await this.listOpenIssuesWithLabels(labelsQuery);
+    const start = (page - 1) * perPage;
+    return matching.slice(start, start + perPage);
+  }
+
   async getIssueDependencies(numbers: readonly number[]): Promise<Map<number, IssueDeps>> {
     const result = new Map<number, IssueDeps>();
     for (const n of numbers) {

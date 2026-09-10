@@ -17,6 +17,8 @@ export function splitRepoFullName(fullName: string): RepoRef {
 export const FIXOWL_LABEL_COLOR = "5319e7";
 /** A distinct blue for selector labels, so they read differently from pickup labels. */
 export const FIXOWL_SELECTOR_LABEL_COLOR = "1d76db";
+/** A distinct amber for priority labels, so they read differently again. */
+export const FIXOWL_PRIORITY_LABEL_COLOR = "d93f0b";
 
 /** Metadata a pickup label carries when fixowl creates it. */
 export const PICKUP_LABEL_META: LabelMeta = {
@@ -32,6 +34,15 @@ export const PICKUP_LABEL_META: LabelMeta = {
 export const SELECTOR_LABEL_META: LabelMeta = {
   color: FIXOWL_SELECTOR_LABEL_COLOR,
   description: "fixowl runs this issue with a specific model + reasoning effort",
+};
+
+/**
+ * Metadata a priority label carries. A priority label does not cause pickup; it
+ * ranks a pickup-labeled issue so fixowl fills the run cap highest-priority-first.
+ */
+export const PRIORITY_LABEL_META: LabelMeta = {
+  color: FIXOWL_PRIORITY_LABEL_COLOR,
+  description: "fixowl fills the nightly run cap by priority, highest first",
 };
 
 /** The color + description fixowl stamps on a label it creates. */

@@ -2,6 +2,7 @@ import { z } from "zod";
 import { validateModelEffort } from "./agent-catalog.ts";
 import { labelRuleSchema, type LabelRule } from "./labels.ts";
 import type { LabelModelMap } from "./model-selection.ts";
+import { prioritySchema, type PriorityConfig, type PrioritySettings } from "./priority.ts";
 
 /** 5-field cron expression; correctness beyond shape is GitHub's problem. */
 const cronSchema = z.string().regex(/^\S+ \S+ \S+ \S+ \S+$/, "expected a 5-field cron expression");
@@ -125,6 +126,14 @@ const repoEntrySchema = z.object({
   skip_already_fixed: z.boolean().optional(),
   skip_duplicates: z.boolean().optional(),
   verify_before_fix: z.boolean().optional(),
+  /**
+   * Opt-in priority-label selection: fill the run cap highest-priority-first from
+   * a family of ordered priority labels, fetching roughly the cap tier-by-tier
+   * instead of the whole backlog. Absent (the default) leaves selection exactly
+   * as before - list all matching, oldest-first, cap. A non-empty `priority.labels`
+   * enables it. See docs/priority-selection.md.
+   */
+  priority: prioritySchema.optional(),
 });
 
 export { labelModelsSchema };
@@ -212,6 +221,8 @@ export const globalConfigSchema = z.object({
       skip_already_fixed: z.boolean().optional(),
       skip_duplicates: z.boolean().optional(),
       verify_before_fix: z.boolean().optional(),
+      /** Default priority-label selection for every repo that does not set its own. */
+      priority: prioritySchema.optional(),
     })
     .optional(),
   agents: z.record(z.string(), agentSettingsSchema).optional(),
@@ -289,6 +300,15 @@ export const FIXOWL_DEFAULTS = {
   skipDuplicates: true,
   verifyBeforeFix: true,
   /**
+   * Starter priority labels `fixowl init` offers when the operator opts into
+   * priority-label selection. NOT a resolution fallback: an unset `priority`
+   * block stays disabled (selection unchanged), exactly like the run-budget axes,
+   * so a config written before this feature behaves as it did. See
+   * docs/priority-selection.md.
+   */
+  priorityLabels: ["priority: high", "priority: medium", "priority: low"],
+  priorityIncludeUnlabeled: true,
+  /**
    * CI-gated fix loop: at most this many agent passes before a draft PR is
    * left with the outstanding failures, and how long each pass waits for the
    * pushed head's required checks before counting a CI timeout. See
@@ -354,6 +374,12 @@ export interface ResolvedRepoSettings {
   skipDuplicates: boolean;
   /** Layer B: have the agent verify against current code first; a no-diff run comments and opens no PR. Default on. */
   verifyBeforeFix: boolean;
+  /**
+   * Priority-label selection for this repo. `labels` empty (the default) means the
+   * feature is off and selection is unchanged; a non-empty ordered list fills the
+   * cap highest-priority-first. See docs/priority-selection.md and priority.ts.
+   */
+  priority: PrioritySettings;
 }
 
 export function resolveRepoSettings(config: GlobalConfig, repoName: string): ResolvedRepoSettings {
@@ -402,7 +428,19 @@ export function resolveRepoSettings(config: GlobalConfig, repoName: string): Res
       entry.skip_duplicates ?? defaults.skip_duplicates ?? FIXOWL_DEFAULTS.skipDuplicates,
     verifyBeforeFix:
       entry.verify_before_fix ?? defaults.verify_before_fix ?? FIXOWL_DEFAULTS.verifyBeforeFix,
+    // Priority selection has no built-in resolution fallback: an unset `priority`
+    // block on both the repo and defaults stays disabled (empty labels), so a
+    // config written before this feature selects exactly as it did. The whole
+    // block is taken from the repo or defaults (not deep-merged) so the ordered
+    // label list is never ambiguous - like `label_models`.
+    priority: resolvePriority(entry.priority ?? defaults.priority),
   };
+}
+
+/** Resolve an optional priority config block into settings; undefined => off. */
+function resolvePriority(priority: PriorityConfig | undefined): PrioritySettings {
+  if (priority === undefined) return { labels: [], includeUnlabeled: true };
+  return { labels: [...priority.labels], includeUnlabeled: priority.include_unlabeled ?? true };
 }
 
 /**

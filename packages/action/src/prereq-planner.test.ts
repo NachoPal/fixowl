@@ -24,6 +24,11 @@ function deps(entries: Record<number, Partial<IssueDeps>>): Map<number, IssueDep
   return map;
 }
 
+/** An issue carrying the pickup label plus the given priority labels (for tiebreak tests). */
+function withPriority(n: number, ...priorityLabels: string[]) {
+  return issue(n, `#${n}`, "", ["overnight", ...priorityLabels]);
+}
+
 describe("planPrereqs", () => {
   it("orders a prerequisite before its dependent, overriding oldest-first", () => {
     // #1 is blocked by #9, so #9 must ship first even though it is the newer issue.
@@ -224,6 +229,49 @@ describe("planPrereqs", () => {
       expect(plan.shippable.map((i) => i.number)).toEqual([2]);
       expect(plan.stackBases.has(2)).toBe(false);
       expect(plan.deferred).toEqual([]);
+    });
+  });
+
+  describe("priority tiebreak", () => {
+    const PRIORITY = {
+      labels: ["priority: high", "priority: medium", "priority: low"],
+      includeUnlabeled: true,
+    };
+
+    it("orders independent ready nodes by priority rank, then oldest-first", () => {
+      const selected = [
+        withPriority(5, "priority: low"),
+        withPriority(30, "priority: high"),
+        withPriority(12, "priority: medium"),
+        withPriority(8, "priority: high"),
+      ];
+      const plan = planPrereqs(selected, deps({}), REPO, undefined, PRIORITY);
+      expect(plan.shippable.map((i) => i.number)).toEqual([8, 30, 12, 5]);
+    });
+
+    it("keeps a low-priority prerequisite before its high-priority dependent (prerequisites win)", () => {
+      // #1 is high priority but blocked by #9, which is low priority. The topo
+      // constraint must dominate the priority tiebreak: #9 still ships first.
+      const selected = [withPriority(1, "priority: high"), withPriority(9, "priority: low")];
+      const plan = planPrereqs(
+        selected,
+        deps({ 1: { blockedBy: [edge(9)] } }),
+        REPO,
+        undefined,
+        PRIORITY,
+      );
+      expect(plan.shippable.map((i) => i.number)).toEqual([9, 1]);
+      expect(plan.prereqs.get(1)).toEqual([9]);
+    });
+
+    it("defaults to oldest-first when no priority settings are passed", () => {
+      const selected = [
+        withPriority(3, "priority: high"),
+        withPriority(1, "priority: low"),
+        withPriority(2, "priority: medium"),
+      ];
+      const plan = planPrereqs(selected, deps({}), REPO);
+      expect(plan.shippable.map((i) => i.number)).toEqual([1, 2, 3]);
     });
   });
 });

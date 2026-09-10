@@ -4,6 +4,7 @@ import {
   APP_PRIVATE_KEY_SECRET,
   getAgentAdapter,
   labelsInRule,
+  priorityLabelsToEnsure,
   renderFixowlWorkflow,
   resolveRepoSettings,
   runnerBaseDir,
@@ -23,6 +24,7 @@ import {
   fileExists,
   openPullRequest,
   putRepoSecret,
+  PRIORITY_LABEL_META,
   resolveActionRef,
   SELECTOR_LABEL_META,
   splitRepoFullName,
@@ -92,6 +94,14 @@ export async function provisionCommand(
     const created = [
       ...(await ensureLabels(ctx.admin, ref, labelsInRule(settings.labels))),
       ...(await ensureLabels(ctx.admin, ref, selectorLabels, SELECTOR_LABEL_META)),
+      // Priority labels (empty unless the repo opted into priority selection) so a
+      // ranked pickup label always exists to apply. Ranking labels, not pickup.
+      ...(await ensureLabels(
+        ctx.admin,
+        ref,
+        priorityLabelsToEnsure(settings.priority),
+        PRIORITY_LABEL_META,
+      )),
     ];
     log.ok(created.length > 0 ? `labels created: ${created.join(", ")}` : "labels already present");
 
@@ -134,6 +144,7 @@ export async function provisionCommand(
       skipAlreadyFixed: settings.skipAlreadyFixed,
       skipDuplicates: settings.skipDuplicates,
       verifyBeforeFix: settings.verifyBeforeFix,
+      priority: settings.priority,
       actionRef: actionRef.ref,
       actionRefComment: actionRef.comment,
     });
