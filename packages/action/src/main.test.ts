@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -175,6 +175,9 @@ const threeIssues: IssueLite[] = [
   issue(2, "Fix footer", "the footer is wrong"),
   issue(3, "Fix sidebar", "the sidebar is wrong"),
 ];
+
+/** A single required "ci" context that comes back red on every poll. */
+const redCi = () => [{ name: "ci", status: "completed" as const, conclusion: "failure" as const }];
 
 // Usage reads go through the injected httpJson edge; this fake returns a chosen
 // utilization fraction (0..1) per call so the pure gate logic decides trip/no-trip.
@@ -481,6 +484,136 @@ describe("runNight", () => {
     expect(github.pulls[0]?.draft).toBe(true);
     expect(github.pulls[0]?.body).toContain("❌ failed");
     expect(github.comments[0]?.body).toContain("draft");
+  });
+
+  describe("fix-loop robustness (issues #72-#76)", () => {
+    it("keeps and annotates the draft PR when the agent fails after it was opened (issue #72)", async () => {
+      const { originDir, workspaceDir, inputs } = await setup();
+      const github = new FakeGitHub([issue(1, "Fix header", "x")]);
+      github.requiredChecks = { readable: true, contexts: ["ci"] };
+      github.checksForRef = redCi;
+      let agentCalls = 0;
+      const engine = new FakeEngine((spec): ExecResult | undefined => {
+        if (spec.name.includes("-classify-")) return ok("");
+        if (issueNumberOfAgentRun(spec) === 1) {
+          agentCalls++;
+          // A later pass fails (e.g. a provider rate limit) AFTER the draft is open.
+          if (agentCalls >= 2) {
+            return { code: 1, stdout: "", stderr: "rate limited", timedOut: false };
+          }
+          writeFileSync(join(workspaceDir, "fix-1.txt"), "attempt1\n");
+          return ok("done");
+        }
+        return ok();
+      });
+
+      const summary = await runNight(
+        { github, engine, exec: realExec, log: silentLog, clock: instantClock() },
+        { ...inputs, ciMaxTries: 2, heuristicConflictOrdering: false },
+      );
+      const result = summary.results[0];
+      // The failure now carries the already-open draft instead of stranding it.
+      expect(result?.status).toBe("agent-failed");
+      expect(result?.prNumber).toBeDefined();
+      expect(result?.draft).toBe(true);
+      expect(result?.error).toContain("rate limited");
+      // The draft PR exists, is annotated with the red CI, and got a comment.
+      expect(github.pulls).toHaveLength(1);
+      expect(github.pulls[0]?.draft).toBe(true);
+      expect(github.pulls[0]?.body).toContain("still red");
+      expect(github.comments.some((c) => c.body.includes("as a draft"))).toBe(true);
+      // The pushed branch is preserved, not orphaned.
+      expect(await remoteBranches(originDir)).toContain("issue/1-fix-header");
+    });
+
+    it("leaves an annotated draft without re-running the agent when a required check never starts (issue #74)", async () => {
+      const { workspaceDir, inputs } = await setup();
+      const github = new FakeGitHub([issue(1, "Fix header", "x")]);
+      // "e2e" is required but never registers (path-filtered); "ci" goes green.
+      github.requiredChecks = { readable: true, contexts: ["ci", "e2e"] };
+      github.checksForRef = () => [{ name: "ci", status: "completed", conclusion: "success" }];
+      let agentCalls = 0;
+      const engine = new FakeEngine((spec): ExecResult | undefined => {
+        if (spec.name.includes("-classify-")) return ok("");
+        if (issueNumberOfAgentRun(spec) === 1) {
+          agentCalls++;
+          writeFileSync(join(workspaceDir, "fix-1.txt"), "fixed\n");
+          return ok("done");
+        }
+        return ok();
+      });
+
+      const summary = await runNight(
+        { github, engine, exec: realExec, log: silentLog, clock: instantClock() },
+        { ...inputs, ciMaxTries: 3, heuristicConflictOrdering: false },
+      );
+      const result = summary.results[0];
+      expect(result?.status).toBe("pr-opened");
+      expect(result?.draft).toBe(true);
+      // The agent ran exactly once: a stalled required check is not retried.
+      expect(agentCalls).toBe(1);
+      expect(github.pulls[0]?.draft).toBe(true);
+      expect(github.pulls[0]?.body).toContain("never started for this change");
+    });
+
+    it("a later pass that reverts all changes produces no PR and no empty branch (issue #75)", async () => {
+      const { originDir, workspaceDir, inputs } = await setup();
+      const github = new FakeGitHub([issue(1, "Fix header", "x")]);
+      let agentCalls = 0;
+      const engine = new FakeEngine((spec): ExecResult | undefined => {
+        if (spec.name.includes("-classify-")) return ok("");
+        if (issueNumberOfAgentRun(spec) === 1) {
+          agentCalls++;
+          if (agentCalls === 1) {
+            writeFileSync(join(workspaceDir, "fix-1.txt"), "attempt1\n");
+          } else {
+            // Attempt 2 "fixes" the failure by deleting its own change: tree == base.
+            rmSync(join(workspaceDir, "fix-1.txt"), { force: true });
+          }
+          return ok("done");
+        }
+        // Verification fails on attempt 1 (so the loop continues, nothing pushed),
+        // then passes once the tree is back at base.
+        return agentCalls === 1 ? { code: 1, stdout: "", stderr: "bad", timedOut: false } : ok();
+      });
+
+      const summary = await runNight(
+        { github, engine, exec: realExec, log: silentLog, clock: instantClock() },
+        { ...inputs, ciMaxTries: 2, heuristicConflictOrdering: false },
+      );
+      // No 422: the empty branch is never pushed and no PR is attempted.
+      expect(summary.results[0]?.status).toBe("no-changes");
+      expect(summary.results[0]?.error).toBeUndefined();
+      expect(github.pulls).toHaveLength(0);
+      expect(await remoteBranches(originDir)).toEqual(["main"]);
+    });
+
+    it("does not stack a dependent on a prerequisite left as a red draft (issue #76)", async () => {
+      const { workspaceDir, inputs } = await setup();
+      const github = new FakeGitHub([issue(1, "Fix header", "x"), issue(2, "Fix footer", "y")]);
+      github.dependencies.set(2, {
+        number: 2,
+        blockedBy: [{ number: 1, repo: "test/repo", state: "OPEN" }],
+      });
+      // Every push is red, so #1's fix loop exhausts as a red draft.
+      github.requiredChecks = { readable: true, contexts: ["ci"] };
+      github.checksForRef = redCi;
+      const engine = makeEngine({ workspaceDir, classifyOutput: '{"chains": [[1], [2]]}' });
+
+      const summary = await runNight(
+        { github, engine, exec: realExec, log: silentLog, clock: instantClock() },
+        { ...inputs, ciMaxTries: 1 },
+      );
+      // #1 opened a red draft but is NOT shipped; #2 defers instead of inheriting
+      // the red base, and never runs its agent.
+      expect(summary.results.map((r) => [r.issue.number, r.status, r.draft])).toEqual([
+        [1, "pr-opened", true],
+      ]);
+      expect(github.pulls.map((p) => p.head)).toEqual(["issue/1-fix-header"]);
+      expect(summary.deferred.map((d) => d.issue.number)).toEqual([2]);
+      expect(summary.deferred[0]?.reason).toContain("left as a draft");
+      expect(engine.runs.some((spec) => spec.name.endsWith("-2-agent"))).toBe(false);
+    });
   });
 
   it("routes model/effort from selector labels and fails a multi-label issue loudly", async () => {

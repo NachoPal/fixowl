@@ -28,7 +28,7 @@ export type CiGateSummary =
   | { state: "unverified" }
   | {
       state: "failed";
-      reason: "red" | "timeout";
+      reason: "red" | "timeout" | "stalled";
       failures: CiCheckFailure[];
       usedFallback?: boolean;
     };
@@ -83,12 +83,15 @@ function renderCiSection(ci: CiGateSummary): string[] {
     return lines;
   }
   const gate = ci.usedFallback === true ? "checks" : "required checks";
-  lines.push(
-    ci.reason === "timeout"
-      ? `❌ The ${gate} did not complete within fixowl's time budget after the last attempt. This PR is a draft.`
-      : `❌ The ${gate} were still red after fixowl's last attempt. This PR is a draft.`,
-    ``,
-  );
+  const headline =
+    ci.reason === "stalled"
+      ? `❌ A required check never started for this change (a path-filtered, dispatch-only, or ` +
+        `uninstalled-app check that GitHub reports as "Expected" indefinitely). fixowl cannot ` +
+        `make it run, so this PR is a draft.`
+      : ci.reason === "timeout"
+        ? `❌ The ${gate} did not complete within fixowl's time budget after the last attempt. This PR is a draft.`
+        : `❌ The ${gate} were still red after fixowl's last attempt. This PR is a draft.`;
+  lines.push(headline, ``);
   if (ci.failures.length > 0) {
     lines.push(`| check | detail |`, `| --- | --- |`);
     for (const failure of ci.failures) {

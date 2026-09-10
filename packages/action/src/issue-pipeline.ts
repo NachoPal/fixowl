@@ -151,149 +151,206 @@ export async function processIssue(
   // Layer B: the first pass's verify-first verdict (advisory), read from stdout.
   let firstPassVerdict: Verdict | undefined;
 
-  for (let attempt = 1; attempt <= maxTries; attempt++) {
-    const agentResult = await runAgent(deps, ctx, { attempt, previousFailures });
-    if (agentResult.usage !== undefined) {
-      usage = usage === undefined ? agentResult.usage : addSamples(usage, agentResult.usage);
-      base.usage = usage;
-    }
+  try {
+    for (let attempt = 1; attempt <= maxTries; attempt++) {
+      const agentResult = await runAgent(deps, ctx, { attempt, previousFailures });
+      if (agentResult.usage !== undefined) {
+        usage = usage === undefined ? agentResult.usage : addSamples(usage, agentResult.usage);
+        base.usage = usage;
+      }
 
-    if (attempt === 1 && ctx.verifyBeforeFix) {
-      firstPassVerdict = parseVerdict(agentResult.stdout);
-    }
+      if (attempt === 1 && ctx.verifyBeforeFix) {
+        firstPassVerdict = parseVerdict(agentResult.stdout);
+      }
 
-    if (agentResult.timedOut || agentResult.code !== 0) {
-      // Unchanged agent-failed path: discard and stop. A provider limit or hard
-      // crash surfaces here and terminates the run; the loop is not special-cased.
-      await git.discardAllChanges();
-      const reason = agentResult.timedOut
-        ? `agent timed out after ${ctx.timeoutMs}ms`
-        : `agent exited with code ${agentResult.code}`;
-      const output = `${agentResult.stdout}\n${agentResult.stderr}`.trim();
-      const excerpt = output.length > 0 ? markdownCell(tail(output, AGENT_ERROR_EXCERPT_MAX)) : "";
-      return {
-        ...base,
-        status: "agent-failed",
-        error: excerpt.length > 0 ? `${reason} - ${excerpt}` : reason,
-      };
-    }
+      if (agentResult.timedOut || agentResult.code !== 0) {
+        // A provider limit or hard crash surfaces here. The uncommitted work is
+        // discarded, but if a draft PR was already opened on an earlier pass we must
+        // NOT drop it from the result: that strands an unexplained draft that then
+        // blocks the issue from ever being picked up again (issue #72). Route it
+        // through the annotate-and-leave-a-draft path instead of the bare stop.
+        await git.discardAllChanges();
+        const reason = agentResult.timedOut
+          ? `agent timed out after ${ctx.timeoutMs}ms`
+          : `agent exited with code ${agentResult.code}`;
+        const output = `${agentResult.stdout}\n${agentResult.stderr}`.trim();
+        const excerpt =
+          output.length > 0 ? markdownCell(tail(output, AGENT_ERROR_EXCERPT_MAX)) : "";
+        const errorMessage = excerpt.length > 0 ? `${reason} - ${excerpt}` : reason;
+        if (pr !== undefined) {
+          return await finishFailedAfterPr(deps, ctx, {
+            pr,
+            lastVerification,
+            lastCi,
+            usage,
+            error: errorMessage,
+          });
+        }
+        return { ...base, status: "agent-failed", error: errorMessage };
+      }
 
-    if (attempt === 1 && !(await git.hasChangesAgainst(ctx.baseRef))) {
-      // No diff: never open a PR. Layer B turns this into a triage skip (comment
-      // + `fixowl:triaged` label + summary line); with verify-first off it is the
-      // pre-existing silent no-changes.
-      return await handleNoDiff(deps, ctx, base, firstPassVerdict);
-    }
+      if (attempt === 1 && !(await git.hasChangesAgainst(ctx.baseRef))) {
+        // No diff: never open a PR. Layer B turns this into a triage skip (comment
+        // + `fixowl:triaged` label + summary line); with verify-first off it is the
+        // pre-existing silent no-changes.
+        return await handleNoDiff(deps, ctx, base, firstPassVerdict);
+      }
 
-    const verification = await runVerification({
-      engine,
-      log,
-      image: ctx.image,
-      workspaceDir: ctx.workspaceDir,
-      evidenceDir: ctx.evidenceDir,
-      repoFullName: ctx.repoFullName,
-      issueNumber: issue.number,
-      verify: ctx.repoConfig.verify,
-    });
-    lastVerification = verification;
-
-    // Cheap pre-filter: a change that cannot even pass the local smoke test
-    // never reaches CI. Feed the local failures back and retry, no push.
-    if (anyCheckFailed(verification)) {
-      previousFailures = localFeedback(verification);
-      log.info(
-        `issue #${issue.number}: local pre-check failed (attempt ${attempt}/${maxTries}); not pushing`,
-      );
-      continue;
-    }
-
-    await git.commitAll(title);
-    await git.push(branch);
-    const headSha = await git.headSha();
-
-    if (pr === undefined) {
-      pr = await github.ensurePullRequest({
-        head: branch,
-        base: ctx.prBase,
-        title,
-        body: buildPrBody({
-          issueNumber: issue.number,
-          verification,
-          stackedOn: ctx.stackedOn,
-          runUrl: ctx.runUrl,
-        }),
-        draft: true,
+      const verification = await runVerification({
+        engine,
+        log,
+        image: ctx.image,
+        workspaceDir: ctx.workspaceDir,
+        evidenceDir: ctx.evidenceDir,
+        repoFullName: ctx.repoFullName,
+        issueNumber: issue.number,
+        verify: ctx.repoConfig.verify,
       });
-      log.info(`issue #${issue.number}: opened draft PR #${pr.number}`);
-    }
+      lastVerification = verification;
 
-    const required = await readRequiredChecks(github, ctx.prBase, log);
-    log.info(
-      `issue #${issue.number}: waiting for CI on ${headSha.slice(0, 12)} (attempt ${attempt}/${maxTries})`,
-    );
-    const ci = await waitForRequiredChecks(
-      { github, log, clock },
-      { sha: headSha, base: ctx.prBase, required, timeoutMs: ctx.ciTimeoutMs },
-    );
-    lastCi = ci;
+      // Cheap pre-filter: a change that cannot even pass the local smoke test
+      // never reaches CI. Feed the local failures back and retry, no push.
+      if (anyCheckFailed(verification)) {
+        previousFailures = localFeedback(verification);
+        log.info(
+          `issue #${issue.number}: local pre-check failed (attempt ${attempt}/${maxTries}); not pushing`,
+        );
+        continue;
+      }
 
-    // Green and unverified both flip the PR to ready (settle-then-ready, captain
-    // 7.2), but they must NEVER read the same to a human: unverified means zero
-    // checks were consulted, so its wording says CI could not be verified, never
-    // "green". Red/timeout falls through to the retry / exhaustion path below.
-    if (ci.outcome === "green" || ci.outcome === "unverified") {
-      await github.markPullRequestReadyForReview(pr.number);
-      const summary: CiGateSummary =
-        ci.outcome === "unverified"
-          ? { state: "unverified" }
-          : { state: "green", usedFallback: ci.usedFallback };
-      await github.updatePullRequestBody(
-        pr.number,
-        buildPrBody({
-          issueNumber: issue.number,
-          verification,
-          stackedOn: ctx.stackedOn,
-          runUrl: ctx.runUrl,
-          ci: summary,
-        }),
-      );
-      const comment =
-        ci.outcome === "unverified"
-          ? `🦉 fixowl opened ${pr.url} for this issue and flipped it to ready, but CI could ` +
-            `not be verified: the runtime credential cannot read this branch's check runs, so no ` +
-            `checks were consulted. Review CI on the PR before merging.`
-          : `🦉 fixowl opened ${pr.url} for this issue; its required checks are green and it is ready for review.`;
+      // The attempt-1 no-diff guard above only catches the first pass. A later pass
+      // can also land the tree back at base (the agent undoing its own earlier
+      // change); with no PR open yet, committing/pushing here would create an empty
+      // branch and ensurePullRequest would 422 "No commits between ..." (issue #75).
+      // Re-check before every push while no PR exists: attempt 1 goes through Layer-B
+      // triage, a later pass is a plain no-changes.
+      if (pr === undefined && !(await git.hasChangesAgainst(ctx.baseRef))) {
+        return attempt === 1
+          ? await handleNoDiff(deps, ctx, base, firstPassVerdict)
+          : { ...base, status: "no-changes" };
+      }
+
+      await git.commitAll(title);
+      await git.push(branch);
+      const headSha = await git.headSha();
+
+      if (pr === undefined) {
+        pr = await github.ensurePullRequest({
+          head: branch,
+          base: ctx.prBase,
+          title,
+          body: buildPrBody({
+            issueNumber: issue.number,
+            verification,
+            stackedOn: ctx.stackedOn,
+            runUrl: ctx.runUrl,
+          }),
+          draft: true,
+        });
+        log.info(`issue #${issue.number}: opened draft PR #${pr.number}`);
+      }
+
+      const required = await readRequiredChecks(github, ctx.prBase, log);
       log.info(
-        ci.outcome === "unverified"
-          ? `issue #${issue.number}: CI unverified (checks unreadable); PR #${pr.number} flipped to ready`
-          : `issue #${issue.number}: required checks green; PR #${pr.number} ready for review`,
+        `issue #${issue.number}: waiting for CI on ${headSha.slice(0, 12)} (attempt ${attempt}/${maxTries})`,
       );
-      await github.createIssueComment(issue.number, comment);
-      return {
-        ...base,
-        status: "pr-opened",
-        prNumber: pr.number,
-        prUrl: pr.url,
-        draft: false,
-        verification,
-      };
+      const ci = await waitForRequiredChecks(
+        { github, log, clock },
+        { sha: headSha, base: ctx.prBase, required, timeoutMs: ctx.ciTimeoutMs },
+      );
+      lastCi = ci;
+
+      // Green and unverified both flip the PR to ready (settle-then-ready, captain
+      // 7.2), but they must NEVER read the same to a human: unverified means zero
+      // checks were consulted, so its wording says CI could not be verified, never
+      // "green". Red/timeout falls through to the retry / exhaustion path below.
+      if (ci.outcome === "green" || ci.outcome === "unverified") {
+        await github.markPullRequestReadyForReview(pr.number);
+        const summary: CiGateSummary =
+          ci.outcome === "unverified"
+            ? { state: "unverified" }
+            : { state: "green", usedFallback: ci.usedFallback };
+        await github.updatePullRequestBody(
+          pr.number,
+          buildPrBody({
+            issueNumber: issue.number,
+            verification,
+            stackedOn: ctx.stackedOn,
+            runUrl: ctx.runUrl,
+            ci: summary,
+          }),
+        );
+        const comment =
+          ci.outcome === "unverified"
+            ? `🦉 fixowl opened ${pr.url} for this issue and flipped it to ready, but CI could ` +
+              `not be verified: the runtime credential cannot read this branch's check runs, so no ` +
+              `checks were consulted. Review CI on the PR before merging.`
+            : `🦉 fixowl opened ${pr.url} for this issue; its required checks are green and it is ready for review.`;
+        log.info(
+          ci.outcome === "unverified"
+            ? `issue #${issue.number}: CI unverified (checks unreadable); PR #${pr.number} flipped to ready`
+            : `issue #${issue.number}: required checks green; PR #${pr.number} ready for review`,
+        );
+        await github.createIssueComment(issue.number, comment);
+        return {
+          ...base,
+          status: "pr-opened",
+          prNumber: pr.number,
+          prUrl: pr.url,
+          draft: false,
+          verification,
+        };
+      }
+
+      // Only a concrete red check gives the agent something to fix. A required
+      // context that never registered (`stalled`) will never run for this change,
+      // and a bare timeout with nothing red gives the agent no failure to act on;
+      // retrying either just burns another paid pass and the full timeout again
+      // (issue #74). Stop and leave the draft annotated with what happened.
+      if (ci.outcome === "stalled" || ci.failed.length === 0) {
+        log.info(
+          `issue #${issue.number}: ${
+            ci.outcome === "stalled"
+              ? "a required check never started for this change"
+              : "CI did not complete and nothing is red"
+          }; leaving an annotated draft without re-running the agent (attempt ${attempt}/${maxTries})`,
+        );
+        break;
+      }
+
+      previousFailures = await ciFeedback(github, ci);
+      log.info(
+        `issue #${issue.number}: CI ${ci.timedOut ? "did not complete in time" : "is red"} ` +
+          `(attempt ${attempt}/${maxTries})`,
+      );
     }
 
-    previousFailures = await ciFeedback(github, ci);
-    log.info(
-      `issue #${issue.number}: CI ${ci.timedOut ? "did not complete in time" : "is red"} ` +
-        `(attempt ${attempt}/${maxTries})`,
-    );
+    return finishExhausted(deps, ctx, {
+      title,
+      pr,
+      lastVerification,
+      lastCi,
+      usage,
+      firstPassVerdict,
+    });
+  } catch (error) {
+    // Something threw after we may have already opened the draft PR (a hard CI
+    // read failure that survived the poll loop's transient-error absorption, a
+    // push/annotate error). If a draft exists, annotate and keep it rather than
+    // let main.ts build a PR-less `error` result that strands the draft forever
+    // (issue #72); with no PR yet, rethrow so the caller resets the tree as before.
+    if (pr !== undefined) {
+      const message = error instanceof Error ? error.message : String(error);
+      return await finishFailedAfterPr(deps, ctx, {
+        pr,
+        lastVerification,
+        lastCi,
+        usage,
+        error: `error after the draft PR was opened - ${markdownCell(message)}`,
+      });
+    }
+    throw error;
   }
-
-  return finishExhausted(deps, ctx, {
-    title,
-    pr,
-    lastVerification,
-    lastCi,
-    usage,
-    firstPassVerdict,
-  });
 }
 
 /**
@@ -447,14 +504,7 @@ async function finishExhausted(
   }
 
   const ci: CiGateSummary | undefined =
-    state.lastCi !== undefined
-      ? {
-          state: "failed",
-          reason: state.lastCi.timedOut ? "timeout" : "red",
-          failures: state.lastCi.failed.map(toCiCheckFailure),
-          usedFallback: state.lastCi.usedFallback,
-        }
-      : undefined;
+    state.lastCi !== undefined ? ciSummaryFromWait(state.lastCi) : undefined;
 
   const body = buildPrBody({
     issueNumber: issue.number,
@@ -481,7 +531,9 @@ async function finishExhausted(
       ? "its local pre-check is still failing"
       : ci.reason === "timeout"
         ? "its required checks did not complete in time"
-        : "its required checks are still red";
+        : ci.reason === "stalled"
+          ? "a required check never started for this change"
+          : "its required checks are still red";
   await github.createIssueComment(
     issue.number,
     `🦉 fixowl opened ${pr.url} for this issue as a draft after ${ctx.ciMaxTries} attempt(s); ${note}. See the PR for the outstanding failures.`,
@@ -539,6 +591,94 @@ async function ciFeedback(
     });
   }
   return feedback;
+}
+
+/**
+ * The PR-body CI section for a non-green wait result: a stalled required check,
+ * a bare timeout, or a red set. Shared by `finishExhausted` and
+ * `finishFailedAfterPr` so a draft is annotated the same way however it ended.
+ */
+function ciSummaryFromWait(ci: WaitForChecksResult): Extract<CiGateSummary, { state: "failed" }> {
+  const reason = ci.outcome === "stalled" ? "stalled" : ci.timedOut ? "timeout" : "red";
+  return {
+    state: "failed",
+    reason,
+    failures: ci.failed.map(toCiCheckFailure),
+    usedFallback: ci.usedFallback,
+  };
+}
+
+/**
+ * A failure happened AFTER the draft PR was already opened - the agent crashed or
+ * timed out on a later pass, or something threw inside the loop. Dropping the PR
+ * from the result would leave an unexplained draft that blocks the issue from
+ * ever being picked up again (issue #72). Instead annotate the existing draft
+ * with the last CI failures and the error, post an explanatory comment, and
+ * return a result that carries the PR number/URL and `draft: true` so the run
+ * summary is coherent. The annotation is best-effort: a write failure here must
+ * not lose the PR info the returned result now carries.
+ */
+async function finishFailedAfterPr(
+  deps: IssuePipelineDeps,
+  ctx: IssueRunContext,
+  state: {
+    pr: { number: number; url: string };
+    lastVerification: CheckOutcome[];
+    lastCi: WaitForChecksResult | undefined;
+    usage: SpendSample | undefined;
+    error: string;
+  },
+): Promise<IssueResult> {
+  const { git, github, log } = deps;
+  const { issue } = ctx;
+  log.warn(
+    `issue #${issue.number}: failed after draft PR #${state.pr.number} was opened (${state.error}); ` +
+      `leaving it annotated so it is not silently stranded`,
+  );
+  try {
+    // Any uncommitted last-attempt work never passed the local pre-check and was
+    // never committed; discard it so the branch stays at the last pushed commit.
+    await git.discardAllChanges();
+  } catch (discardError) {
+    log.warn(
+      `issue #${issue.number}: could not discard changes after the failure (${String(discardError)})`,
+    );
+  }
+  const ci: CiGateSummary | undefined =
+    state.lastCi !== undefined ? ciSummaryFromWait(state.lastCi) : undefined;
+  try {
+    await github.updatePullRequestBody(
+      state.pr.number,
+      buildPrBody({
+        issueNumber: issue.number,
+        verification: state.lastVerification,
+        stackedOn: ctx.stackedOn,
+        runUrl: ctx.runUrl,
+        ci,
+      }),
+    );
+    await github.createIssueComment(
+      issue.number,
+      `🦉 fixowl left ${state.pr.url} as a draft: its fix loop stopped after an error (${state.error}). ` +
+        `See the PR for the last checks; re-run fixowl or take it over.`,
+    );
+  } catch (writeError) {
+    log.warn(
+      `issue #${issue.number}: could not annotate the stranded draft PR (${String(writeError)}); ` +
+        `the failure is still recorded with its PR in the run summary`,
+    );
+  }
+  return {
+    issue,
+    branch: ctx.branch,
+    status: "agent-failed",
+    prNumber: state.pr.number,
+    prUrl: state.pr.url,
+    draft: true,
+    verification: state.lastVerification,
+    usage: state.usage,
+    error: state.error,
+  };
 }
 
 function toCiCheckFailure(check: CheckStatusLite): CiCheckFailure {
