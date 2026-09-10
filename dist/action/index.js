@@ -85427,9 +85427,17 @@ var codex = {
   // fixowl moves `.git` out of the tree, so codex must tolerate a git-less root.
   // `--ephemeral` keeps codex from persisting session/rollout files. Reasoning
   // effort has no dedicated flag; it is a config override (`-c`).
-  argv: (_mode, selection) => [
+  //
+  // `--json` (fix mode only) turns stdout into a JSONL event stream whose
+  // `turn.completed` events carry a `usage` object, which the host parses in-band
+  // for the `total_token_budget` run budget (agent-spend.ts::parseCodexUsage).
+  // It is NOT set in classify mode: classify parses the agent's final message out
+  // of raw stdout (main.ts::parseClassification), which JSONL would break; a
+  // single classify call's token spend is a negligible, accepted under-count.
+  argv: (mode, selection) => [
     "codex",
     "exec",
+    ...mode === "fix" ? ["--json"] : [],
     "--skip-git-repo-check",
     "--dangerously-bypass-approvals-and-sandbox",
     "--ephemeral",
@@ -85542,6 +85550,94 @@ function getUsageReader(agentName) {
   return USAGE_READERS[agentName] ?? noUsageReader;
 }
 
+// packages/core/src/agent-spend.ts
+var EMPTY_SPEND = {
+  totalTokens: 0,
+  inputTokens: 0,
+  cachedInputTokens: 0,
+  outputTokens: 0,
+  reasoningOutputTokens: 0
+};
+function addSamples(a, b) {
+  return {
+    totalTokens: a.totalTokens + b.totalTokens,
+    inputTokens: a.inputTokens + b.inputTokens,
+    cachedInputTokens: a.cachedInputTokens + b.cachedInputTokens,
+    outputTokens: a.outputTokens + b.outputTokens,
+    reasoningOutputTokens: a.reasoningOutputTokens + b.reasoningOutputTokens
+  };
+}
+function readNum(record2, key) {
+  const value = record2[key];
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0;
+}
+function parseCodexUsage(stdout) {
+  let acc = EMPTY_SPEND;
+  let found = false;
+  for (const line of stdout.split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed === "" || trimmed[0] !== "{") continue;
+    let event;
+    try {
+      event = JSON.parse(trimmed);
+    } catch {
+      continue;
+    }
+    if (event === null || typeof event !== "object") continue;
+    const record2 = event;
+    if (record2.type !== "turn.completed") continue;
+    const usage = record2.usage;
+    if (usage === null || typeof usage !== "object") continue;
+    const u = usage;
+    const inputTokens = readNum(u, "input_tokens");
+    const cachedInputTokens = readNum(u, "cached_input_tokens");
+    const outputTokens = readNum(u, "output_tokens");
+    const reasoningOutputTokens = readNum(u, "reasoning_output_tokens");
+    if (inputTokens === 0 && outputTokens === 0 && cachedInputTokens === 0) continue;
+    found = true;
+    acc = addSamples(acc, {
+      totalTokens: inputTokens + outputTokens,
+      inputTokens,
+      cachedInputTokens,
+      outputTokens,
+      reasoningOutputTokens
+    });
+  }
+  return found ? acc : void 0;
+}
+var AIDER_TOKENS_RE = /Tokens:\s*([\d.]+)\s*([kKmM]?)\s*sent,\s*([\d.]+)\s*([kKmM]?)\s*received/g;
+function aiderCount(mantissa, suffix) {
+  const base = Number(mantissa);
+  if (!Number.isFinite(base)) return 0;
+  const factor = suffix === "" ? 1 : suffix.toLowerCase() === "k" ? 1e3 : 1e6;
+  return Math.round(base * factor);
+}
+function parseAiderUsage(stdout) {
+  let acc = EMPTY_SPEND;
+  let found = false;
+  for (const match of stdout.matchAll(AIDER_TOKENS_RE)) {
+    const inputTokens = aiderCount(match[1] ?? "", match[2] ?? "");
+    const outputTokens = aiderCount(match[3] ?? "", match[4] ?? "");
+    if (inputTokens === 0 && outputTokens === 0) continue;
+    found = true;
+    acc = addSamples(acc, {
+      totalTokens: inputTokens + outputTokens,
+      inputTokens,
+      cachedInputTokens: 0,
+      outputTokens,
+      reasoningOutputTokens: 0
+    });
+  }
+  return found ? acc : void 0;
+}
+var codexMeter = { parse: (stdout) => parseCodexUsage(stdout) };
+var aiderMeter = { parse: (stdout) => parseAiderUsage(stdout) };
+var noSpendMeter = { parse: () => void 0 };
+var SPEND_METERS = { codex: codexMeter, aider: aiderMeter };
+function getSpendMeter(agentName) {
+  return SPEND_METERS[agentName] ?? noSpendMeter;
+}
+
 // packages/core/src/run-budget.ts
 function buildStopConditions(limits) {
   const conditions = [];
@@ -85569,6 +85665,21 @@ function buildStopConditions(limits) {
           reason: `usage budget reached: ${state3.usage.limiting} window at ${formatPercent(
             state3.usage.usedPercent
           )}% (budget ${budget}%)`
+        };
+      }
+    });
+  }
+  if (limits.totalTokens !== void 0) {
+    const cap = limits.totalTokens;
+    conditions.push({
+      name: "tokens",
+      evaluate: (state3) => {
+        if (state3.tokensUsed === void 0) return { stop: false };
+        if (state3.tokensUsed < cap) return { stop: false };
+        return {
+          stop: true,
+          condition: "tokens",
+          reason: `token budget reached: ${state3.tokensUsed} token(s) spent (cap ${cap})`
         };
       }
     });
@@ -85735,6 +85846,12 @@ var repoEntrySchema = external_exports.object({
   max_issues_per_run: external_exports.number().int().positive().optional(),
   /** Stop before starting a new issue once the agent's usage window hits this % (0..100). */
   usage_budget_percent: external_exports.number().min(0).max(100).optional(),
+  /**
+   * Total-token hard cap for an API-credit agent (codex/aider): stop before a new
+   * issue once the night's accumulated token spend reaches this. The API-credit
+   * counterpart to `usage_budget_percent`; measured in-band (agent-spend.ts).
+   */
+  total_token_budget: external_exports.number().int().positive().optional(),
   /** Graceful wall-clock: don't start a new issue after this many minutes of the run. */
   run_budget_minutes: external_exports.number().int().positive().optional(),
   issue_timeout_minutes: external_exports.number().int().positive().optional(),
@@ -85793,6 +85910,8 @@ var globalConfigSchema = external_exports.object({
     max_issues_per_run: external_exports.number().int().positive().optional(),
     /** Default usage-budget stop % for every repo (issue #21). */
     usage_budget_percent: external_exports.number().min(0).max(100).optional(),
+    /** Default total-token hard cap for every repo (API-credit agents). */
+    total_token_budget: external_exports.number().int().positive().optional(),
     /** Default graceful wall-clock stop, in minutes, for every repo (issue #21). */
     run_budget_minutes: external_exports.number().int().positive().optional(),
     issue_timeout_minutes: external_exports.number().int().positive().optional(),
@@ -85842,8 +85961,11 @@ var FIXOWL_DEFAULTS = {
    * `run_budget_minutes` unset opts that axis out (undefined), so a config
    * written before this feature behaves exactly as it did. 240 min sits
    * comfortably under the workflow's blunt `timeout-minutes: 300` ceiling.
+   * `totalTokenBudget` is likewise a starter, offered by `init` only for an
+   * API-credit agent (codex/aider); unset stays opted out.
    */
   usageBudgetPercent: 85,
+  totalTokenBudget: 3e6,
   runBudgetMinutes: 240,
   issueTimeoutMinutes: 45,
   /**
@@ -85890,6 +86012,7 @@ function resolveRepoSettings(config2, repoName) {
     // (opted out), so a pre-#21 config is unchanged. The starter values live in
     // FIXOWL_DEFAULTS only for `init` to write into a fresh config.
     usageBudgetPercent: entry.usage_budget_percent ?? defaults2.usage_budget_percent,
+    totalTokenBudget: entry.total_token_budget ?? defaults2.total_token_budget,
     runBudgetMinutes: entry.run_budget_minutes ?? defaults2.run_budget_minutes,
     issueTimeoutMinutes: entry.issue_timeout_minutes ?? defaults2.issue_timeout_minutes ?? FIXOWL_DEFAULTS.issueTimeoutMinutes,
     ciMaxTries: entry.ci_max_tries ?? defaults2.ci_max_tries ?? FIXOWL_DEFAULTS.ciMaxTries,
@@ -126189,6 +126312,7 @@ async function processIssue(deps, ctx) {
   const clock = deps.clock ?? realClock;
   const { issue: issue3, branch } = ctx;
   const base = { issue: issue3, branch, verification: [] };
+  let usage;
   mkdirSync2(ctx.evidenceDir, { recursive: true });
   mkdirSync2(ctx.promptDir, { recursive: true });
   log3.info(`issue #${issue3.number}: branching ${branch} from ${ctx.baseRef}`);
@@ -126201,6 +126325,10 @@ async function processIssue(deps, ctx) {
   let lastCi;
   for (let attempt = 1; attempt <= maxTries; attempt++) {
     const agentResult = await runAgent(deps, ctx, { attempt, previousFailures });
+    if (agentResult.usage !== void 0) {
+      usage = usage === void 0 ? agentResult.usage : addSamples(usage, agentResult.usage);
+      base.usage = usage;
+    }
     if (agentResult.timedOut || agentResult.code !== 0) {
       await git.discardAllChanges();
       const reason = agentResult.timedOut ? `agent timed out after ${ctx.timeoutMs}ms` : `agent exited with code ${agentResult.code}`;
@@ -126294,7 +126422,7 @@ ${agentResult.stderr}`.trim();
       `issue #${issue3.number}: CI ${ci.timedOut ? "did not complete in time" : "is red"} (attempt ${attempt}/${maxTries})`
     );
   }
-  return finishExhausted(deps, ctx, { title, pr, lastVerification, lastCi });
+  return finishExhausted(deps, ctx, { title, pr, lastVerification, lastCi, usage });
 }
 async function runAgent(deps, ctx, params) {
   const { engine, log: log3 } = deps;
@@ -126333,12 +126461,18 @@ ${result.stderr}
 (exit ${result.code}${result.timedOut ? ", timed out" : ""})
 `
   );
-  return result;
+  const usage = getSpendMeter(ctx.adapter.name).parse(result.stdout, result.stderr);
+  return { ...result, usage };
 }
 async function finishExhausted(deps, ctx, state3) {
   const { git, github, log: log3 } = deps;
   const { issue: issue3 } = ctx;
-  const base = { issue: issue3, branch: ctx.branch, verification: [] };
+  const base = {
+    issue: issue3,
+    branch: ctx.branch,
+    verification: [],
+    usage: state3.usage
+  };
   log3.warn(`issue #${issue3.number}: exhausted ${ctx.ciMaxTries} attempt(s); leaving a draft PR`);
   let pr = state3.pr;
   if (pr === void 0) {
@@ -126495,11 +126629,15 @@ async function runNightWithGit(deps, inputs, git) {
   const budgetLimits = {
     maxIssues: inputs.maxIssues,
     usagePercent: inputs.usageBudgetPercent,
+    totalTokens: inputs.totalTokenBudget,
     runMinutes: inputs.runBudgetMinutes
   };
   const stopConditions = buildStopConditions(budgetLimits);
   const usageReader = getUsageReader(inputs.agentName);
   let usageWarned = false;
+  let tokensUsed = 0;
+  let tokensMeasured = false;
+  let tokensWarned = false;
   const assembleBudgetState = async (shipped2) => {
     let usage;
     if (inputs.usageBudgetPercent !== void 0 && deps.httpJson !== void 0) {
@@ -126511,7 +126649,8 @@ async function runNightWithGit(deps, inputs, git) {
         log3.warn(warning2);
       }
     }
-    return { shipped: shipped2, elapsedMs: Date.now() - runStart, usage };
+    const tokens = inputs.totalTokenBudget !== void 0 && tokensMeasured ? tokensUsed : void 0;
+    return { shipped: shipped2, elapsedMs: Date.now() - runStart, usage, tokensUsed: tokens };
   };
   const matching = await selectIssues(github, inputs.labels);
   log3.info(`${matching.length} open issue(s) match the label rule`);
@@ -126701,6 +126840,15 @@ async function runNightWithGit(deps, inputs, git) {
         };
       }
       results.push(result);
+      if (result.usage !== void 0) {
+        tokensUsed += result.usage.totalTokens;
+        tokensMeasured = true;
+      } else if (inputs.totalTokenBudget !== void 0 && !tokensMeasured && !tokensWarned && (result.status === "pr-opened" || result.status === "no-changes" || result.status === "agent-failed")) {
+        tokensWarned = true;
+        const warning2 = `token budget set (${inputs.totalTokenBudget}) but ${inputs.agentName} spend is unmeasurable this run; falling through to count + wall-clock budgets`;
+        warnings.push(warning2);
+        log3.warn(warning2);
+      }
       await uploadIssueEvidence(deps, issue3.number, evidenceDir);
       if (result.status === "pr-opened" && result.prNumber !== void 0) {
         baseRef = branch;
@@ -128415,6 +128563,7 @@ async function run() {
       agentEnvNames: parseLabelInput(getInput("agent-env")),
       maxIssues: positiveIntInput("max-issues-per-run", 4),
       usageBudgetPercent: optionalPercentInput("usage-budget-percent"),
+      totalTokenBudget: optionalPositiveIntInput("total-token-budget"),
       runBudgetMinutes: optionalPositiveIntInput("run-budget-minutes"),
       issueTimeoutMinutes: positiveIntInput("issue-timeout-minutes", 45),
       ciMaxTries: positiveIntInput("max-ci-tries", 3),

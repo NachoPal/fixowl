@@ -44,6 +44,14 @@ inputs:
       out-of-band on the host; abstains when usage is unobservable for the agent.
     required: false
     default: ""
+  total-token-budget:
+    description: >-
+      Run-budget stop condition for API-credit agents (codex/aider): don't start a
+      new issue once the night's accumulated token spend reaches this total. Empty
+      opts this axis out. Measured in-band from the agent's own reported token
+      usage; abstains when spend is unmeasurable for the agent.
+    required: false
+    default: ""
   run-budget-minutes:
     description: >-
       Run-budget stop condition: graceful wall-clock cap - don't start a new issue

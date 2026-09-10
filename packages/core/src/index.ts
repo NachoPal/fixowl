@@ -44,6 +44,15 @@ export {
   type UsageSnapshot,
 } from "./agent-usage.ts";
 export {
+  addSamples,
+  EMPTY_SPEND,
+  getSpendMeter,
+  parseAiderUsage,
+  parseCodexUsage,
+  type SpendMeter,
+  type SpendSample,
+} from "./agent-spend.ts";
+export {
   buildStopConditions,
   evaluateBudget,
   type BudgetConditionName,
@@ -53,12 +62,15 @@ export {
   type StopCondition,
 } from "./run-budget.ts";
 export {
+  AGENT_BILLING,
   AGENT_MODEL_CATALOG,
+  agentBilling,
   agentCatalogEntry,
   agentEfforts,
   agentModelIds,
   validateModelEffort,
   type AgentCatalogEntry,
+  type BillingModel,
   type CatalogModel,
   type ModelEffortChoice,
 } from "./agent-catalog.ts";

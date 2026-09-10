@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  agentBilling,
   agentCatalogEntry,
   agentEfforts,
   agentModelIds,
@@ -22,6 +23,19 @@ describe("agent catalog", () => {
   it("returns undefined for an agent without a catalog", () => {
     expect(agentCatalogEntry("script")).toBeUndefined();
     expect(agentModelIds("script")).toEqual([]);
+  });
+});
+
+describe("agentBilling", () => {
+  it("classifies each agent's billing model", () => {
+    expect(agentBilling("claude")).toBe("subscription");
+    expect(agentBilling("codex")).toBe("api-credit");
+    expect(agentBilling("aider")).toBe("api-credit");
+    expect(agentBilling("script")).toBe("none");
+  });
+
+  it("defaults an unknown agent to api-credit (the safe assumption for a paid CLI)", () => {
+    expect(agentBilling("some-future-agent")).toBe("api-credit");
   });
 });
 

@@ -193,6 +193,7 @@ async function run(): Promise<void> {
       agentEnvNames: parseLabelInput(core.getInput("agent-env")),
       maxIssues: positiveIntInput("max-issues-per-run", 4),
       usageBudgetPercent: optionalPercentInput("usage-budget-percent"),
+      totalTokenBudget: optionalPositiveIntInput("total-token-budget"),
       runBudgetMinutes: optionalPositiveIntInput("run-budget-minutes"),
       issueTimeoutMinutes: positiveIntInput("issue-timeout-minutes", 45),
       ciMaxTries: positiveIntInput("max-ci-tries", 3),

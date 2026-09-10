@@ -94,14 +94,26 @@ describe("agent adapters", () => {
     expect(codex.argv("fix")).toEqual([
       "codex",
       "exec",
+      "--json",
       "--skip-git-repo-check",
       "--dangerously-bypass-approvals-and-sandbox",
       "--ephemeral",
       "-C",
       "/workspace",
     ]);
-    // classify reuses the same argv (the classifier prompt asks for JSON).
-    expect(codex.argv("classify")).toEqual(codex.argv("fix"));
+    // classify OMITS --json: it parses the agent's final message out of raw
+    // stdout, which the JSONL stream would break. --json is fix-mode only (its
+    // usage events feed the in-band token budget, agent-spend.ts).
+    expect(codex.argv("classify")).toEqual([
+      "codex",
+      "exec",
+      "--skip-git-repo-check",
+      "--dangerously-bypass-approvals-and-sandbox",
+      "--ephemeral",
+      "-C",
+      "/workspace",
+    ]);
+    expect(codex.argv("classify")).not.toContain("--json");
     expect(codex.promptVia).toBe("stdin");
     expect(codex.env).toEqual([]);
   });
@@ -111,6 +123,7 @@ describe("agent adapters", () => {
     expect(codex.argv("fix", { model: "gpt-5-codex", effort: "high" })).toEqual([
       "codex",
       "exec",
+      "--json",
       "--skip-git-repo-check",
       "--dangerously-bypass-approvals-and-sandbox",
       "--ephemeral",
@@ -125,6 +138,7 @@ describe("agent adapters", () => {
     expect(codex.argv("fix", { model: "gpt-5.1-codex" })).toEqual([
       "codex",
       "exec",
+      "--json",
       "--skip-git-repo-check",
       "--dangerously-bypass-approvals-and-sandbox",
       "--ephemeral",
@@ -136,6 +150,7 @@ describe("agent adapters", () => {
     expect(codex.argv("fix", { effort: "minimal" })).toEqual([
       "codex",
       "exec",
+      "--json",
       "--skip-git-repo-check",
       "--dangerously-bypass-approvals-and-sandbox",
       "--ephemeral",

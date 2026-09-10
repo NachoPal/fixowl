@@ -206,21 +206,39 @@ See [docs/releasing.md](docs/releasing.md).
 
 - Run budgets (issue #21) bound the night with a set of independent,
   each-optional stop conditions - count (`max_issues_per_run`), usage %
-  (`usage_budget_percent`), graceful wall-clock (`run_budget_minutes`) - and the
-  run stops on the first that trips. The trip/no-trip and first-trip-wins logic
-  is pure in `packages/core/src/run-budget.ts`; `main.ts` assembles the state
-  snapshot and evaluates it at two gates (pre-run, and between-issues at the top
-  of the inner loop). Keep the conditions pure and keep state assembly the only
-  I/O, so parallel chains (#36) only have to make the snapshot consistent. Usage
-  is read out-of-band on the host behind the model-agnostic `UsageReader`
-  (`agent-usage.ts`, selected by `getUsageReader(agentName)`); an agent with no
-  observable window returns `undefined` and opts out automatically, and a read
-  failure is advisory (abstains, never aborts the night). `usage_budget_percent`
-  and `run_budget_minutes` have no built-in resolution fallback (unset == opted
-  out), so a pre-#21 config is unchanged; the starter values in `FIXOWL_DEFAULTS`
-  are only what `fixowl init` writes. `max_issues_per_run` stays the count cap and
-  still bounds how many issues are selected/classified. See the README "Run
-  budgets" section.
+  (`usage_budget_percent`), total tokens (`total_token_budget`), graceful
+  wall-clock (`run_budget_minutes`) - and the run stops on the first that trips.
+  The trip/no-trip and first-trip-wins logic is pure in
+  `packages/core/src/run-budget.ts` (fixed order count -> usage -> tokens ->
+  wallclock); `main.ts` assembles the state snapshot and evaluates it at two
+  gates (pre-run, and between-issues at the top of the inner loop). Keep the
+  conditions pure and keep state assembly the only I/O, so parallel chains (#36)
+  only have to make the snapshot consistent. Two spend axes, split by billing:
+  usage % is for **subscription** agents and is read **out-of-band** on the host
+  behind the model-agnostic `UsageReader` (`agent-usage.ts`, selected by
+  `getUsageReader(agentName)`); `total_token_budget` is for **API-credit** agents
+  (codex/aider) and is measured **in-band** - `main.ts` accumulates each finished
+  issue's `IssueResult.usage`, parsed from the agent's own captured output by
+  `getSpendMeter(agentName)` (`agent-spend.ts`, the pure counterpart to
+  `agent-usage.ts`; `parseCodexUsage` sums `codex exec --json`
+  `turn.completed.usage`, so the codex adapter passes `--json` in **fix** mode
+  only, leaving classify's stdout parsing untouched). Both spend axes abstain
+  fail-open (subscription window unreadable, or spend unmeasurable) so they never
+  abort a night count + wall-clock would allow. Denomination is **tokens, not
+  dollars** - tokens are what every API-credit agent reports directly, with no
+  per-model price table to drift; the `SpendSample` breakdown keeps cached-input
+  and reasoning-output counts so a dollar layer could price them later without
+  re-plumbing (deliberately not built). Billing type is classified once in
+  `agent-catalog.ts` (`agentBilling`), which drives which spend cap `fixowl init`
+  offers. `usage_budget_percent`, `total_token_budget`, and `run_budget_minutes`
+  have no built-in resolution fallback (unset == opted out), so a pre-#21 config
+  is unchanged; the starter values in `FIXOWL_DEFAULTS` are only what `fixowl
+  init` writes. `max_issues_per_run` stays the count cap and still bounds how many
+  issues are selected/classified. NOTE (open verification): `parseCodexUsage` /
+  `parseAiderUsage` were built to the documented output shapes; a live codex/aider
+  transcript was not captured, so the parsers abstain defensively on any
+  unexpected shape - confirm the exact envelope against a real run before relying
+  on the cap. See the README "Run budgets" section.
 
 - Per-issue evidence is uploaded **progressively**, not only at job end. As each
   issue finishes, `main.ts` uploads its `fixowl-evidence/issue-<n>/` dir as its

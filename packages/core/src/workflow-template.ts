@@ -29,6 +29,8 @@ export interface WorkflowTemplateOptions {
   maxIssuesPerRun: number;
   /** Usage-budget stop % (issue #21); the input is rendered only when set. */
   usageBudgetPercent?: number;
+  /** Total-token hard cap for an API-credit agent; the input is rendered only when set. */
+  totalTokenBudget?: number;
   /** Graceful wall-clock stop in minutes (issue #21); rendered only when set. */
   runBudgetMinutes?: number;
   issueTimeoutMinutes: number;
@@ -108,6 +110,9 @@ ${dispatchBlock}`;
   // usage / wall-clock axes opted out stays byte-for-byte as before.
   if (options.usageBudgetPercent !== undefined) {
     withLines.push(`          usage-budget-percent: "${options.usageBudgetPercent}"`);
+  }
+  if (options.totalTokenBudget !== undefined) {
+    withLines.push(`          total-token-budget: "${options.totalTokenBudget}"`);
   }
   if (options.runBudgetMinutes !== undefined) {
     withLines.push(`          run-budget-minutes: "${options.runBudgetMinutes}"`);

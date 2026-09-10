@@ -169,6 +169,7 @@ function toPrefill(current: ResolvedRepoSettings): RepoSettingsPrefill {
     labels: labelsInRule(current.labels).join(", "),
     maxIssuesPerRun: current.maxIssuesPerRun,
     usageBudgetPercent: current.usageBudgetPercent,
+    totalTokenBudget: current.totalTokenBudget,
     runBudgetMinutes: current.runBudgetMinutes,
     issueTimeoutMinutes: current.issueTimeoutMinutes,
     ciMaxTries: current.ciMaxTries,
@@ -219,6 +220,7 @@ interface RepoDefaults {
   agent: string;
   maxIssuesPerRun: number;
   usageBudgetPercent: number | undefined;
+  totalTokenBudget: number | undefined;
   runBudgetMinutes: number | undefined;
   issueTimeoutMinutes: number;
   ciMaxTries: number;
@@ -237,6 +239,7 @@ function repoDefaults(config: GlobalConfig): RepoDefaults {
     agent: d.agent ?? FIXOWL_DEFAULTS.agent,
     maxIssuesPerRun: d.max_issues_per_run ?? FIXOWL_DEFAULTS.maxIssuesPerRun,
     usageBudgetPercent: d.usage_budget_percent,
+    totalTokenBudget: d.total_token_budget,
     runBudgetMinutes: d.run_budget_minutes,
     issueTimeoutMinutes: d.issue_timeout_minutes ?? FIXOWL_DEFAULTS.issueTimeoutMinutes,
     ciMaxTries: d.ci_max_tries ?? FIXOWL_DEFAULTS.ciMaxTries,
@@ -311,6 +314,10 @@ function applyRepoChanges(
       answers.usageBudgetPercent,
       d.usageBudgetPercent,
     );
+    changed = true;
+  }
+  if (answers.totalTokenBudget !== current.totalTokenBudget) {
+    placeOptional(doc, index, "total_token_budget", answers.totalTokenBudget, d.totalTokenBudget);
     changed = true;
   }
   if (answers.runBudgetMinutes !== current.runBudgetMinutes) {

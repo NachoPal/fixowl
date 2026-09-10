@@ -4,6 +4,7 @@ import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs
 import { dirname, join } from "node:path";
 import type { Octokit } from "@octokit/rest";
 import {
+  agentBilling,
   agentCatalogEntry,
   FIXOWL_DEFAULTS,
   getAgentAdapter,
@@ -833,9 +834,10 @@ async function stepRepos(
 Step 3/4  Repositories
 ----------------------
 For each repo: which one, when the nightly run fires, which labels mark an
-issue as fixowl's, the run budgets that stop the night (usage %, wall-clock,
-and an optional issue-count cap), the per-issue timeout, the CI-gated fix loop
-budget, and which model the coding agent runs with.`);
+issue as fixowl's, the run budgets that stop the night (a spend cap - usage %
+for subscription agents or a token total for API-credit agents - plus
+wall-clock and an optional issue-count cap), the per-issue timeout, the
+CI-gated fix loop budget, and which model the coding agent runs with.`);
 
   const repos: RepoAnswers[] = [];
   // The wizard's sticky-last-value defaults: the first repo starts from the
@@ -848,6 +850,7 @@ budget, and which model the coding agent runs with.`);
     labels: "overnight",
     maxIssuesPerRun: FIXOWL_DEFAULTS.maxIssuesPerRun,
     usageBudgetPercent: FIXOWL_DEFAULTS.usageBudgetPercent,
+    totalTokenBudget: FIXOWL_DEFAULTS.totalTokenBudget,
     runBudgetMinutes: FIXOWL_DEFAULTS.runBudgetMinutes,
     issueTimeoutMinutes: FIXOWL_DEFAULTS.issueTimeoutMinutes,
     ciMaxTries: FIXOWL_DEFAULTS.ciMaxTries,
@@ -868,6 +871,7 @@ budget, and which model the coding agent runs with.`);
       labels: answers.labels.join(", "),
       maxIssuesPerRun: answers.maxIssuesPerRun,
       usageBudgetPercent: answers.usageBudgetPercent,
+      totalTokenBudget: answers.totalTokenBudget,
       runBudgetMinutes: answers.runBudgetMinutes,
       issueTimeoutMinutes: answers.issueTimeoutMinutes ?? FIXOWL_DEFAULTS.issueTimeoutMinutes,
       ciMaxTries: answers.ciMaxTries ?? FIXOWL_DEFAULTS.ciMaxTries,
@@ -889,6 +893,8 @@ export interface RepoSettingsPrefill {
   maxIssuesPerRun: number;
   /** undefined => blank default => the usage axis stays opted out. */
   usageBudgetPercent?: number;
+  /** undefined => blank default => the token axis stays opted out. */
+  totalTokenBudget?: number;
   runBudgetMinutes?: number;
   issueTimeoutMinutes: number;
   ciMaxTries: number;
@@ -939,17 +945,39 @@ export async function promptRepoSettings(
     },
   );
   // Layered run-budget (issue #21): the night stops on the first condition
-  // that trips. Each is optional; a blank answer opts that axis out.
-  const usageBudgetAnswer = await prompter.ask(
-    "  Usage budget - stop the night at what % of the agent's usage window? (blank = no usage cap)",
-    {
-      default: prefill.usageBudgetPercent === undefined ? "" : String(prefill.usageBudgetPercent),
-      validate: (value) =>
-        value.trim() === "" || isPercent(value)
-          ? undefined
-          : "enter a percent 0-100, or leave blank for no usage cap",
-    },
-  );
+  // that trips. Each is optional; a blank answer opts that axis out. The spend
+  // cap is billing-aware: a subscription agent (claude) is bounded by a % of its
+  // usage window; an API-credit agent (codex/aider) is bounded by a total-token
+  // cap (there is no usage window to read); a zero-spend agent (script) gets no
+  // spend prompt at all.
+  const billing = agentBilling(agent);
+  let usageBudgetPercent: number | undefined;
+  let totalTokenBudget: number | undefined;
+  if (billing === "subscription") {
+    const usageBudgetAnswer = await prompter.ask(
+      "  Usage budget - stop the night at what % of the agent's usage window? (blank = no usage cap)",
+      {
+        default: prefill.usageBudgetPercent === undefined ? "" : String(prefill.usageBudgetPercent),
+        validate: (value) =>
+          value.trim() === "" || isPercent(value)
+            ? undefined
+            : "enter a percent 0-100, or leave blank for no usage cap",
+      },
+    );
+    usageBudgetPercent = usageBudgetAnswer.trim() === "" ? undefined : Number(usageBudgetAnswer);
+  } else if (billing === "api-credit") {
+    const tokenBudgetAnswer = await prompter.ask(
+      "  Token budget - stop the night once the agent has spent how many tokens? (blank = no token cap)",
+      {
+        default: prefill.totalTokenBudget === undefined ? "" : String(prefill.totalTokenBudget),
+        validate: (value) =>
+          value.trim() === "" || /^[1-9]\d*$/.test(value.trim())
+            ? undefined
+            : "enter a positive whole number of tokens, or leave blank for no token cap",
+      },
+    );
+    totalTokenBudget = tokenBudgetAnswer.trim() === "" ? undefined : Number(tokenBudgetAnswer);
+  }
   const runBudgetAnswer = await prompter.ask(
     "  Graceful run budget - don't start a new issue after how many minutes? (blank = none)",
     {
@@ -1019,7 +1047,8 @@ export async function promptRepoSettings(
     scheduleTrigger,
     labels,
     maxIssuesPerRun: Number(maxIssuesAnswer),
-    usageBudgetPercent: usageBudgetAnswer.trim() === "" ? undefined : Number(usageBudgetAnswer),
+    usageBudgetPercent,
+    totalTokenBudget,
     runBudgetMinutes: runBudgetAnswer.trim() === "" ? undefined : Number(runBudgetAnswer),
     issueTimeoutMinutes: Number(issueTimeoutAnswer),
     ciMaxTries: Number(ciMaxTriesAnswer),
@@ -1518,8 +1547,9 @@ defaults:
   # Layered run-budget (issue #21): the night stops on the first condition that
   # trips. Each is optional; delete/omit a line to opt that axis out.
   max_issues_per_run: 4        # secondary cap: at most this many PRs ship
-  # usage_budget_percent: 85   # stop before a new issue once the usage window hits this %
-  # run_budget_minutes: 240    # graceful wall-clock: don't start a new issue after this long
+  # usage_budget_percent: 85       # subscription agents: stop once the usage window hits this %
+  # total_token_budget: 3000000    # API-credit agents (codex/aider): stop once total token spend hits this
+  # run_budget_minutes: 240        # graceful wall-clock: don't start a new issue after this long
   issue_timeout_minutes: 45    # per-issue hard timeout (a stuck agent is killed)
   ci_max_tries: 3            # CI-gated fix loop: agent passes before a draft PR is left
   ci_timeout_minutes: 60     # minutes each pass waits for the base branch's required checks

@@ -66,6 +66,34 @@ export const AGENT_MODEL_CATALOG: Record<string, AgentCatalogEntry> = {
   },
 };
 
+/** How an agent's credential is billed. Drives which run-budget the wizard offers. */
+export type BillingModel = "subscription" | "api-credit" | "none";
+
+/**
+ * Per-agent billing model. Unlike `AGENT_MODEL_CATALOG` (which lists only agents
+ * that expose a model/effort choice), this covers every adapter, `script`
+ * included. A `subscription` agent bills against a rolling usage window fixowl
+ * can read out-of-band (`agent-usage.ts`), so it is bounded by
+ * `usage_budget_percent`; an `api-credit` agent bills per token with no such
+ * window, so it is bounded by the in-band `total_token_budget` measured from the
+ * agent's own reported token usage (`agent-spend.ts`); `script` spends nothing.
+ */
+export const AGENT_BILLING: Record<string, BillingModel> = {
+  claude: "subscription",
+  codex: "api-credit",
+  aider: "api-credit",
+  script: "none",
+};
+
+/**
+ * The billing model for `agent`. An unknown agent defaults to `api-credit`: it is
+ * the safe assumption for a paid CLI, so a newly added paid agent gets the total-
+ * token budget offered rather than silently skipped.
+ */
+export function agentBilling(agent: string): BillingModel {
+  return AGENT_BILLING[agent] ?? "api-credit";
+}
+
 export function agentCatalogEntry(agent: string): AgentCatalogEntry | undefined {
   return AGENT_MODEL_CATALOG[agent];
 }

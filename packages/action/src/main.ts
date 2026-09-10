@@ -62,6 +62,13 @@ export interface NightInputs {
    * kept secondary count cap (and bounds how many issues are selected/classified).
    */
   usageBudgetPercent?: number;
+  /**
+   * Total-token hard cap for an API-credit agent (codex/aider): stop before a new
+   * issue once the night's accumulated token spend reaches this. Measured in-band
+   * from the agent's own reported usage (agent-spend.ts), accumulated across
+   * issues; undefined opts the token condition out.
+   */
+  totalTokenBudget?: number;
   runBudgetMinutes?: number;
   issueTimeoutMinutes: number;
   /** Max agent passes in the CI-gated loop; undefined uses the built-in default. */
@@ -266,11 +273,20 @@ async function runNightWithGit(
   const budgetLimits: BudgetLimits = {
     maxIssues: inputs.maxIssues,
     usagePercent: inputs.usageBudgetPercent,
+    totalTokens: inputs.totalTokenBudget,
     runMinutes: inputs.runBudgetMinutes,
   };
   const stopConditions = buildStopConditions(budgetLimits);
   const usageReader = getUsageReader(inputs.agentName);
   let usageWarned = false;
+  // In-band token accumulator for the `total_token_budget` axis. Unlike usage
+  // (an out-of-band per-gate read), spend is a running sum folded from each
+  // finished issue's measured usage; `assembleBudgetState` just reads it.
+  // `tokensMeasured` stays false until an agent pass reports usage, so the token
+  // condition abstains rather than treating "nothing spent yet" as a real read.
+  let tokensUsed = 0;
+  let tokensMeasured = false;
+  let tokensWarned = false;
   const assembleBudgetState = async (shipped: number): Promise<BudgetState> => {
     let usage: UsageSnapshot | undefined;
     // Only read usage when a usage budget is set AND a network edge is injected;
@@ -286,7 +302,11 @@ async function runNightWithGit(
         log.warn(warning);
       }
     }
-    return { shipped, elapsedMs: Date.now() - runStart, usage };
+    // Report accumulated tokens only when a token budget is set and at least one
+    // pass reported measurable usage; otherwise abstain (undefined), so the token
+    // condition fails open exactly like usage.
+    const tokens = inputs.totalTokenBudget !== undefined && tokensMeasured ? tokensUsed : undefined;
+    return { shipped, elapsedMs: Date.now() - runStart, usage, tokensUsed: tokens };
   };
 
   const matching = await selectIssues(github, inputs.labels);
@@ -541,6 +561,28 @@ async function runNightWithGit(
         };
       }
       results.push(result);
+      // Fold this issue's in-band token spend into the run accumulator for the
+      // token budget. When a budget is set but a completed agent pass reported no
+      // measurable usage, warn once and fall through (mirrors the usage abstain);
+      // a subscription/unparseable agent then stays bounded by count + wall-clock.
+      if (result.usage !== undefined) {
+        tokensUsed += result.usage.totalTokens;
+        tokensMeasured = true;
+      } else if (
+        inputs.totalTokenBudget !== undefined &&
+        !tokensMeasured &&
+        !tokensWarned &&
+        (result.status === "pr-opened" ||
+          result.status === "no-changes" ||
+          result.status === "agent-failed")
+      ) {
+        tokensWarned = true;
+        const warning =
+          `token budget set (${inputs.totalTokenBudget}) but ${inputs.agentName} spend is ` +
+          `unmeasurable this run; falling through to count + wall-clock budgets`;
+        warnings.push(warning);
+        log.warn(warning);
+      }
       // Progressive upload: this issue has finished, so its evidence is complete.
       // Uploading it now - while the job is still genuinely running - is what
       // makes it survive a later cancellation; the single end-of-job step never

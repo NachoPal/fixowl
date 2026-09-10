@@ -113,6 +113,7 @@ describe("resolveRepoSettings", () => {
       agent: "claude",
       maxIssuesPerRun: 4,
       usageBudgetPercent: undefined,
+      totalTokenBudget: undefined,
       runBudgetMinutes: undefined,
       issueTimeoutMinutes: 45,
       ciMaxTries: 3,
@@ -191,17 +192,35 @@ describe("resolveRepoSettings", () => {
       "NachoPal/storyengine",
     );
     expect(bare.usageBudgetPercent).toBeUndefined();
+    expect(bare.totalTokenBudget).toBeUndefined();
     expect(bare.runBudgetMinutes).toBeUndefined();
 
     // Inherited from defaults, then overridden per-repo.
     const config = globalConfigSchema.parse({
       ...minimalConfig,
-      defaults: { usage_budget_percent: 80, run_budget_minutes: 200 },
-      repos: [{ name: "NachoPal/storyengine", usage_budget_percent: 60 }],
+      defaults: {
+        usage_budget_percent: 80,
+        run_budget_minutes: 200,
+        total_token_budget: 5_000_000,
+      },
+      repos: [
+        { name: "NachoPal/storyengine", usage_budget_percent: 60, total_token_budget: 2_000_000 },
+      ],
     });
     const settings = resolveRepoSettings(config, "NachoPal/storyengine");
     expect(settings.usageBudgetPercent).toBe(60); // repo wins
+    expect(settings.totalTokenBudget).toBe(2_000_000); // repo wins
     expect(settings.runBudgetMinutes).toBe(200); // inherited from defaults
+  });
+
+  it("resolves total_token_budget: repo > defaults, undefined (opted out) when unset", () => {
+    const fromDefaults = globalConfigSchema.parse({
+      ...minimalConfig,
+      defaults: { total_token_budget: 4_000_000 },
+    });
+    expect(resolveRepoSettings(fromDefaults, "NachoPal/storyengine").totalTokenBudget).toBe(
+      4_000_000,
+    );
   });
 
   it("rejects a usage_budget_percent outside 0..100", () => {

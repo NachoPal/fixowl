@@ -162,7 +162,8 @@ defaults:
   labels: { any: [overnight] }            # any/all combinations supported
   agent: claude
   max_issues_per_run: 4                   # run budget: at most this many PRs ship
-  # usage_budget_percent: 85              # run budget: stop before a new issue at this % of the usage window
+  # usage_budget_percent: 85              # run budget (subscription agents): stop at this % of the usage window
+  # total_token_budget: 3000000           # run budget (API-credit agents): stop once total token spend hits this
   # run_budget_minutes: 240               # run budget: don't start a new issue after this long
   issue_timeout_minutes: 45               # per-issue safety net (a stuck agent is killed)
   model: sonnet                           # default model when no selector label
@@ -242,21 +243,37 @@ that trips, and the night summary names which:
 - **`max_issues_per_run`** - a count cap: at most this many PRs ship in one run.
   The secondary cap, and the only budget that works for agents whose usage is
   not observable. Defaults to 4.
-- **`usage_budget_percent`** - stop before starting a new issue once the agent's
-  rolling usage window is at or above this percent. Read out-of-band on the host
-  from the provider (for `claude`, the non-billing OAuth usage endpoint, using
-  the token the host already holds - nothing new enters the agent container). A
-  read failure is *advisory*: it abstains and falls through to the other budgets
-  rather than aborting the night. Opted out when unset.
+- **`usage_budget_percent`** - for **subscription-billed** agents (`claude`):
+  stop before starting a new issue once the agent's rolling usage window is at or
+  above this percent. Read out-of-band on the host from the provider (for
+  `claude`, the non-billing OAuth usage endpoint, using the token the host
+  already holds - nothing new enters the agent container). A read failure is
+  *advisory*: it abstains and falls through to the other budgets rather than
+  aborting the night. Opted out when unset. Silently no-ops for an API-credit
+  agent, which has no such window - use `total_token_budget` instead.
+- **`total_token_budget`** - the API-credit counterpart, for **pay-per-token**
+  agents (`codex` on `OPENAI_API_KEY`, `aider` on `ANTHROPIC_API_KEY`): stop
+  before starting a new issue once the night's accumulated token spend reaches
+  this total. Unlike the usage window, this is measured **in-band** - fixowl
+  accumulates the token counts the agent reports in its own output
+  (`codex exec --json` `turn.completed.usage`; aider's `Tokens:` line), with no
+  provider endpoint to poll (OpenAI's spend API needs an org Admin key and
+  buckets by day, unusable for a live gate). Denominated in tokens, not dollars:
+  tokens are the one quantity every API-credit agent reports directly, with no
+  price table to drift. Abstains (falls through) when the agent's spend is
+  unmeasurable this run. Opted out when unset.
 - **`run_budget_minutes`** - a graceful wall-clock cap: don't *start* a new issue
   after this many minutes. Distinct from the workflow's blunt `timeout-minutes`
   hard-kill ceiling. Opted out when unset.
 
 Each is set in `defaults` and overridable per repo; leave one unset (or delete
-its line) to opt that axis out. `fixowl init` prompts for all three plus the
-per-issue timeout. The pure gate logic lives in
-`packages/core/src/run-budget.ts`; usage reading is behind the model-agnostic
-`UsageReader` in `packages/core/src/agent-usage.ts`.
+its line) to opt that axis out. `fixowl init` prompts for the spend cap that fits
+the chosen agent's billing (usage % for subscription, token total for
+API-credit) plus wall-clock, count, and the per-issue timeout. The pure gate
+logic lives in `packages/core/src/run-budget.ts`; the out-of-band usage read is
+behind the model-agnostic `UsageReader` in `packages/core/src/agent-usage.ts`,
+and the in-band spend meter behind `SpendMeter`/`getSpendMeter` in
+`packages/core/src/agent-spend.ts`.
 
 Each target repo carries a `.fixowl.yml` (proposed by `provision` when
 missing) declaring its Dockerfile, verify commands, optional web screenshot

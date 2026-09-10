@@ -8,7 +8,7 @@ import {
 } from "./run-budget.ts";
 
 function state(partial: Partial<BudgetState> = {}): BudgetState {
-  return { shipped: 0, elapsedMs: 0, usage: undefined, ...partial };
+  return { shipped: 0, elapsedMs: 0, usage: undefined, tokensUsed: undefined, ...partial };
 }
 
 function usage(usedPercent: number, limiting = "five_hour"): UsageSnapshot {
@@ -30,6 +30,14 @@ describe("buildStopConditions", () => {
     expect(
       buildStopConditions({ maxIssues: 4, usagePercent: 85, runMinutes: 240 }).map((c) => c.name),
     ).toEqual(["count", "usage", "wallclock"]);
+    expect(
+      buildStopConditions({
+        maxIssues: 4,
+        usagePercent: 85,
+        totalTokens: 3_000_000,
+        runMinutes: 240,
+      }).map((c) => c.name),
+    ).toEqual(["count", "usage", "tokens", "wallclock"]);
   });
 });
 
@@ -76,6 +84,29 @@ describe("usage condition", () => {
   });
 });
 
+describe("tokens condition", () => {
+  it("trips once accumulated tokens reach the cap, not before", () => {
+    expect(verdict({ totalTokens: 1_000 }, state({ tokensUsed: 999 })).stop).toBe(false);
+    const tripped = verdict({ totalTokens: 1_000 }, state({ tokensUsed: 1_000 }));
+    expect(tripped.stop).toBe(true);
+    if (tripped.stop) {
+      expect(tripped.condition).toBe("tokens");
+      expect(tripped.reason).toContain("cap 1000");
+      expect(tripped.reason).toContain("1000 token(s) spent");
+    }
+  });
+
+  it("is opted out when totalTokens is undefined", () => {
+    expect(verdict({}, state({ tokensUsed: 999_999 })).stop).toBe(false);
+  });
+
+  it("abstains (never trips) when spend is unmeasurable", () => {
+    // Fail-open like usage: an agent that reports no usage must not stop a run
+    // the other caps would allow.
+    expect(verdict({ totalTokens: 1 }, state({ tokensUsed: undefined })).stop).toBe(false);
+  });
+});
+
 describe("wall-clock condition", () => {
   it("trips once elapsed reaches the budget minutes", () => {
     expect(verdict({ runMinutes: 10 }, state({ elapsedMs: 9 * 60_000 })).stop).toBe(false);
@@ -107,11 +138,22 @@ describe("first-to-trip ordering", () => {
     if (v.stop) expect(v.condition).toBe("wallclock");
   });
 
+  it("reports tokens before wall-clock when usage abstains and both trip", () => {
+    // usage enabled but unobservable (abstains); tokens trips and is reported
+    // ahead of the also-tripping wall-clock, per the fixed order.
+    const v = verdict(
+      { usagePercent: 50, totalTokens: 1_000, runMinutes: 1 },
+      state({ usage: undefined, tokensUsed: 2_000, elapsedMs: 5 * 60_000 }),
+    );
+    expect(v.stop).toBe(true);
+    if (v.stop) expect(v.condition).toBe("tokens");
+  });
+
   it("does not stop when no condition trips", () => {
     expect(
       verdict(
-        { maxIssues: 4, usagePercent: 85, runMinutes: 240 },
-        state({ shipped: 1, usage: usage(10), elapsedMs: 1000 }),
+        { maxIssues: 4, usagePercent: 85, totalTokens: 3_000_000, runMinutes: 240 },
+        state({ shipped: 1, usage: usage(10), tokensUsed: 1000, elapsedMs: 1000 }),
       ).stop,
     ).toBe(false);
   });

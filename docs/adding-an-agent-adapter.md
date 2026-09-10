@@ -207,6 +207,15 @@ to the catalog; a fetched list missing the model hard-fails). Agents with no
 queryable list (claude/aider) return `undefined` from `getModelListSource` and
 keep relying on the catalog alone.
 
+Also add an `AGENT_BILLING` entry (same file) so the run-budget wizard offers the
+right spend cap: `subscription` agents get `usage_budget_percent` (read
+out-of-band, `agent-usage.ts`), `api-credit` agents get `total_token_budget`
+(measured in-band from the agent's own reported token usage, `agent-spend.ts`).
+An unregistered agent defaults to `api-credit`; a subscription agent left out
+would be offered the wrong cap. To make `total_token_budget` actually count spend
+(rather than abstain fail-open), teach `getSpendMeter` in `agent-spend.ts` to
+parse your agent's token-usage output.
+
 ## Step 4 - test it with the `script` pattern
 
 Adapters are pure functions, so they test directly - no Docker, no network.

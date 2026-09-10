@@ -1,12 +1,15 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  addSamples,
+  getSpendMeter,
   PROMPT_MOUNT_PATH,
   type AgentAdapter,
   type CheckStatusLite,
   type ModelSelection,
   type RepoFileConfig,
   type RequiredChecks,
+  type SpendSample,
 } from "@fixowl/core";
 import {
   realClock,
@@ -73,6 +76,13 @@ export interface IssueResult {
   draft?: boolean;
   verification: CheckOutcome[];
   error?: string;
+  /**
+   * Total tokens this issue's agent passes spent, summed across the CI-gated
+   * loop's attempts; undefined when the agent's spend is unmeasurable (a
+   * subscription agent, or an unparseable output). The run loop accumulates this
+   * across issues for the `total_token_budget` stop condition.
+   */
+  usage?: SpendSample;
 }
 
 /** Longest agent output excerpt carried into a failure's `error` string. */
@@ -104,6 +114,11 @@ export async function processIssue(
   const clock = deps.clock ?? realClock;
   const { issue, branch } = ctx;
   const base: Omit<IssueResult, "status"> = { issue, branch, verification: [] };
+  // Accumulated token spend across this issue's agent passes; folded after each
+  // pass and mirrored onto `base` so every return path carries it (finishExhausted
+  // receives it explicitly). undefined stays undefined - abstain - until a pass
+  // reports measurable usage.
+  let usage: SpendSample | undefined;
 
   mkdirSync(ctx.evidenceDir, { recursive: true });
   mkdirSync(ctx.promptDir, { recursive: true });
@@ -121,6 +136,10 @@ export async function processIssue(
 
   for (let attempt = 1; attempt <= maxTries; attempt++) {
     const agentResult = await runAgent(deps, ctx, { attempt, previousFailures });
+    if (agentResult.usage !== undefined) {
+      usage = usage === undefined ? agentResult.usage : addSamples(usage, agentResult.usage);
+      base.usage = usage;
+    }
 
     if (agentResult.timedOut || agentResult.code !== 0) {
       // Unchanged agent-failed path: discard and stop. A provider limit or hard
@@ -244,7 +263,7 @@ export async function processIssue(
     );
   }
 
-  return finishExhausted(deps, ctx, { title, pr, lastVerification, lastCi });
+  return finishExhausted(deps, ctx, { title, pr, lastVerification, lastCi, usage });
 }
 
 /** Runs the agent container once, writing its output to the per-attempt evidence log. */
@@ -252,7 +271,13 @@ async function runAgent(
   deps: IssuePipelineDeps,
   ctx: IssueRunContext,
   params: { attempt: number; previousFailures: readonly CheckFailureFeedback[] | undefined },
-): Promise<{ stdout: string; stderr: string; code: number | null; timedOut: boolean }> {
+): Promise<{
+  stdout: string;
+  stderr: string;
+  code: number | null;
+  timedOut: boolean;
+  usage: SpendSample | undefined;
+}> {
   const { engine, log } = deps;
   const { issue } = ctx;
 
@@ -289,7 +314,10 @@ async function runAgent(
     join(ctx.evidenceDir, `agent-attempt-${params.attempt}.log`),
     `${result.stdout}\n${result.stderr}\n(exit ${result.code}${result.timedOut ? ", timed out" : ""})\n`,
   );
-  return result;
+  // Measure this pass's token spend in-band from the agent's own captured output
+  // (undefined for a subscription agent or an unparseable output; see agent-spend.ts).
+  const usage = getSpendMeter(ctx.adapter.name).parse(result.stdout, result.stderr);
+  return { ...result, usage };
 }
 
 /**
@@ -306,11 +334,17 @@ async function finishExhausted(
     pr: { number: number; url: string } | undefined;
     lastVerification: CheckOutcome[];
     lastCi: WaitForChecksResult | undefined;
+    usage: SpendSample | undefined;
   },
 ): Promise<IssueResult> {
   const { git, github, log } = deps;
   const { issue } = ctx;
-  const base: Omit<IssueResult, "status"> = { issue, branch: ctx.branch, verification: [] };
+  const base: Omit<IssueResult, "status"> = {
+    issue,
+    branch: ctx.branch,
+    verification: [],
+    usage: state.usage,
+  };
   log.warn(`issue #${issue.number}: exhausted ${ctx.ciMaxTries} attempt(s); leaving a draft PR`);
 
   let pr = state.pr;
