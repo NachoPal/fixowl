@@ -5,17 +5,23 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   agentAdapterNames,
+  ANTHROPIC_API_KEY_ENV,
+  CLAUDE_OAUTH_TOKEN_ENV,
   FORBIDDEN_AGENT_ENV,
   getAgentAdapter,
   PROMPT_MOUNT_PATH,
 } from "./agent-adapters.ts";
 
 describe("agent adapters", () => {
-  it("claude: headless argv, prompt on stdin, oauth token allowlisted", () => {
+  it("claude: headless argv, prompt on stdin, both credentials allowlisted", () => {
     const claude = getAgentAdapter("claude");
+    // Fix mode emits --output-format json so the host can meter tokens in-band;
+    // classify mode stays plain -p (its stdout is parsed as text).
     expect(claude.argv("fix")).toEqual([
       "claude",
       "-p",
+      "--output-format",
+      "json",
       "--dangerously-skip-permissions",
       "--max-turns",
       "80",
@@ -28,14 +34,17 @@ describe("agent adapters", () => {
       "30",
     ]);
     expect(claude.promptVia).toBe("stdin");
-    expect(claude.env).toEqual(["CLAUDE_CODE_OAUTH_TOKEN"]);
+    // Both credentials are allowlisted; init writes an exclusive override.
+    expect(claude.env).toEqual([CLAUDE_OAUTH_TOKEN_ENV, ANTHROPIC_API_KEY_ENV]);
   });
 
-  it("claude: appends --model and --effort when a selection is given", () => {
+  it("claude: appends --model and --effort when a selection is given (after --output-format json in fix)", () => {
     const claude = getAgentAdapter("claude");
     expect(claude.argv("fix", { model: "opus", effort: "max" })).toEqual([
       "claude",
       "-p",
+      "--output-format",
+      "json",
       "--dangerously-skip-permissions",
       "--max-turns",
       "80",
@@ -48,6 +57,8 @@ describe("agent adapters", () => {
     expect(claude.argv("fix", { effort: "low" })).toEqual([
       "claude",
       "-p",
+      "--output-format",
+      "json",
       "--dangerously-skip-permissions",
       "--max-turns",
       "80",
@@ -57,36 +68,12 @@ describe("agent adapters", () => {
     expect(claude.argv("fix", {})).toEqual([
       "claude",
       "-p",
+      "--output-format",
+      "json",
       "--dangerously-skip-permissions",
       "--max-turns",
       "80",
     ]);
-  });
-
-  it("aider: appends --model and --reasoning-effort when a selection is given", () => {
-    const aider = getAgentAdapter("aider");
-    expect(aider.argv("fix", { model: "sonnet", effort: "high" })).toEqual([
-      "aider",
-      "--message-file",
-      PROMPT_MOUNT_PATH,
-      "--yes-always",
-      "--model",
-      "sonnet",
-      "--reasoning-effort",
-      "high",
-    ]);
-  });
-
-  it("aider: message file argv and an empty default env allowlist (opt-in spend)", () => {
-    const aider = getAgentAdapter("aider");
-    expect(aider.argv("fix")).toEqual([
-      "aider",
-      "--message-file",
-      PROMPT_MOUNT_PATH,
-      "--yes-always",
-    ]);
-    expect(aider.env).toEqual([]);
-    expect(aider.promptVia).toBe("file");
   });
 
   it("codex: exec argv, prompt on stdin, empty default env allowlist (opt-in spend)", () => {
@@ -197,9 +184,19 @@ describe("agent adapters", () => {
   });
 
   it("env override replaces the allowlist", () => {
-    const adapter = getAgentAdapter("aider", ["ANTHROPIC_API_KEY"]);
-    expect(adapter.env).toEqual(["ANTHROPIC_API_KEY"]);
-    expect(getAgentAdapter("aider").env).toEqual([]);
+    // codex ships an empty default allowlist; the operator opts its key in.
+    const adapter = getAgentAdapter("codex", ["OPENAI_API_KEY"]);
+    expect(adapter.env).toEqual(["OPENAI_API_KEY"]);
+    expect(getAgentAdapter("codex").env).toEqual([]);
+  });
+
+  it("claude env override selects one credential exclusively (avoiding the precedence fight)", () => {
+    // init writes exactly one of the two, so only the chosen credential enters
+    // the container even though the default allowlist lists both.
+    expect(getAgentAdapter("claude", [ANTHROPIC_API_KEY_ENV]).env).toEqual([ANTHROPIC_API_KEY_ENV]);
+    expect(getAgentAdapter("claude", [CLAUDE_OAUTH_TOKEN_ENV]).env).toEqual([
+      CLAUDE_OAUTH_TOKEN_ENV,
+    ]);
   });
 
   it("the allowlist structurally refuses GitHub credentials", () => {
@@ -214,6 +211,6 @@ describe("agent adapters", () => {
 
   it("unknown adapter throws with the known list", () => {
     expect(() => getAgentAdapter("gpt")).toThrow(/unknown agent adapter "gpt"/);
-    expect(agentAdapterNames()).toEqual(["claude", "aider", "codex", "script"]);
+    expect(agentAdapterNames()).toEqual(["claude", "codex", "script"]);
   });
 });

@@ -6,6 +6,8 @@
  * adapters pass the chosen values to the CLI. Extend an agent by adding entries.
  */
 
+import { ANTHROPIC_API_KEY_ENV } from "./agent-adapters.ts";
+
 export interface CatalogModel {
   /** The value passed to the agent CLI's `--model` flag. */
   id: string;
@@ -39,17 +41,6 @@ export const AGENT_MODEL_CATALOG: Record<string, AgentCatalogEntry> = {
     ],
     efforts: ["low", "medium", "high", "xhigh", "max"],
   },
-  // aider: `--model` takes a model name or one of aider's built-in aliases, and
-  // `--reasoning-effort` sets the reasoning budget. The alias set below is a
-  // sensible starting point; extend it with any model your API key can reach.
-  aider: {
-    models: [
-      { id: "sonnet", description: "aider alias for the latest Anthropic Sonnet." },
-      { id: "opus", description: "aider alias for the latest Anthropic Opus." },
-      { id: "haiku", description: "aider alias for the latest Anthropic Haiku." },
-    ],
-    efforts: ["low", "medium", "high"],
-  },
   // codex (`codex exec`): `-m` takes a model id and reasoning effort is set via
   // `-c model_reasoning_effort=<level>`. The real model list is server-provided
   // per account; the ids below are the publicly-known codex family and a safe
@@ -70,27 +61,42 @@ export const AGENT_MODEL_CATALOG: Record<string, AgentCatalogEntry> = {
 export type BillingModel = "subscription" | "api-credit" | "none";
 
 /**
- * Per-agent billing model. Unlike `AGENT_MODEL_CATALOG` (which lists only agents
- * that expose a model/effort choice), this covers every adapter, `script`
- * included. A `subscription` agent bills against a rolling usage window fixowl
- * can read out-of-band (`agent-usage.ts`), so it is bounded by
- * `usage_budget_percent`; an `api-credit` agent bills per token with no such
- * window, so it is bounded by the in-band `total_token_budget` measured from the
- * agent's own reported token usage (`agent-spend.ts`); `script` spends nothing.
+ * Per-agent DEFAULT billing model, keyed by adapter name. Unlike
+ * `AGENT_MODEL_CATALOG` (which lists only agents that expose a model/effort
+ * choice), this covers every adapter, `script` included. A `subscription` agent
+ * bills against a rolling usage window fixowl can read out-of-band
+ * (`agent-usage.ts`), so it is bounded by `usage_budget_percent`; an
+ * `api-credit` agent bills per token with no such window, so it is bounded by
+ * the in-band `total_token_budget` measured from the agent's own reported token
+ * usage (`agent-spend.ts`); `script` spends nothing.
+ *
+ * `claude` is the name-keyed default of `subscription`, but its billing is not a
+ * pure function of the agent name: the same adapter bills as a subscription with
+ * an OAuth token and as API usage with an API key. `agentBilling` refines the
+ * name default with the resolved env allowlist (the chosen auth mode).
  */
 export const AGENT_BILLING: Record<string, BillingModel> = {
   claude: "subscription",
   codex: "api-credit",
-  aider: "api-credit",
   script: "none",
 };
 
 /**
- * The billing model for `agent`. An unknown agent defaults to `api-credit`: it is
- * the safe assumption for a paid CLI, so a newly added paid agent gets the total-
- * token budget offered rather than silently skipped.
+ * The billing model for `agent`, refined by its resolved env allowlist (`env`).
+ * Billing is auth-aware, not purely name-keyed: the native `claude` adapter runs
+ * on a subscription OAuth token (`subscription`) OR a Console API key
+ * (`api-credit`), and the credential in `env` decides which. When
+ * `ANTHROPIC_API_KEY` is in claude's allowlist it wins (Claude Code uses the API
+ * key in headless mode when present; see agent-adapters.ts) and the run bills as
+ * metered API usage. `env` omitted (or without the API key) falls back to the
+ * name-keyed default, so claude stays `subscription`. An unknown agent defaults
+ * to `api-credit`: the safe assumption for a paid CLI, so a newly added paid
+ * agent gets the total-token budget offered rather than silently skipped.
  */
-export function agentBilling(agent: string): BillingModel {
+export function agentBilling(agent: string, env?: readonly string[]): BillingModel {
+  if (agent === "claude" && env !== undefined && env.includes(ANTHROPIC_API_KEY_ENV)) {
+    return "api-credit";
+  }
   return AGENT_BILLING[agent] ?? "api-credit";
 }
 

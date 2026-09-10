@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { ANTHROPIC_API_KEY_ENV, CLAUDE_OAUTH_TOKEN_ENV } from "./agent-adapters.ts";
 import {
   agentBilling,
   agentCatalogEntry,
@@ -27,11 +28,26 @@ describe("agent catalog", () => {
 });
 
 describe("agentBilling", () => {
-  it("classifies each agent's billing model", () => {
+  it("classifies each agent's billing model from its name default", () => {
     expect(agentBilling("claude")).toBe("subscription");
     expect(agentBilling("codex")).toBe("api-credit");
-    expect(agentBilling("aider")).toBe("api-credit");
     expect(agentBilling("script")).toBe("none");
+  });
+
+  it("is auth-aware for claude: the API key makes it api-credit, the OAuth token keeps it subscription", () => {
+    expect(agentBilling("claude", [ANTHROPIC_API_KEY_ENV])).toBe("api-credit");
+    expect(agentBilling("claude", [CLAUDE_OAUTH_TOKEN_ENV])).toBe("subscription");
+    // Both present: the API key wins in headless mode, so it bills as API credit.
+    expect(agentBilling("claude", [CLAUDE_OAUTH_TOKEN_ENV, ANTHROPIC_API_KEY_ENV])).toBe(
+      "api-credit",
+    );
+    // env omitted falls back to the name-keyed default (subscription).
+    expect(agentBilling("claude")).toBe("subscription");
+  });
+
+  it("ignores env for a non-claude agent (billing stays name-keyed)", () => {
+    expect(agentBilling("codex", [ANTHROPIC_API_KEY_ENV])).toBe("api-credit");
+    expect(agentBilling("script", [ANTHROPIC_API_KEY_ENV])).toBe("none");
   });
 
   it("defaults an unknown agent to api-credit (the safe assumption for a paid CLI)", () => {
@@ -60,9 +76,9 @@ describe("validateModelEffort", () => {
     expect(errors[0]).toMatch(/effort "extreme" is not available for agent "claude"/);
   });
 
-  it("is agent-aware: aider does not accept the claude-only 'max' effort", () => {
-    expect(validateModelEffort("aider", { effort: "max" })).toHaveLength(1);
-    expect(validateModelEffort("aider", { effort: "high" })).toEqual([]);
+  it("is agent-aware: codex does not accept the claude-only 'max' effort", () => {
+    expect(validateModelEffort("codex", { effort: "max" })).toHaveLength(1);
+    expect(validateModelEffort("codex", { effort: "high" })).toEqual([]);
   });
 
   it("validates codex model+effort and rejects unknown combinations", () => {

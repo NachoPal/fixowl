@@ -13,7 +13,7 @@ body:
     attributes:
       label: Agent / CLI
       description: The coding agent or CLI you want fixowl to drive.
-      placeholder: e.g. codex, aider, cursor-agent, ...
+      placeholder: e.g. cursor-agent, gemini-cli, ...
     validations:
       required: true
   - type: input

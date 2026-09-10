@@ -66,7 +66,7 @@ A worked example - suppose you are adding an agent called `mycli`, invoked as
 ```ts
 const mycli: AgentAdapter = {
   name: "mycli",
-  // Deliberately empty, like aider/codex: mycli needs a paid credential, so the
+  // Deliberately empty, like codex: mycli needs a paid credential, so the
   // operator opts it in explicitly via config (see "Env-var allowlisting" below).
   env: [],
   promptVia: "file",
@@ -85,7 +85,7 @@ const mycli: AgentAdapter = {
 Then register it:
 
 ```ts
-const ADAPTERS: Record<string, AgentAdapter> = { claude, aider, codex, script, mycli };
+const ADAPTERS: Record<string, AgentAdapter> = { claude, codex, script, mycli };
 ```
 
 Points the existing adapters demonstrate, worth copying:
@@ -94,8 +94,8 @@ Points the existing adapters demonstrate, worth copying:
   array element - never build a command string with interpolation. (Follow the
   repo-wide convention "spawn processes with argv arrays.")
 - **Non-interactive / headless mode is mandatory.** The container has no TTY and
-  no human. Use the agent's headless flag (`claude -p`, `codex exec`,
-  `aider --yes-always`) and disable any approval prompts.
+  no human. Use the agent's headless flag (`claude -p`, `codex exec`) and
+  disable any approval prompts.
 - **The container is the sandbox, so bypass the agent's own sandbox.** It runs
   with `--cap-drop ALL`, resource limits, no GitHub token, and no docker socket;
   an agent's built-in sandbox would fight that. `codex` passes
@@ -107,7 +107,7 @@ Points the existing adapters demonstrate, worth copying:
 - **Model and effort are appended only when set.** Spread the flag conditionally
   (`...(selection?.model !== undefined ? [...] : [])`) so an unset value falls
   through to the CLI's own default. Map effort to whatever your CLI expects -
-  `claude` uses `--effort`, `aider` uses `--reasoning-effort`, `codex` maps it to
+  `claude` uses `--effort`, `codex` maps it to
   a config override `-c model_reasoning_effort=<level>`.
 - **`mode` is `"fix"` or `"classify"`.** The same argv usually works for both;
   vary it only if the agent needs it (`claude` lowers `--max-turns` for
@@ -119,7 +119,7 @@ Points the existing adapters demonstrate, worth copying:
   `codex`).
 - `promptVia: "file"` - the prompt is written to a file mounted **read-only** at
   `PROMPT_MOUNT_PATH` (`/fixowl/prompt.md`); reference that constant in your argv
-  (`aider --message-file`, the `mycli` example above). Import it from
+  (the `mycli` example above). Import it from
   `agent-adapters.ts`; there is also `WORKSPACE_MOUNT_PATH` (`/workspace`) if
   your CLI needs to be told where the working tree is (as `codex` does with
   `-C`).
@@ -132,8 +132,8 @@ fixowl guarantees the agent cannot see a GitHub token or any other host secret.
 
 Two rules the code enforces for you:
 
-- **Default to an empty allowlist for any paid agent.** `aider`, `codex`, and the
-  `mycli` example all ship `env: []` so no repo starts spending by accident. The
+- **Default to an empty allowlist for any paid agent.** `codex` and the
+  `mycli` example both ship `env: []` so no repo starts spending by accident. The
   operator opts the credential in explicitly in their config:
 
   ```yaml
@@ -143,8 +143,12 @@ Two rules the code enforces for you:
 
   That config override *replaces* the adapter's default `env`
   (`getAgentAdapter(name, envOverride)` in `agent-adapters.ts`). `claude` is the
-  exception: its default is `["CLAUDE_CODE_OAUTH_TOKEN"]` because that is a
-  subscription OAuth token, not per-request API billing.
+  exception: its default allowlist is
+  `["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"]` - either a subscription
+  OAuth token or a Console API key can authenticate it. Because the API key wins
+  over the OAuth token in headless mode, `fixowl init` writes an **exclusive**
+  override (exactly one of the two) so only the chosen credential reaches the
+  container; the billing model follows the choice (see `agentBilling`).
 
 - **GitHub credentials are refused structurally.** `getAgentAdapter` rejects any
   allowlist containing a name in `FORBIDDEN_AGENT_ENV` (`FIXOWL_APP_PRIVATE_KEY`,
@@ -195,7 +199,7 @@ The contract:
 
 The real model set is often account- or server-specific, so seed a sensible
 starting list and note in a comment that operators can extend it with any model
-their key can reach (as the `aider` and `codex` entries do).
+their key can reach (as the `codex` entry does).
 
 If your provider exposes a queryable model list (as OpenAI does via
 `GET /v1/models`), you can optionally register a live source in
@@ -204,7 +208,7 @@ If your provider exposes a queryable model list (as OpenAI does via
 I/O edge. `fixowl validate` then cross-checks each chosen id against the live
 list on top of the catalog (fail-open: an unreachable list warns and falls back
 to the catalog; a fetched list missing the model hard-fails). Agents with no
-queryable list (claude/aider) return `undefined` from `getModelListSource` and
+queryable list (claude) return `undefined` from `getModelListSource` and
 keep relying on the catalog alone.
 
 Also add an `AGENT_BILLING` entry (same file) so the run-budget wizard offers the

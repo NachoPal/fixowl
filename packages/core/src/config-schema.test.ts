@@ -238,15 +238,15 @@ describe("resolveRepoSettings", () => {
   it("prefers repo entry over defaults over built-ins", () => {
     const config = globalConfigSchema.parse({
       ...minimalConfig,
-      defaults: { schedule: "0 2 * * *", agent: "aider", max_issues_per_run: 9 },
-      agents: { aider: { env: ["ANTHROPIC_API_KEY"] } },
+      defaults: { schedule: "0 2 * * *", agent: "codex", max_issues_per_run: 9 },
+      agents: { codex: { env: ["OPENAI_API_KEY"] } },
       repos: [{ name: "NachoPal/storyengine", schedule: "30 1 * * *" }],
     });
     const settings = resolveRepoSettings(config, "NachoPal/storyengine");
     expect(settings.schedule).toBe("30 1 * * *");
-    expect(settings.agent).toBe("aider");
+    expect(settings.agent).toBe("codex");
     expect(settings.maxIssuesPerRun).toBe(9);
-    expect(settings.agentEnv).toEqual(["ANTHROPIC_API_KEY"]);
+    expect(settings.agentEnv).toEqual(["OPENAI_API_KEY"]);
   });
 
   it("resolves default model/effort and per-repo label_models", () => {
@@ -343,15 +343,15 @@ describe("globalConfigSchemaChecked (agent-aware model/effort)", () => {
   });
 
   it("validates against the agent the repo actually uses", () => {
-    // "max" is a claude effort but not an aider one; the repo uses aider.
+    // "max" is a claude effort but not a codex one; the repo uses codex.
     expect(() =>
       globalConfigSchemaChecked.parse({
         ...minimalConfig,
-        defaults: { agent: "aider" },
-        agents: { aider: { env: ["ANTHROPIC_API_KEY"] } },
-        repos: [{ name: "NachoPal/storyengine", model: "opus", effort: "max" }],
+        defaults: { agent: "codex" },
+        agents: { codex: { env: ["OPENAI_API_KEY"] } },
+        repos: [{ name: "NachoPal/storyengine", model: "gpt-5-codex", effort: "max" }],
       }),
-    ).toThrow(/effort .*max.* is not available for agent .*aider/);
+    ).toThrow(/effort .*max.* is not available for agent .*codex/);
   });
 });
 

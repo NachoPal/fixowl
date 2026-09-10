@@ -12,8 +12,9 @@
  *                                   unobservable this run, so it never aborts a
  *                                   night that count + wall-clock would allow.
  * - tokens      (`totalTokens`)   - the total TOKENS an API-credit agent (codex,
- *                                   aider) may spend; the API-credit counterpart
- *                                   to usage %. Measured IN-BAND (accumulated
+ *                                   or claude on an API key) may spend; the
+ *                                   API-credit counterpart to usage %. Measured
+ *                                   IN-BAND (accumulated
  *                                   from the agent's own reported token usage,
  *                                   see agent-spend.ts), not from a provider
  *                                   endpoint. Abstains when the agent's spend is

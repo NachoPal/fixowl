@@ -93,7 +93,7 @@ describe("claude usage reader", () => {
 
 describe("getUsageReader (model-agnostic)", () => {
   it("gives agents without an observable window a reader that always abstains", async () => {
-    for (const name of ["aider", "script", "unknown-agent"]) {
+    for (const name of ["codex", "script", "unknown-agent"]) {
       const reader = getUsageReader(name);
       const result = await reader.read({
         env: { CLAUDE_CODE_OAUTH_TOKEN: "tok", ANTHROPIC_API_KEY: "x" },

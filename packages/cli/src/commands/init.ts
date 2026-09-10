@@ -71,18 +71,21 @@ prints the same setup as copy-paste steps). See docs/security.md.`;
 const FIXOWL_HOMEPAGE = "https://github.com/NachoPal/fixowl";
 
 /**
- * Agents offered by the wizard, each carrying the env var(s) the operator must
- * supply. The test-only `script` adapter stays out. codex and aider each need a
- * paid API key, which their core adapters keep OUT of the default allowlist
- * (`env: []`) so it is opted in only deliberately; the wizard opts it in here by
- * naming the env var, and it is written as `agents: { <agent>: { env: [...] } }`.
+ * Agents offered by the wizard. The test-only `script` adapter stays out.
+ * `claude` runs on either a Claude subscription OAuth token or an Anthropic
+ * Console API key - the wizard asks which right after the agent is picked (see
+ * CLAUDE_AUTH_CHOICES / stepAgent), so `claude` carries no fixed `env` here.
+ * `codex` needs a paid API key, which its core adapter keeps OUT of the default
+ * allowlist (`env: []`) so it is opted in only deliberately; the wizard opts it
+ * in here by naming the env var, and it is written as
+ * `agents: { <agent>: { env: [...] } }`.
  */
 export const AGENT_CHOICES = [
   {
     value: "claude",
     label: "claude",
-    hint: "Claude Code, driven by your Claude subscription token",
-    env: ["CLAUDE_CODE_OAUTH_TOKEN"],
+    hint: "Claude Code, on your Claude subscription token OR an Anthropic API key",
+    env: undefined,
   },
   {
     value: "codex",
@@ -90,11 +93,26 @@ export const AGENT_CHOICES = [
     hint: "OpenAI Codex CLI, driven by your OpenAI API key (billed as API usage)",
     env: ["OPENAI_API_KEY"],
   },
+] as const;
+
+/**
+ * How the native `claude` adapter authenticates. The two credentials are
+ * mutually exclusive (see agent-adapters.ts: the API key WINS over the OAuth
+ * token in headless mode, so fixowl writes exactly one), and the choice also
+ * decides billing: the subscription token bills against the usage window
+ * (`usage_budget_percent`), the API key bills as metered API usage
+ * (`total_token_budget`).
+ */
+export const CLAUDE_AUTH_CHOICES = [
   {
-    value: "aider",
-    label: "aider",
-    hint: "aider, driven by your Anthropic API key (billed as API usage)",
-    env: ["ANTHROPIC_API_KEY"],
+    value: "CLAUDE_CODE_OAUTH_TOKEN",
+    label: "Claude subscription (OAuth token)",
+    hint: "bills against your Claude subscription's usage window",
+  },
+  {
+    value: "ANTHROPIC_API_KEY",
+    label: "Anthropic API key (billed as API usage)",
+    hint: "bills as metered Anthropic API usage, no subscription needed",
   },
 ] as const;
 
@@ -107,8 +125,8 @@ export const AGENT_SECRET_HELP: Record<string, string> = {
     "Create an API key at https://platform.openai.com/api-keys. codex bills this\n" +
     "  as OpenAI API usage, separate from any ChatGPT subscription.",
   ANTHROPIC_API_KEY:
-    "Create an API key at https://console.anthropic.com/settings/keys. aider bills\n" +
-    "  this as Anthropic API usage.",
+    "Create an API key at https://console.anthropic.com/settings/keys. Claude Code\n" +
+    "  bills this as Anthropic API usage, separate from any Claude subscription.",
 };
 
 export interface InitOptions {
@@ -195,7 +213,7 @@ every answer is stored in ${dirname(configPath)}.`);
   const secrets = loadSecrets(secretsPath);
   const { admin, app } = await stepTokens(prompter, secrets, secretsPath);
   const { agent, agentEnv } = await stepAgent(prompter, secrets);
-  const repos = await stepRepos(prompter, admin, agent);
+  const repos = await stepRepos(prompter, admin, agent, agentEnv);
   // Modes 2 (host-scheduler) and 3 (both) need the host launchd agent and its
   // scoped dispatch token; mode 1 (github-cron) needs neither.
   const needsHostScheduler = repos.some((repo) => repo.scheduleTrigger !== "github-cron");
@@ -736,6 +754,24 @@ async function whoami(
 // Step 2: the coding agent and its credential
 // ---------------------------------------------------------------------------
 
+/**
+ * Ask which credential the native `claude` adapter authenticates with, returning
+ * the single env var that becomes its exclusive allowlist. The choice is
+ * exclusive by design (the API key would otherwise win over the OAuth token; see
+ * agent-adapters.ts) and it drives billing (subscription usage window vs metered
+ * API tokens).
+ */
+async function chooseClaudeAuthEnv(prompter: Prompter): Promise<string> {
+  log.info(`
+Claude Code can authenticate two ways. Pick one:
+  - a Claude SUBSCRIPTION OAuth token (bills against your subscription's usage window), or
+  - an Anthropic API KEY (bills as metered API usage, no subscription needed).`);
+  return prompter.choose(
+    "How should Claude Code authenticate?",
+    CLAUDE_AUTH_CHOICES.map(({ value, label, hint }) => ({ value, label, hint })),
+  );
+}
+
 export async function stepAgent(
   prompter: Prompter,
   secrets: Record<string, string>,
@@ -747,11 +783,14 @@ Step 2/4  Coding agent
     "Which agent should fix your issues?",
     AGENT_CHOICES.map(({ value, label, hint }) => ({ value, label, hint })),
   );
-  // The chosen agent's env allowlist. For claude this matches the adapter's
-  // built-in default; for codex/aider the adapter keeps its default empty on
-  // purpose, so the wizard opts the paid key in via this override.
+  // The chosen agent's env allowlist. `claude` runs on one of two mutually
+  // exclusive credentials, chosen here; codex needs its paid key opted in
+  // (the adapter keeps its default allowlist empty on purpose). Either way the
+  // wizard writes an EXCLUSIVE per-agent override so exactly the chosen
+  // credential enters the container.
+  const chosenEnv = agent === "claude" ? [await chooseClaudeAuthEnv(prompter)] : undefined;
   const choice = AGENT_CHOICES.find((c) => c.value === agent);
-  const adapter = getAgentAdapter(agent, choice?.env);
+  const adapter = getAgentAdapter(agent, chosenEnv ?? choice?.env);
 
   for (const name of adapter.env) {
     const help = AGENT_SECRET_HELP[name];
@@ -829,6 +868,7 @@ async function stepRepos(
   prompter: Prompter,
   admin: Octokit,
   agent: string,
+  agentEnv: readonly string[],
 ): Promise<RepoAnswers[]> {
   log.info(`
 Step 3/4  Repositories
@@ -861,7 +901,7 @@ CI-gated fix loop budget, and which model the coding agent runs with.`);
   for (;;) {
     log.info(`\nRepo ${repos.length + 1}`);
     const name = await askRepoName(prompter, admin, repos);
-    const answers = await promptRepoSettings(prompter, admin, agent, name, prefill);
+    const answers = await promptRepoSettings(prompter, admin, agent, name, prefill, agentEnv);
     repos.push({ name, ...answers });
 
     // Carry this repo's non-model answers forward as the next repo's prefill.
@@ -921,6 +961,13 @@ export async function promptRepoSettings(
   agent: string,
   repoName: string,
   prefill: RepoSettingsPrefill,
+  /**
+   * The agent's resolved env allowlist, so the spend-cap prompt is auth-aware:
+   * claude-with-ANTHROPIC_API_KEY bills as API credit (token cap), otherwise the
+   * name-keyed default applies (claude-with-OAuth is subscription). Omitted (as
+   * some tests do) falls back to the name-keyed default.
+   */
+  agentEnv?: readonly string[],
 ): Promise<RepoSettingsAnswers> {
   const scheduleAnswer = await prompter.ask(
     "  Nightly run time (local HH:MM, or a 5-field UTC cron)",
@@ -946,11 +993,12 @@ export async function promptRepoSettings(
   );
   // Layered run-budget (issue #21): the night stops on the first condition
   // that trips. Each is optional; a blank answer opts that axis out. The spend
-  // cap is billing-aware: a subscription agent (claude) is bounded by a % of its
-  // usage window; an API-credit agent (codex/aider) is bounded by a total-token
-  // cap (there is no usage window to read); a zero-spend agent (script) gets no
-  // spend prompt at all.
-  const billing = agentBilling(agent);
+  // cap is billing-aware, and billing is auth-aware for claude: a subscription
+  // credential (claude on an OAuth token) is bounded by a % of its usage window;
+  // an API-credit credential (codex, or claude on an API key) is bounded by a
+  // total-token cap (there is no usage window to read); a zero-spend agent
+  // (script) gets no spend prompt at all.
+  const billing = agentBilling(agent, agentEnv);
   let usageBudgetPercent: number | undefined;
   let totalTokenBudget: number | undefined;
   if (billing === "subscription") {
@@ -1548,7 +1596,7 @@ defaults:
   # trips. Each is optional; delete/omit a line to opt that axis out.
   max_issues_per_run: 4        # secondary cap: at most this many PRs ship
   # usage_budget_percent: 85       # subscription agents: stop once the usage window hits this %
-  # total_token_budget: 3000000    # API-credit agents (codex/aider): stop once total token spend hits this
+  # total_token_budget: 3000000    # API-credit agents (codex, or claude on an API key): stop once total token spend hits this
   # run_budget_minutes: 240        # graceful wall-clock: don't start a new issue after this long
   issue_timeout_minutes: 45    # per-issue hard timeout (a stuck agent is killed)
   ci_max_tries: 3            # CI-gated fix loop: agent passes before a draft PR is left

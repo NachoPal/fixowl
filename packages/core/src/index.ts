@@ -29,6 +29,8 @@ export {
 } from "./container-naming.ts";
 export {
   agentAdapterNames,
+  ANTHROPIC_API_KEY_ENV,
+  CLAUDE_OAUTH_TOKEN_ENV,
   FORBIDDEN_AGENT_ENV,
   getAgentAdapter,
   PROMPT_MOUNT_PATH,
@@ -47,7 +49,7 @@ export {
   addSamples,
   EMPTY_SPEND,
   getSpendMeter,
-  parseAiderUsage,
+  parseClaudeCodeUsage,
   parseCodexUsage,
   type SpendMeter,
   type SpendSample,

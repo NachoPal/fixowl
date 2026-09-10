@@ -114,6 +114,11 @@ function makeCtx(admin: Octokit, scheduleTrigger?: string): CliContext {
         admin_token: "ghp_admin",
         app: { app_id: 123456, installation_id: 7890123, private_key: APP_PRIVATE_KEY_B64 },
       },
+      // Mirror what `fixowl init` writes for claude: an EXCLUSIVE env override
+      // (the subscription token), so provision requires only that one secret.
+      // The adapter's default allowlist lists both claude credentials, but a
+      // real config always pins exactly one.
+      agents: { claude: { env: ["CLAUDE_CODE_OAUTH_TOKEN"] } },
       repos: [{ name: "acme/widgets", schedule_trigger: scheduleTrigger }],
     }),
     secrets: { CLAUDE_CODE_OAUTH_TOKEN: "oauth-token" },

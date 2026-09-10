@@ -65,7 +65,7 @@ export interface NightInputs {
    */
   usageBudgetPercent?: number;
   /**
-   * Total-token hard cap for an API-credit agent (codex/aider): stop before a new
+   * Total-token hard cap for an API-credit agent (codex, or claude on an API key): stop before a new
    * issue once the night's accumulated token spend reaches this. Measured in-band
    * from the agent's own reported usage (agent-spend.ts), accumulated across
    * issues; undefined opts the token condition out.

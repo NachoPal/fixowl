@@ -136,6 +136,15 @@ See [docs/releasing.md](docs/releasing.md).
   `permissions:`. actionlint runs in CI over both our workflows and rendered templates.
 - Spawn processes with argv arrays, never shell string interpolation.
 - Keep modules pure where possible; push I/O to the edges behind `deps.ts` interfaces.
+- The native `claude` adapter authenticates two mutually exclusive ways -
+  `CLAUDE_CODE_OAUTH_TOKEN` (subscription) or `ANTHROPIC_API_KEY` (metered API).
+  Its default allowlist lists both, but `ANTHROPIC_API_KEY` WINS over the OAuth
+  token in headless `claude -p` mode, so `fixowl init` writes an **exclusive**
+  per-agent env override (exactly one) via the `chooseClaudeAuthEnv` prompt -
+  never let both reach a container. The credential decides billing
+  (`agentBilling(agent, env)`) and thus which run-budget cap applies. Neither is
+  a GitHub credential, so both stay off `FORBIDDEN_AGENT_ENV`. codex is API-key
+  only (its ChatGPT-subscription OAuth-file path is still unsupported).
 - The valid model ids and effort levels per agent live in one place,
   `packages/core/src/agent-catalog.ts`; init, validation, and the adapters all
   read it. Extend an agent there rather than hardcoding a model list elsewhere.
@@ -145,7 +154,7 @@ See [docs/releasing.md](docs/releasing.md).
   provider's LIVE model list via the agent-aware source in
   `packages/core/src/model-list.ts` (mirrors `agent-usage.ts` - pure parser +
   injected `fetchJson`; `getModelListSource(agent)` gives codex/OpenAI the free
-  `GET /v1/models` read and returns undefined for claude/aider so they keep the
+  `GET /v1/models` read and returns undefined for claude so it keeps the
   catalog alone). Fail-open by contract (`liveModelCheck`): an unreachable list
   warns and defers to the catalog, only a fetched-but-missing model hard-fails
   validate. Add a new provider's source there. `init` still picks from the
@@ -238,25 +247,33 @@ See [docs/releasing.md](docs/releasing.md).
   usage % is for **subscription** agents and is read **out-of-band** on the host
   behind the model-agnostic `UsageReader` (`agent-usage.ts`, selected by
   `getUsageReader(agentName)`); `total_token_budget` is for **API-credit** agents
-  (codex/aider) and is measured **in-band** - `main.ts` accumulates each finished
+  (codex, or claude on `ANTHROPIC_API_KEY`) and is measured **in-band** - `main.ts`
+  accumulates each finished
   issue's `IssueResult.usage`, parsed from the agent's own captured output by
   `getSpendMeter(agentName)` (`agent-spend.ts`, the pure counterpart to
   `agent-usage.ts`; `parseCodexUsage` sums `codex exec --json`
   `turn.completed.usage`, so the codex adapter passes `--json` in **fix** mode
-  only, leaving classify's stdout parsing untouched). Both spend axes abstain
+  only; `parseClaudeCodeUsage` reads the `usage` object of
+  `claude -p --output-format json`, so the claude adapter passes
+  `--output-format json` in **fix** mode only - both leave classify's stdout
+  parsing untouched). Both spend axes abstain
   fail-open (subscription window unreadable, or spend unmeasurable) so they never
   abort a night count + wall-clock would allow. Denomination is **tokens, not
   dollars** - tokens are what every API-credit agent reports directly, with no
   per-model price table to drift; the `SpendSample` breakdown keeps cached-input
   and reasoning-output counts so a dollar layer could price them later without
-  re-plumbing (deliberately not built). Billing type is classified once in
-  `agent-catalog.ts` (`agentBilling`), which drives which spend cap `fixowl init`
-  offers. `usage_budget_percent`, `total_token_budget`, and `run_budget_minutes`
+  re-plumbing (deliberately not built). Billing type is **auth-aware**, resolved
+  in `agent-catalog.ts` (`agentBilling(agent, env)`): claude-on-OAuth is
+  `subscription` (usage-% window), claude-on-API-key is `api-credit` (token cap),
+  so billing threads the resolved env allowlist, not just the agent name. It
+  drives which spend cap `fixowl init` offers.
+  `usage_budget_percent`, `total_token_budget`, and `run_budget_minutes`
   have no built-in resolution fallback (unset == opted out), so a pre-#21 config
   is unchanged; the starter values in `FIXOWL_DEFAULTS` are only what `fixowl
   init` writes. `max_issues_per_run` stays the count cap and still bounds how many
-  issues are selected/classified. NOTE (open verification): `parseCodexUsage` /
-  `parseAiderUsage` were built to the documented output shapes; a live codex/aider
+  issues are selected/classified. NOTE (open verification): `parseCodexUsage` and
+  `parseClaudeCodeUsage` were built to the documented output shapes; a live
+  codex / `claude --output-format json`
   transcript was not captured, so the parsers abstain defensively on any
   unexpected shape - confirm the exact envelope against a real run before relying
   on the cap. See the README "Run budgets" section.

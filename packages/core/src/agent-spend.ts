@@ -5,11 +5,12 @@
  * subscription `usage_budget_percent` window (`agent-usage.ts`).
  *
  * The crucial difference from `agent-usage.ts` is WHERE the number comes from.
- * A subscription agent (claude) has a rolling usage window the host reads
- * out-of-band from the provider. An API-credit agent (codex on OPENAI_API_KEY,
- * aider on ANTHROPIC_API_KEY) has no real-time per-key spend endpoint fixowl can
- * poll - OpenAI's Usage/Costs API needs an org Admin key and buckets by day - so
- * spend is instead measured IN-BAND: the agent reports its own token usage in the
+ * A subscription agent (claude on CLAUDE_CODE_OAUTH_TOKEN) has a rolling usage
+ * window the host reads out-of-band from the provider. An API-credit agent
+ * (codex on OPENAI_API_KEY, or claude on ANTHROPIC_API_KEY) has no real-time
+ * per-key spend endpoint fixowl can poll - OpenAI's Usage/Costs API needs an org
+ * Admin key and buckets by day - so spend is instead measured IN-BAND: the agent
+ * reports its own token usage in the
  * output fixowl already captures (`ExecResult.stdout`), and the run loop
  * accumulates it across issues. There is no network edge and no credential here;
  * this module is a pure parser.
@@ -138,61 +139,86 @@ export function parseCodexUsage(stdout: string): SpendSample | undefined {
   return found ? acc : undefined;
 }
 
-/** Matches an aider usage line, e.g. `Tokens: 1663k sent, 2.1k received.` */
-const AIDER_TOKENS_RE = /Tokens:\s*([\d.]+)\s*([kKmM]?)\s*sent,\s*([\d.]+)\s*([kKmM]?)\s*received/g;
-
-/** Expands aider's `k`/`M` suffix (`1663k` -> 1_663_000) to whole tokens. */
-function aiderCount(mantissa: string, suffix: string): number {
-  const base = Number(mantissa);
-  if (!Number.isFinite(base)) return 0;
-  const factor = suffix === "" ? 1 : suffix.toLowerCase() === "k" ? 1_000 : 1_000_000;
-  return Math.round(base * factor);
-}
-
 /**
- * Sum the token usage aider prints, e.g. `Tokens: 1663k sent, 0 received. Cost:
- * $4.99 message, $9.68 session.` Each exchange prints one line; they are summed
- * for the run total (mirrors the codex per-turn sum). `sent` maps to
- * `inputTokens`, `received` to `outputTokens`; aider does not break out cached /
- * reasoning tokens, so those stay 0. Returns `undefined` when no line is found.
+ * Sum the token usage Claude Code reports when run headless as
+ * `claude -p --output-format json` (the fix-mode adapter argv sets this). That
+ * mode prints a SINGLE JSON result object whose `usage` field carries the
+ * Messages-API token breakdown: `input_tokens`, `cache_creation_input_tokens`,
+ * `cache_read_input_tokens`, and `output_tokens`. Unlike codex's `usage`
+ * (where cached is a subset of `input_tokens`), Claude Code reports the
+ * non-cached prompt tokens in `input_tokens` and the cached halves separately,
+ * so the billable input is the SUM of all three; `cache_read_input_tokens` is
+ * carried as the cached subset for a future dollar layer, and Claude Code does
+ * not break out reasoning tokens (kept 0). The billable total is
+ * `input + output`.
  *
- * OPEN VERIFICATION (Open risk 2): aider was not run (not installed); this format
- * is from aider's docs/issues, not a captured run. Confirm against a real aider
- * transcript before relying on the aider token cap. The abstain-on-no-match keeps
- * a format drift fail-open (falls through to count / wall-clock).
+ * Defensive by design: the object is located by scanning for the first line
+ * that parses to a JSON object carrying a usage object (tolerating a leading
+ * banner, and `--output-format stream-json`'s trailing result line if that is
+ * ever used); a shape with no recognizable token field, or no JSON at all,
+ * returns `undefined` (abstain), so a format change fails open to count /
+ * wall-clock rather than crashing the night.
+ *
+ * OPEN VERIFICATION: this parser was built to Claude Code's documented
+ * `--output-format json` result shape and the Messages-API `usage` field names;
+ * a real `claude -p --output-format json` transcript was not captured in this
+ * change (a live run is a paid call). Confirm the exact `usage` envelope against
+ * a real run before relying on the claude token cap - in particular that the
+ * token counts sit on a top-level `usage` object with these field names. Until
+ * then the abstain-on-unexpected-shape keeps it fail-open. (Follow-up: capture
+ * one real transcript, alongside the codex Open-risk-1 verification.)
  */
-export function parseAiderUsage(stdout: string): SpendSample | undefined {
-  let acc = EMPTY_SPEND;
-  let found = false;
-  for (const match of stdout.matchAll(AIDER_TOKENS_RE)) {
-    const inputTokens = aiderCount(match[1] ?? "", match[2] ?? "");
-    const outputTokens = aiderCount(match[3] ?? "", match[4] ?? "");
+export function parseClaudeCodeUsage(stdout: string): SpendSample | undefined {
+  for (const line of stdout.split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed === "" || trimmed[0] !== "{") continue;
+    let event: unknown;
+    try {
+      event = JSON.parse(trimmed);
+    } catch {
+      continue; // a non-JSON line (e.g. a preamble) is not the result object
+    }
+    if (event === null || typeof event !== "object") continue;
+    const usage = (event as Record<string, unknown>).usage;
+    if (usage === null || typeof usage !== "object") continue;
+    const u = usage as Record<string, unknown>;
+    const promptTokens = readNum(u, "input_tokens");
+    const cacheCreationTokens = readNum(u, "cache_creation_input_tokens");
+    const cacheReadTokens = readNum(u, "cache_read_input_tokens");
+    const outputTokens = readNum(u, "output_tokens");
+    const inputTokens = promptTokens + cacheCreationTokens + cacheReadTokens;
+    // A usage object with no recognizable token field is not a measurement.
     if (inputTokens === 0 && outputTokens === 0) continue;
-    found = true;
-    acc = addSamples(acc, {
+    return {
       totalTokens: inputTokens + outputTokens,
       inputTokens,
-      cachedInputTokens: 0,
+      cachedInputTokens: cacheReadTokens,
       outputTokens,
       reasoningOutputTokens: 0,
-    });
+    };
   }
-  return found ? acc : undefined;
+  return undefined;
 }
 
 const codexMeter: SpendMeter = { parse: (stdout) => parseCodexUsage(stdout) };
-const aiderMeter: SpendMeter = { parse: (stdout) => parseAiderUsage(stdout) };
+const claudeMeter: SpendMeter = { parse: (stdout) => parseClaudeCodeUsage(stdout) };
 
 /** A meter for agents whose spend is not measurable in-band; always abstains. */
 const noSpendMeter: SpendMeter = { parse: () => undefined };
 
-const SPEND_METERS: Record<string, SpendMeter> = { codex: codexMeter, aider: aiderMeter };
+/**
+ * `claude` is metered too, so the `total_token_budget` cap enforces for a
+ * claude-on-ANTHROPIC_API_KEY (api-credit) run. It is harmless for a
+ * claude-on-subscription run: that config offers no `total_token_budget`, so the
+ * parsed sample is accumulated but never trips a cap, and the usage-% window
+ * bounds it instead.
+ */
+const SPEND_METERS: Record<string, SpendMeter> = { codex: codexMeter, claude: claudeMeter };
 
 /**
- * The spend meter for `agentName`. Unknown agents (and subscription agents like
- * `claude`, and the zero-spend `script`) get `noSpendMeter`, so the token
- * condition simply opts out for them - the run stays bounded by count, the
- * subscription usage window, and wall-clock.
+ * The spend meter for `agentName`. Unknown agents and the zero-spend `script`
+ * get `noSpendMeter`, so the token condition simply opts out for them - the run
+ * stays bounded by count, the subscription usage window, and wall-clock.
  */
 export function getSpendMeter(agentName: string): SpendMeter {
   return SPEND_METERS[agentName] ?? noSpendMeter;

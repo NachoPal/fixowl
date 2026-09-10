@@ -7,8 +7,8 @@
  *
  * The abstraction mirrors `agent-usage.ts`: it is agent-aware in the spirit of
  * `getUsageReader(agentName)`. Only agents whose provider exposes a queryable
- * model list have a source (codex/OpenAI first); claude and aider have none and
- * so keep relying on the hardcoded catalog alone. Adding another agent's source
+ * model list have a source (codex/OpenAI first); claude has none and
+ * so keeps relying on the hardcoded catalog alone. Adding another agent's source
  * needs no caller change.
  *
  * Pure/deps split follows fixowl convention: the URL shape and response parsing
@@ -111,7 +111,7 @@ const MODEL_LIST_SOURCES: Record<string, ModelListSource> = { codex: openAiModel
 
 /**
  * The live model-list source for `agentName`, or `undefined` when the agent has
- * no queryable provider list (claude/aider/script). A caller that gets
+ * no queryable provider list (claude/script). A caller that gets
  * `undefined` simply keeps relying on the hardcoded catalog.
  */
 export function getModelListSource(agentName: string): ModelListSource | undefined {

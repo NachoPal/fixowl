@@ -99,7 +99,7 @@ describe("openai (codex) model list source", () => {
 
 describe("getModelListSource (agent-aware)", () => {
   it("gives agents with no queryable provider list no source", () => {
-    for (const name of ["claude", "aider", "script", "unknown-agent"]) {
+    for (const name of ["claude", "script", "unknown-agent"]) {
       expect(getModelListSource(name)).toBeUndefined();
     }
   });
