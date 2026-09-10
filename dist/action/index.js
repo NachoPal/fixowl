@@ -86009,8 +86009,9 @@ var FIXOWL_DEFAULTS = {
   skipDuplicates: true,
   verifyBeforeFix: true,
   /**
-   * Starter priority labels `fixowl init` offers when the operator opts into
-   * priority-label selection. NOT a resolution fallback: an unset `priority`
+   * Recommended starter priority labels for when the operator opts into
+   * priority-label selection (the interactive `fixowl init`/`edit` prompt is a
+   * follow-up; configure by hand for now). NOT a resolution fallback: an unset `priority`
    * block stays disabled (selection unchanged), exactly like the run-budget axes,
    * so a config written before this feature behaves as it did. See
    * docs/priority-selection.md.
@@ -125268,7 +125269,7 @@ function makeGitHubApi(octokit, owner, repo, runsOctokit) {
         per_page: perPage,
         page
       });
-      return data.filter((issue3) => issue3.pull_request === void 0).map((issue3) => ({
+      const issues = data.filter((issue3) => issue3.pull_request === void 0).map((issue3) => ({
         number: issue3.number,
         title: issue3.title,
         body: issue3.body ?? "",
@@ -125276,6 +125277,7 @@ function makeGitHubApi(octokit, owner, repo, runsOctokit) {
           (label) => typeof label === "string" ? label : label.name ?? ""
         )
       }));
+      return { issues, fetched: data.length };
     },
     async ensurePullRequest(params) {
       const { data: existing } = await octokit.pulls.list({
@@ -126116,7 +126118,7 @@ async function selectIssues(github, rule) {
 // packages/action/src/priority-selection.ts
 async function selectIssuesByPriority(params) {
   const { rule, priority, maxIssues, fetchPage, keepEligible } = params;
-  const perPage = Math.max(1, maxIssues);
+  const perPage = Math.min(Math.max(1, maxIssues), 100);
   const pickupQueries = labelQueriesForRule(rule);
   const tiers = priorityTiers(priority);
   const selected = [];
@@ -126128,8 +126130,8 @@ async function selectIssuesByPriority(params) {
       const labelsQuery = tier2 === UNLABELED_TIER ? pickup : `${pickup},${tier2}`;
       let page = 1;
       for (; ; ) {
-        const rawPage = await fetchPage(labelsQuery, page, perPage);
-        if (rawPage.length === 0) break;
+        const { issues: rawPage, fetched } = await fetchPage(labelsQuery, page, perPage);
+        if (fetched === 0) break;
         const candidates = rawPage.filter(
           (issue3) => !seen.has(issue3.number) && issueMatchesLabelRule(issue3.labels, rule) && (tier2 !== UNLABELED_TIER || isUnlabeled(issue3.labels, priority))
         );
@@ -126140,7 +126142,7 @@ async function selectIssuesByPriority(params) {
           if (selected.length >= maxIssues) break;
         }
         if (selected.length >= maxIssues) break;
-        if (rawPage.length < perPage) break;
+        if (fetched < perPage) break;
         page += 1;
       }
     }
