@@ -1,8 +1,11 @@
 import {
   getAgentAdapter,
+  getModelListSource,
+  liveModelCheck,
   resolvedModelSelectionErrors,
   resolveRepoSettings,
   runnerBaseDir,
+  type ResolvedRepoSettings,
 } from "@fixowl/core";
 import type { Octokit } from "@octokit/rest";
 import type { CliContext } from "../context.ts";
@@ -56,7 +59,9 @@ export async function validateCommand(ctx: CliContext): Promise<boolean> {
         );
       }
 
-      // Model/effort choices must be valid for the agent this repo uses.
+      // Model/effort choices must be valid for the agent this repo uses. This
+      // is the hardcoded-catalog check (the safety net); the live provider
+      // check below runs on top of it for agents that expose a model list.
       const modelErrors = resolvedModelSelectionErrors(settings);
       if (modelErrors.length > 0) {
         for (const message of modelErrors) failed(`repo ${repoEntry.name}: ${message}`);
@@ -73,6 +78,23 @@ export async function validateCommand(ctx: CliContext): Promise<boolean> {
               : "") +
             (selectors.length > 0 ? ` (selector labels: ${selectors.join(", ")})` : ""),
         );
+      }
+
+      // Live provider check: for agents whose provider serves a queryable model
+      // list, confirm each chosen id is actually reachable. Only when the
+      // catalog check passed (a catalog miss already fails above). Fail-open: an
+      // unreachable list warns and falls back to the catalog; a fetched list
+      // missing the model is a hard failure.
+      if (modelErrors.length === 0) {
+        await validateModelsAgainstLiveList({
+          repoName: repoEntry.name,
+          settings,
+          env: { ...process.env, ...ctx.secrets },
+          fetchJson,
+          ok: (message) => log.ok(`repo ${repoEntry.name}: ${message}`),
+          warn: (message) => log.warn(`repo ${repoEntry.name}: ${message}`),
+          failed: (message) => failed(`repo ${repoEntry.name}: ${message}`),
+        });
       }
     } catch (error) {
       failed(`repo ${repoEntry.name}: ${error instanceof Error ? error.message : String(error)}`);
@@ -97,6 +119,62 @@ export async function validateCommand(ctx: CliContext): Promise<boolean> {
   if (!ok) log.error("validation failed");
   else log.ok("everything checks out");
   return ok;
+}
+
+/**
+ * The single network edge for the live model-list check. Rejects on a non-2xx
+ * so the source treats the list as unobservable and validate falls back to the
+ * catalog. This is a free model-listing read (no inference); the pure source in
+ * @fixowl/core does no I/O of its own.
+ */
+async function fetchJson(url: string, headers: Record<string, string>): Promise<unknown> {
+  const response = await fetch(url, { headers });
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  return response.json();
+}
+
+/**
+ * Deduped, undefined-free set of model ids configured for a repo: its default
+ * model plus each selector-label model. Effort is not a model id and is checked
+ * only against the catalog.
+ */
+function configuredModelIds(settings: ResolvedRepoSettings): string[] {
+  const ids = new Set<string>();
+  if (settings.defaultModel !== undefined) ids.add(settings.defaultModel);
+  for (const choice of Object.values(settings.labelModels)) {
+    if (choice.model !== undefined) ids.add(choice.model);
+  }
+  return [...ids];
+}
+
+/**
+ * Verify a repo's chosen model ids against the agent provider's live model list.
+ * No-op for agents with no queryable list (claude/aider), so the catalog stays
+ * their only source of truth. Fail-open per `liveModelCheck`: an unreachable
+ * list warns and defers to the catalog; a fetched list missing a model fails.
+ * Exported for direct testing with a faked `fetchJson`.
+ */
+export async function validateModelsAgainstLiveList(params: {
+  repoName: string;
+  settings: ResolvedRepoSettings;
+  env: Record<string, string | undefined>;
+  fetchJson: (url: string, headers: Record<string, string>) => Promise<unknown>;
+  ok: (message: string) => void;
+  warn: (message: string) => void;
+  failed: (message: string) => void;
+}): Promise<void> {
+  const source = getModelListSource(params.settings.agent);
+  if (source === undefined) return; // agent has no live model list; catalog is authoritative
+  const models = configuredModelIds(params.settings);
+  if (models.length === 0) return; // nothing chosen; the agent CLI default is used
+
+  const result = await source.list({ env: params.env, fetchJson: params.fetchJson });
+  const outcome = liveModelCheck(source, result, models);
+  for (const message of outcome.info) params.ok(message);
+  for (const message of outcome.warnings) params.warn(message);
+  for (const message of outcome.errors) params.failed(message);
 }
 
 /**

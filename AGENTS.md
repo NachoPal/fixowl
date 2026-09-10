@@ -140,7 +140,16 @@ See [docs/releasing.md](docs/releasing.md).
   `packages/core/src/agent-catalog.ts`; init, validation, and the adapters all
   read it. Extend an agent there rather than hardcoding a model list elsewhere.
   Per-issue model/effort resolution is pure logic in
-  `packages/core/src/model-selection.ts`.
+  `packages/core/src/model-selection.ts`. The catalog is the safety-net fallback,
+  not the last word: `fixowl validate` also checks each chosen model against the
+  provider's LIVE model list via the agent-aware source in
+  `packages/core/src/model-list.ts` (mirrors `agent-usage.ts` - pure parser +
+  injected `fetchJson`; `getModelListSource(agent)` gives codex/OpenAI the free
+  `GET /v1/models` read and returns undefined for claude/aider so they keep the
+  catalog alone). Fail-open by contract (`liveModelCheck`): an unreachable list
+  warns and defers to the catalog, only a fetched-but-missing model hard-fails
+  validate. Add a new provider's source there. `init` still picks from the
+  catalog (live enrichment is a follow-up); the night RUN does no live check.
 - The scheduling trigger is a first-class per-repo choice
   (`schedule_trigger` in `config-schema.ts`, a `fixowl init` prompt), resolving
   to one of three modes via `resolveRepoSettings` (unset -> `both`, which
