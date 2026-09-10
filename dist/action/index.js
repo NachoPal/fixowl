@@ -126952,7 +126952,15 @@ async function checkScheduledSlotBudget(deps, inputs) {
     );
     return void 0;
   }
-  const runs = await deps.github.listRecentWorkflowRuns();
+  let runs;
+  try {
+    runs = await deps.github.listRecentWorkflowRuns();
+  } catch (error62) {
+    deps.log.warn(
+      `scheduled-slot budget guard disabled: listing recent workflow runs failed (${String(error62)}); proceeding with the night`
+    );
+    return void 0;
+  }
   const guard = guardScheduledSlot({
     runs,
     now: /* @__PURE__ */ new Date(),
