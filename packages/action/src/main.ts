@@ -584,7 +584,15 @@ async function runNightWithGit(
         (prereq) => !shipped.has(prereq),
       );
       if (unshipped.length > 0) {
-        const reason = `prerequisite ${unshipped.map((n) => `#${n}`).join(", ")} did not ship tonight`;
+        // Name why each prerequisite is unshipped: a red/timed-out draft (issue
+        // #76) reads differently from one that never opened a PR at all.
+        const reasonParts = unshipped.map((n) => {
+          const prereqResult = results.find((res) => res.issue.number === n);
+          return prereqResult?.status === "pr-opened" && prereqResult.draft === true
+            ? `#${n} (left as a draft, CI not green)`
+            : `#${n}`;
+        });
+        const reason = `prerequisite ${reasonParts.join(", ")} did not ship tonight`;
         log.info(`issue #${issue.number}: deferred - ${reason}`);
         deferred.push({ issue, reason });
         continue;
@@ -709,8 +717,17 @@ async function runNightWithGit(
       // makes it survive a later cancellation; the single end-of-job step never
       // runs on a cancelled job (see NightDeps.artifacts).
       await uploadIssueEvidence(deps, issue.number, evidenceDir);
-      if (result.status === "pr-opened" && result.prNumber !== undefined) {
-        // The next chain member stacks on this branch; failed members are skipped over.
+      if (
+        result.status === "pr-opened" &&
+        result.prNumber !== undefined &&
+        result.draft === false
+      ) {
+        // Only a green/ready PR is a valid stack base. A prerequisite left as a
+        // red or timed-out DRAFT must NOT count as shipped (issue #76): its
+        // dependents would branch from a base whose required checks already fail,
+        // inherit that red CI, and the agent would be pushed to fix the
+        // prerequisite's code inside the dependent's branch. It stays out of
+        // `shipped`, so its native dependents defer with a clear reason below.
         baseRef = branch;
         prBase = branch;
         stackedOn = { prNumber: result.prNumber, branch };

@@ -86151,6 +86151,15 @@ function evaluateGate(gating, required2) {
   if (gating.checks.some((check2) => check2.status !== "completed")) return "pending";
   return gating.checks.some((check2) => isFailureConclusion(check2.conclusion)) ? "failed" : "green";
 }
+function requiredContextsStalled(gating, required2) {
+  if (!required2.readable) return false;
+  const present = new Map(gating.checks.map((check2) => [check2.name, check2]));
+  const matched = required2.contexts.map((context5) => present.get(context5));
+  const anyMissing = matched.some((check2) => check2 === void 0);
+  if (!anyMissing) return false;
+  const anyRunning = matched.some((check2) => check2 !== void 0 && check2.status !== "completed");
+  return !anyRunning;
+}
 function failedChecks(gating) {
   return gating.checks.filter(
     (check2) => check2.status === "completed" && isFailureConclusion(check2.conclusion)
@@ -126169,6 +126178,7 @@ import { join as join6 } from "node:path";
 
 // packages/action/src/ci-poll.ts
 var CI_POLL_INTERVAL_MS = 15e3;
+var CI_POLL_MAX_CONSECUTIVE_ERRORS = 5;
 var CI_FALLBACK_SETTLE_MS = 2 * CI_POLL_INTERVAL_MS;
 var realClock = {
   now: () => Date.now(),
@@ -126177,12 +126187,28 @@ var realClock = {
 async function waitForRequiredChecks(deps, params) {
   const { github, log: log3, clock } = deps;
   const pollMs = params.pollMs ?? CI_POLL_INTERVAL_MS;
+  const maxPollErrors = params.maxPollErrors ?? CI_POLL_MAX_CONSECUTIVE_ERRORS;
   const start = clock.now();
   const settleMs = Math.min(2 * pollMs, params.timeoutMs);
   let warnedFallback = false;
   let warnedUnreadable = false;
+  let consecutiveErrors = 0;
   for (; ; ) {
-    const checks = await github.getChecksForRef(params.sha);
+    let checks;
+    try {
+      checks = await github.getChecksForRef(params.sha);
+      consecutiveErrors = 0;
+    } catch (error62) {
+      consecutiveErrors += 1;
+      log3.warn(
+        `transient error reading checks for ${params.sha} (${String(error62)}); ${consecutiveErrors}/${maxPollErrors} consecutive, continuing to poll`
+      );
+      if (consecutiveErrors >= maxPollErrors || clock.now() - start >= params.timeoutMs) {
+        throw error62;
+      }
+      await clock.sleep(pollMs);
+      continue;
+    }
     if (!checks.readable) {
       if (!warnedUnreadable) {
         warnedUnreadable = true;
@@ -126215,6 +126241,18 @@ async function waitForRequiredChecks(deps, params) {
     if (decision !== "pending" && !withinSettleWindow) {
       return {
         outcome: decision,
+        timedOut: false,
+        gating: gating.checks,
+        failed: failedChecks(gating),
+        usedFallback: gating.usedFallback
+      };
+    }
+    if (decision === "pending" && clock.now() - start >= settleMs && requiredContextsStalled(gating, params.required)) {
+      log3.warn(
+        `required check(s) for ${params.base} never started for ${params.sha} after the settle window; leaving an annotated draft instead of waiting out the timeout`
+      );
+      return {
+        outcome: "stalled",
         timedOut: false,
         gating: gating.checks,
         failed: failedChecks(gating),
@@ -126268,10 +126306,8 @@ function renderCiSection(ci) {
     return lines;
   }
   const gate = ci.usedFallback === true ? "checks" : "required checks";
-  lines.push(
-    ci.reason === "timeout" ? `\u274C The ${gate} did not complete within fixowl's time budget after the last attempt. This PR is a draft.` : `\u274C The ${gate} were still red after fixowl's last attempt. This PR is a draft.`,
-    ``
-  );
+  const headline = ci.reason === "stalled" ? `\u274C A required check never started for this change (a path-filtered, dispatch-only, or uninstalled-app check that GitHub reports as "Expected" indefinitely). fixowl cannot make it run, so this PR is a draft.` : ci.reason === "timeout" ? `\u274C The ${gate} did not complete within fixowl's time budget after the last attempt. This PR is a draft.` : `\u274C The ${gate} were still red after fixowl's last attempt. This PR is a draft.`;
+  lines.push(headline, ``);
   if (ci.failures.length > 0) {
     lines.push(`| check | detail |`, `| --- | --- |`);
     for (const failure of ci.failures) {
@@ -126635,115 +126671,144 @@ async function processIssue(deps, ctx) {
   let lastVerification = [];
   let lastCi;
   let firstPassVerdict;
-  for (let attempt = 1; attempt <= maxTries; attempt++) {
-    const agentResult = await runAgent(deps, ctx, { attempt, previousFailures });
-    if (agentResult.usage !== void 0) {
-      usage = usage === void 0 ? agentResult.usage : addSamples(usage, agentResult.usage);
-      base.usage = usage;
-    }
-    if (attempt === 1 && ctx.verifyBeforeFix) {
-      firstPassVerdict = parseVerdict(agentResult.stdout);
-    }
-    if (agentResult.timedOut || agentResult.code !== 0) {
-      await git.discardAllChanges();
-      const reason = agentResult.timedOut ? `agent timed out after ${ctx.timeoutMs}ms` : `agent exited with code ${agentResult.code}`;
-      const output2 = `${agentResult.stdout}
+  try {
+    for (let attempt = 1; attempt <= maxTries; attempt++) {
+      const agentResult = await runAgent(deps, ctx, { attempt, previousFailures });
+      if (agentResult.usage !== void 0) {
+        usage = usage === void 0 ? agentResult.usage : addSamples(usage, agentResult.usage);
+        base.usage = usage;
+      }
+      if (attempt === 1 && ctx.verifyBeforeFix) {
+        firstPassVerdict = parseVerdict(agentResult.stdout);
+      }
+      if (agentResult.timedOut || agentResult.code !== 0) {
+        await git.discardAllChanges();
+        const reason = agentResult.timedOut ? `agent timed out after ${ctx.timeoutMs}ms` : `agent exited with code ${agentResult.code}`;
+        const output2 = `${agentResult.stdout}
 ${agentResult.stderr}`.trim();
-      const excerpt = output2.length > 0 ? markdownCell(tail(output2, AGENT_ERROR_EXCERPT_MAX)) : "";
-      return {
-        ...base,
-        status: "agent-failed",
-        error: excerpt.length > 0 ? `${reason} - ${excerpt}` : reason
-      };
-    }
-    if (attempt === 1 && !await git.hasChangesAgainst(ctx.baseRef)) {
-      return await handleNoDiff(deps, ctx, base, firstPassVerdict);
-    }
-    const verification = await runVerification({
-      engine,
-      log: log3,
-      image: ctx.image,
-      workspaceDir: ctx.workspaceDir,
-      evidenceDir: ctx.evidenceDir,
-      repoFullName: ctx.repoFullName,
-      issueNumber: issue3.number,
-      verify: ctx.repoConfig.verify
-    });
-    lastVerification = verification;
-    if (anyCheckFailed(verification)) {
-      previousFailures = localFeedback(verification);
-      log3.info(
-        `issue #${issue3.number}: local pre-check failed (attempt ${attempt}/${maxTries}); not pushing`
-      );
-      continue;
-    }
-    await git.commitAll(title);
-    await git.push(branch);
-    const headSha = await git.headSha();
-    if (pr === void 0) {
-      pr = await github.ensurePullRequest({
-        head: branch,
-        base: ctx.prBase,
-        title,
-        body: buildPrBody({
-          issueNumber: issue3.number,
-          verification,
-          stackedOn: ctx.stackedOn,
-          runUrl: ctx.runUrl
-        }),
-        draft: true
+        const excerpt = output2.length > 0 ? markdownCell(tail(output2, AGENT_ERROR_EXCERPT_MAX)) : "";
+        const errorMessage = excerpt.length > 0 ? `${reason} - ${excerpt}` : reason;
+        if (pr !== void 0) {
+          return await finishFailedAfterPr(deps, ctx, {
+            pr,
+            lastVerification,
+            lastCi,
+            usage,
+            error: errorMessage
+          });
+        }
+        return { ...base, status: "agent-failed", error: errorMessage };
+      }
+      if (attempt === 1 && !await git.hasChangesAgainst(ctx.baseRef)) {
+        return await handleNoDiff(deps, ctx, base, firstPassVerdict);
+      }
+      const verification = await runVerification({
+        engine,
+        log: log3,
+        image: ctx.image,
+        workspaceDir: ctx.workspaceDir,
+        evidenceDir: ctx.evidenceDir,
+        repoFullName: ctx.repoFullName,
+        issueNumber: issue3.number,
+        verify: ctx.repoConfig.verify
       });
-      log3.info(`issue #${issue3.number}: opened draft PR #${pr.number}`);
-    }
-    const required2 = await readRequiredChecks(github, ctx.prBase, log3);
-    log3.info(
-      `issue #${issue3.number}: waiting for CI on ${headSha.slice(0, 12)} (attempt ${attempt}/${maxTries})`
-    );
-    const ci = await waitForRequiredChecks(
-      { github, log: log3, clock },
-      { sha: headSha, base: ctx.prBase, required: required2, timeoutMs: ctx.ciTimeoutMs }
-    );
-    lastCi = ci;
-    if (ci.outcome === "green" || ci.outcome === "unverified") {
-      await github.markPullRequestReadyForReview(pr.number);
-      const summary2 = ci.outcome === "unverified" ? { state: "unverified" } : { state: "green", usedFallback: ci.usedFallback };
-      await github.updatePullRequestBody(
-        pr.number,
-        buildPrBody({
-          issueNumber: issue3.number,
-          verification,
-          stackedOn: ctx.stackedOn,
-          runUrl: ctx.runUrl,
-          ci: summary2
-        })
-      );
-      const comment = ci.outcome === "unverified" ? `\u{1F989} fixowl opened ${pr.url} for this issue and flipped it to ready, but CI could not be verified: the runtime credential cannot read this branch's check runs, so no checks were consulted. Review CI on the PR before merging.` : `\u{1F989} fixowl opened ${pr.url} for this issue; its required checks are green and it is ready for review.`;
+      lastVerification = verification;
+      if (anyCheckFailed(verification)) {
+        previousFailures = localFeedback(verification);
+        log3.info(
+          `issue #${issue3.number}: local pre-check failed (attempt ${attempt}/${maxTries}); not pushing`
+        );
+        continue;
+      }
+      if (pr === void 0 && !await git.hasChangesAgainst(ctx.baseRef)) {
+        return attempt === 1 ? await handleNoDiff(deps, ctx, base, firstPassVerdict) : { ...base, status: "no-changes" };
+      }
+      await git.commitAll(title);
+      await git.push(branch);
+      const headSha = await git.headSha();
+      if (pr === void 0) {
+        pr = await github.ensurePullRequest({
+          head: branch,
+          base: ctx.prBase,
+          title,
+          body: buildPrBody({
+            issueNumber: issue3.number,
+            verification,
+            stackedOn: ctx.stackedOn,
+            runUrl: ctx.runUrl
+          }),
+          draft: true
+        });
+        log3.info(`issue #${issue3.number}: opened draft PR #${pr.number}`);
+      }
+      const required2 = await readRequiredChecks(github, ctx.prBase, log3);
       log3.info(
-        ci.outcome === "unverified" ? `issue #${issue3.number}: CI unverified (checks unreadable); PR #${pr.number} flipped to ready` : `issue #${issue3.number}: required checks green; PR #${pr.number} ready for review`
+        `issue #${issue3.number}: waiting for CI on ${headSha.slice(0, 12)} (attempt ${attempt}/${maxTries})`
       );
-      await github.createIssueComment(issue3.number, comment);
-      return {
-        ...base,
-        status: "pr-opened",
-        prNumber: pr.number,
-        prUrl: pr.url,
-        draft: false,
-        verification
-      };
+      const ci = await waitForRequiredChecks(
+        { github, log: log3, clock },
+        { sha: headSha, base: ctx.prBase, required: required2, timeoutMs: ctx.ciTimeoutMs }
+      );
+      lastCi = ci;
+      if (ci.outcome === "green" || ci.outcome === "unverified") {
+        await github.markPullRequestReadyForReview(pr.number);
+        const summary2 = ci.outcome === "unverified" ? { state: "unverified" } : { state: "green", usedFallback: ci.usedFallback };
+        await github.updatePullRequestBody(
+          pr.number,
+          buildPrBody({
+            issueNumber: issue3.number,
+            verification,
+            stackedOn: ctx.stackedOn,
+            runUrl: ctx.runUrl,
+            ci: summary2
+          })
+        );
+        const comment = ci.outcome === "unverified" ? `\u{1F989} fixowl opened ${pr.url} for this issue and flipped it to ready, but CI could not be verified: the runtime credential cannot read this branch's check runs, so no checks were consulted. Review CI on the PR before merging.` : `\u{1F989} fixowl opened ${pr.url} for this issue; its required checks are green and it is ready for review.`;
+        log3.info(
+          ci.outcome === "unverified" ? `issue #${issue3.number}: CI unverified (checks unreadable); PR #${pr.number} flipped to ready` : `issue #${issue3.number}: required checks green; PR #${pr.number} ready for review`
+        );
+        await github.createIssueComment(issue3.number, comment);
+        return {
+          ...base,
+          status: "pr-opened",
+          prNumber: pr.number,
+          prUrl: pr.url,
+          draft: false,
+          verification
+        };
+      }
+      if (ci.outcome === "stalled" || ci.failed.length === 0) {
+        log3.info(
+          `issue #${issue3.number}: ${ci.outcome === "stalled" ? "a required check never started for this change" : "CI did not complete and nothing is red"}; leaving an annotated draft without re-running the agent (attempt ${attempt}/${maxTries})`
+        );
+        break;
+      }
+      previousFailures = await ciFeedback(github, ci);
+      log3.info(
+        `issue #${issue3.number}: CI ${ci.timedOut ? "did not complete in time" : "is red"} (attempt ${attempt}/${maxTries})`
+      );
     }
-    previousFailures = await ciFeedback(github, ci);
-    log3.info(
-      `issue #${issue3.number}: CI ${ci.timedOut ? "did not complete in time" : "is red"} (attempt ${attempt}/${maxTries})`
-    );
+    return finishExhausted(deps, ctx, {
+      title,
+      pr,
+      lastVerification,
+      lastCi,
+      usage,
+      firstPassVerdict
+    });
+  } catch (error62) {
+    if (pr !== void 0) {
+      const message = error62 instanceof Error ? error62.message : String(error62);
+      return await finishFailedAfterPr(deps, ctx, {
+        pr,
+        lastVerification,
+        lastCi,
+        usage,
+        error: `error after the draft PR was opened - ${markdownCell(message)}`
+      });
+    }
+    throw error62;
   }
-  return finishExhausted(deps, ctx, {
-    title,
-    pr,
-    lastVerification,
-    lastCi,
-    usage,
-    firstPassVerdict
-  });
 }
 async function handleNoDiff(deps, ctx, base, verdict) {
   const { github, log: log3 } = deps;
@@ -126839,12 +126904,7 @@ async function finishExhausted(deps, ctx, state3) {
   } else {
     await git.discardAllChanges();
   }
-  const ci = state3.lastCi !== void 0 ? {
-    state: "failed",
-    reason: state3.lastCi.timedOut ? "timeout" : "red",
-    failures: state3.lastCi.failed.map(toCiCheckFailure),
-    usedFallback: state3.lastCi.usedFallback
-  } : void 0;
+  const ci = state3.lastCi !== void 0 ? ciSummaryFromWait(state3.lastCi) : void 0;
   const body2 = buildPrBody({
     issueNumber: issue3.number,
     verification: state3.lastVerification,
@@ -126863,7 +126923,7 @@ async function finishExhausted(deps, ctx, state3) {
   } else {
     await github.updatePullRequestBody(pr.number, body2);
   }
-  const note = ci === void 0 ? "its local pre-check is still failing" : ci.reason === "timeout" ? "its required checks did not complete in time" : "its required checks are still red";
+  const note = ci === void 0 ? "its local pre-check is still failing" : ci.reason === "timeout" ? "its required checks did not complete in time" : ci.reason === "stalled" ? "a required check never started for this change" : "its required checks are still red";
   await github.createIssueComment(
     issue3.number,
     `\u{1F989} fixowl opened ${pr.url} for this issue as a draft after ${ctx.ciMaxTries} attempt(s); ${note}. See the PR for the outstanding failures.`
@@ -126906,6 +126966,61 @@ async function ciFeedback(github, ci) {
     });
   }
   return feedback;
+}
+function ciSummaryFromWait(ci) {
+  const reason = ci.outcome === "stalled" ? "stalled" : ci.timedOut ? "timeout" : "red";
+  return {
+    state: "failed",
+    reason,
+    failures: ci.failed.map(toCiCheckFailure),
+    usedFallback: ci.usedFallback
+  };
+}
+async function finishFailedAfterPr(deps, ctx, state3) {
+  const { git, github, log: log3 } = deps;
+  const { issue: issue3 } = ctx;
+  log3.warn(
+    `issue #${issue3.number}: failed after draft PR #${state3.pr.number} was opened (${state3.error}); leaving it annotated so it is not silently stranded`
+  );
+  try {
+    await git.discardAllChanges();
+  } catch (discardError) {
+    log3.warn(
+      `issue #${issue3.number}: could not discard changes after the failure (${String(discardError)})`
+    );
+  }
+  const ci = state3.lastCi !== void 0 ? ciSummaryFromWait(state3.lastCi) : void 0;
+  try {
+    await github.updatePullRequestBody(
+      state3.pr.number,
+      buildPrBody({
+        issueNumber: issue3.number,
+        verification: state3.lastVerification,
+        stackedOn: ctx.stackedOn,
+        runUrl: ctx.runUrl,
+        ci
+      })
+    );
+    await github.createIssueComment(
+      issue3.number,
+      `\u{1F989} fixowl left ${state3.pr.url} as a draft: its fix loop stopped after an error (${state3.error}). See the PR for the last checks; re-run fixowl or take it over.`
+    );
+  } catch (writeError) {
+    log3.warn(
+      `issue #${issue3.number}: could not annotate the stranded draft PR (${String(writeError)}); the failure is still recorded with its PR in the run summary`
+    );
+  }
+  return {
+    issue: issue3,
+    branch: ctx.branch,
+    status: "agent-failed",
+    prNumber: state3.pr.number,
+    prUrl: state3.pr.url,
+    draft: true,
+    verification: state3.lastVerification,
+    usage: state3.usage,
+    error: state3.error
+  };
 }
 function toCiCheckFailure(check2) {
   return { name: check2.name, summary: check2.summary, detailsUrl: check2.detailsUrl };
@@ -127159,7 +127274,11 @@ async function runNightWithGit(deps, inputs, git) {
         (prereq) => !shipped.has(prereq)
       );
       if (unshipped.length > 0) {
-        const reason = `prerequisite ${unshipped.map((n) => `#${n}`).join(", ")} did not ship tonight`;
+        const reasonParts = unshipped.map((n) => {
+          const prereqResult = results.find((res) => res.issue.number === n);
+          return prereqResult?.status === "pr-opened" && prereqResult.draft === true ? `#${n} (left as a draft, CI not green)` : `#${n}`;
+        });
+        const reason = `prerequisite ${reasonParts.join(", ")} did not ship tonight`;
         log3.info(`issue #${issue3.number}: deferred - ${reason}`);
         deferred.push({ issue: issue3, reason });
         continue;
@@ -127253,7 +127372,7 @@ async function runNightWithGit(deps, inputs, git) {
       }
       if (result.triaged !== void 0) triaged.push(result.triaged);
       await uploadIssueEvidence(deps, issue3.number, evidenceDir);
-      if (result.status === "pr-opened" && result.prNumber !== void 0) {
+      if (result.status === "pr-opened" && result.prNumber !== void 0 && result.draft === false) {
         baseRef = branch;
         prBase = branch;
         stackedOn = { prNumber: result.prNumber, branch };

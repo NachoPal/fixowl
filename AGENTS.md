@@ -205,11 +205,16 @@ See [docs/releasing.md](docs/releasing.md).
 - The per-issue runner (`packages/action/src/issue-pipeline.ts::processIssue`)
   is a bounded CI-gated fix loop, not one-shot: agent -> local pre-check
   (`.fixowl.yml`, a cheap smoke test) -> push -> wait for the base branch's
-  *required* checks -> green flips the draft PR to ready, red/timeout feeds the
+  *required* checks -> green flips the draft PR to ready, a red check feeds the
   failures back and retries, up to `ci_max_tries`, then leaves an annotated
-  draft. The pure gate decision is `packages/core/src/ci-gate.ts`; the poll loop
-  is `ci-poll.ts` (inject a `Clock` in tests); `getRequiredChecks`/`getChecksForRef`/
-  `getFailedCheckLogs` live behind `deps.ts`. Config is `ci_max_tries` (3) /
+  draft. Only an actionable red retries: a `stalled` required context (never
+  registers, `requiredContextsStalled` in `ci-gate.ts`) or a bare timeout with
+  nothing red stops early, and any failure after the draft PR exists annotates
+  and keeps that draft rather than stranding it (issues #72/#74/#75/#76; the poll
+  absorbs a transient read error per #73). The pure gate decision is
+  `packages/core/src/ci-gate.ts`; the poll loop is `ci-poll.ts` (inject a `Clock`
+  in tests); `getRequiredChecks`/`getChecksForRef`/`getFailedCheckLogs` live
+  behind `deps.ts`. Config is `ci_max_tries` (3) /
   `ci_timeout_minutes` (60) in `config-schema.ts`, propagated through
   `provision` -> `action.yml` inputs. See [docs/ci-fix-loop.md](docs/ci-fix-loop.md).
 

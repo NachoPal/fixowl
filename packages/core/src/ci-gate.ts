@@ -131,6 +131,33 @@ export function evaluateGate(gating: GatingChecks, required: RequiredChecks): Ga
   return gating.checks.some((check) => isFailureConclusion(check.conclusion)) ? "failed" : "green";
 }
 
+/**
+ * When the required set is readable and the gate is pending, tells whether the
+ * pending state is *stalled*: at least one required context has never appeared on
+ * the ref (no matching check at all) and nothing is currently in flight (no
+ * matched check is still queued/in_progress). A stalled required context will
+ * never register for this change - a `paths:`-filtered workflow the change does
+ * not touch, a `workflow_dispatch`-only job, or an app not installed on the repo
+ * shows as "Expected - waiting for status to be reported" forever - so no agent
+ * pass can make it run. The poll loop uses this (only after its settle window, so
+ * a merely slow-to-register check is not misjudged) to stop waiting instead of
+ * burning the full timeout and re-running the paid agent for nothing (issue #74).
+ *
+ * Returns false when the required set is unreadable (fallback mode gates on all
+ * checks and has no named contexts to miss), when every required context is
+ * already present (the pending state is genuine in-progress work), or when any
+ * matched check is still running (real progress is being made).
+ */
+export function requiredContextsStalled(gating: GatingChecks, required: RequiredChecks): boolean {
+  if (!required.readable) return false;
+  const present = new Map(gating.checks.map((check) => [check.name, check]));
+  const matched = required.contexts.map((context) => present.get(context));
+  const anyMissing = matched.some((check) => check === undefined);
+  if (!anyMissing) return false;
+  const anyRunning = matched.some((check) => check !== undefined && check.status !== "completed");
+  return !anyRunning;
+}
+
 /** The completed, failing checks from a gating set - what the agent must fix next. */
 export function failedChecks(gating: GatingChecks): CheckStatusLite[] {
   return gating.checks.filter(

@@ -18,7 +18,11 @@ For each of at most `ci_max_tries` passes:
 
 1. **Run the agent.** From the second pass on, the prompt carries the previous
    attempt's failing checks (fenced as untrusted; see below). A hard agent
-   failure or timeout ends the run on the existing agent-failed path.
+   failure or timeout ends the run: if no PR was opened yet it stops on the
+   agent-failed path, but if a draft PR was already opened on an earlier pass the
+   draft is annotated with the last CI state and the error and kept (issue #72) -
+   a failure after the PR exists must never strand an unexplained draft, which
+   would make the issue count as attempted and be skipped every future night.
 2. **Local pre-check.** The `.fixowl.yml` `verify.checks` still run, but only as
    a cheap smoke test: a change that cannot even lint never reaches CI. A failed
    pre-check feeds its output back and retries **without** pushing - no CI spend.
@@ -29,11 +33,23 @@ For each of at most `ci_max_tries` passes:
    re-trigger CI, which runs on `pull_request`). fixowl waits up to
    `ci_timeout_minutes` for the required checks on the head SHA.
 4. **Green -> ready.** The PR is flipped to ready-for-review and a success
-   comment is posted. **Red or timeout ->** the failures are summarized back to
-   the agent and the loop continues.
+   comment is posted. **A concrete red check ->** the failures are summarized
+   back to the agent and the loop continues. Only a real failure the agent can
+   act on triggers a retry: a required context that never registered (a
+   `paths:`-filtered, `workflow_dispatch`-only, or uninstalled-app check that
+   GitHub reports as "Expected" forever) is a distinct **`stalled`** outcome, and
+   a bare timeout with nothing red gives the agent no failure to fix - either one
+   stops immediately and leaves an annotated draft rather than burning another
+   paid pass and the full timeout again (issue #74).
 
-When the budget is exhausted, the draft PR is left with its body and an issue
-comment listing each failing required check and a link to its run.
+When the budget is exhausted (or the loop stops early on a `stalled`/empty
+result), the draft PR is left with its body and an issue comment listing each
+failing required check and a link to its run.
+
+While polling for CI, a single transient read error (a 502, `ECONNRESET`, or a
+secondary-rate-limit 403) is absorbed and polling continues; the wait gives up
+only after several such errors in a row or once the overall timeout elapses, so
+one flaky read never strands the pushed draft (issue #73).
 
 ## Which checks gate
 

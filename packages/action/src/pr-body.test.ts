@@ -95,6 +95,17 @@ describe("buildPrBody", () => {
     expect(body).toContain("did not complete within fixowl's time budget");
   });
 
+  it("explains a stalled required check that never started (issue #74)", () => {
+    const body = buildPrBody({
+      issueNumber: 7,
+      verification: [],
+      ci: { state: "failed", reason: "stalled", failures: [] },
+    });
+    expect(body).toContain("## CI");
+    expect(body).toContain("never started for this change");
+    expect(body).not.toContain("still red");
+  });
+
   it("escapes a detailsUrl so it cannot break out of the logs link", () => {
     const body = buildPrBody({
       issueNumber: 7,

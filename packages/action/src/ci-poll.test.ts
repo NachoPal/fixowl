@@ -163,6 +163,111 @@ describe("waitForRequiredChecks", () => {
     expect(calls).toBe(3);
   });
 
+  it("absorbs a single transient read error mid-poll and keeps polling (issue #73)", async () => {
+    const github = new FakeGitHub([issue(1, "t")]);
+    let calls = 0;
+    // The second poll throws (a 502 / ECONNRESET / secondary-rate-limit), which
+    // must NOT abort the issue and strand the pushed draft; the loop absorbs it and
+    // the third poll settles the gate green.
+    github.getChecksForRef = async () => {
+      calls++;
+      if (calls === 2) throw new Error("502 Bad Gateway");
+      return {
+        readable: true,
+        checks: calls < 3 ? [running("ci")] : [completed("ci", "success")],
+      };
+    };
+    const { log, warnings } = capturingLog();
+    const result = await waitForRequiredChecks(
+      { github, log, clock: fakeClock() },
+      {
+        sha: "sha",
+        base: "main",
+        required: { readable: true, contexts: ["ci"] },
+        timeoutMs: 600_000,
+      },
+    );
+    expect(result.outcome).toBe("green");
+    expect(result.timedOut).toBe(false);
+    expect(calls).toBe(3);
+    expect(warnings.some((w) => /transient error reading checks/i.test(w))).toBe(true);
+  });
+
+  it("gives up after N consecutive read errors instead of looping forever (issue #73)", async () => {
+    const github = new FakeGitHub([issue(1, "t")]);
+    let calls = 0;
+    github.getChecksForRef = async () => {
+      calls++;
+      throw new Error("ECONNRESET");
+    };
+    await expect(
+      waitForRequiredChecks(
+        { github, log: silentLog, clock: fakeClock() },
+        {
+          sha: "sha",
+          base: "main",
+          required: { readable: true, contexts: ["ci"] },
+          timeoutMs: 600_000,
+          maxPollErrors: 3,
+        },
+      ),
+    ).rejects.toThrow("ECONNRESET");
+    // Read attempted exactly maxPollErrors times, then it re-throws.
+    expect(calls).toBe(3);
+  });
+
+  it("stalls (does not wait out the timeout) when a required context never registers (issue #74)", async () => {
+    const github = new FakeGitHub([issue(1, "t")]);
+    let calls = 0;
+    // "ci" completes green, but the required "e2e" context (a path-filtered / dispatch-only
+    // job) never appears. Waiting the full timeout and re-running the agent would
+    // achieve nothing, so after the settle window the wait returns `stalled`.
+    github.checksForRef = () => {
+      calls++;
+      return [completed("ci", "success")];
+    };
+    const result = await waitForRequiredChecks(
+      { github, log: silentLog, clock: fakeClock() },
+      {
+        sha: "sha",
+        base: "main",
+        required: { readable: true, contexts: ["ci", "e2e"] },
+        timeoutMs: 600_000,
+        pollMs: 15_000,
+      },
+    );
+    expect(result.outcome).toBe("stalled");
+    expect(result.timedOut).toBe(false);
+    // Held for the settle window (2 * pollMs); polls at t=0, 15000, 30000 -> 3 looks,
+    // not the ~40 the full timeout would have taken.
+    expect(calls).toBe(3);
+  });
+
+  it("keeps waiting (not stalled) while a missing required context is still in flight (issue #74)", async () => {
+    const github = new FakeGitHub([issue(1, "t")]);
+    let calls = 0;
+    // "e2e" is still running; a stalled verdict here would be wrong. It completes
+    // red on a later poll and decides the gate.
+    github.checksForRef = () => {
+      calls++;
+      return calls < 4
+        ? [completed("ci", "success"), running("e2e")]
+        : [completed("ci", "success"), completed("e2e", "failure")];
+    };
+    const result = await waitForRequiredChecks(
+      { github, log: silentLog, clock: fakeClock() },
+      {
+        sha: "sha",
+        base: "main",
+        required: { readable: true, contexts: ["ci", "e2e"] },
+        timeoutMs: 600_000,
+        pollMs: 15_000,
+      },
+    );
+    expect(result.outcome).toBe("failed");
+    expect(result.failed.map((c) => c.name)).toEqual(["e2e"]);
+  });
+
   it("greens only after the settle window when there is no CI at all (unreadable + no checks)", async () => {
     const github = new FakeGitHub([issue(1, "t")]);
     let calls = 0;

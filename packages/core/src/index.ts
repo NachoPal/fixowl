@@ -134,6 +134,7 @@ export {
   failedChecks,
   gatingChecks,
   isFailureConclusion,
+  requiredContextsStalled,
   type CheckStatusLite,
   type ChecksForRef,
   type GateDecision,

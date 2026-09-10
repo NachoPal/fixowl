@@ -4,6 +4,7 @@ import {
   failedChecks,
   gatingChecks,
   isFailureConclusion,
+  requiredContextsStalled,
   type CheckStatusLite,
   type RequiredChecks,
 } from "./ci-gate.ts";
@@ -91,6 +92,34 @@ describe("evaluateGate (fallback / unreadable required set)", () => {
   it("is failed when any completed check is red", () => {
     const all = [check({ name: "ci" }), check({ name: "lint", conclusion: "failure" })];
     expect(evaluateGate(gatingChecks(all, unreadable), unreadable)).toBe("failed");
+  });
+});
+
+describe("requiredContextsStalled (issue #74)", () => {
+  it("is stalled when a required context never appeared and nothing is in flight", () => {
+    const required = readable(["ci", "e2e"]);
+    // ci completed; e2e (path-filtered / dispatch-only) never registered.
+    const all = [check({ name: "ci" })];
+    expect(requiredContextsStalled(gatingChecks(all, required), required)).toBe(true);
+  });
+
+  it("is NOT stalled while a missing context is still represented by a running check", () => {
+    const required = readable(["ci", "e2e"]);
+    const all = [
+      check({ name: "ci" }),
+      check({ name: "e2e", status: "in_progress", conclusion: null }),
+    ];
+    expect(requiredContextsStalled(gatingChecks(all, required), required)).toBe(false);
+  });
+
+  it("is NOT stalled when every required context is present (pending is genuine progress)", () => {
+    const required = readable(["ci"]);
+    const all = [check({ name: "ci", status: "queued", conclusion: null })];
+    expect(requiredContextsStalled(gatingChecks(all, required), required)).toBe(false);
+  });
+
+  it("is never stalled in fallback mode (no named contexts to miss)", () => {
+    expect(requiredContextsStalled(gatingChecks([], unreadable), unreadable)).toBe(false);
   });
 });
 

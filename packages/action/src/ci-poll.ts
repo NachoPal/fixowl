@@ -2,13 +2,24 @@ import {
   evaluateGate,
   failedChecks,
   gatingChecks,
+  requiredContextsStalled,
   type CheckStatusLite,
+  type ChecksForRef,
   type RequiredChecks,
 } from "@fixowl/core";
 import type { GitHubApi, Logger } from "./deps.ts";
 
 /** Default gap between polls of a pushed head's checks. */
 export const CI_POLL_INTERVAL_MS = 15_000;
+
+/**
+ * How many *consecutive* transient read errors the poll loop absorbs before it
+ * gives up. A single 502 / ECONNRESET / secondary-rate-limit 403 during the wait
+ * must not abort the issue and strand the pushed draft (issue #73), but a run of
+ * them means the read is genuinely broken, so re-throw and let the caller handle
+ * it. A successful read resets the counter.
+ */
+export const CI_POLL_MAX_CONSECUTIVE_ERRORS = 5;
 
 /**
  * In fallback mode (required set unreadable) an empty poll is ambiguous: CI may
@@ -35,11 +46,15 @@ export interface WaitForChecksResult {
   /**
    * Green when every gating check passed; failed on a red or timed-out attempt;
    * `unverified` when the ref's check runs could not be read at all (the runtime
-   * token 403s on the check-runs API). `unverified` is distinct from `green`: no
-   * check was ever consulted, so the PR must never be reported as CI-green even
-   * though it is still flipped to ready after the settle window (captain 7.2).
+   * token 403s on the check-runs API); `stalled` when a *required* context never
+   * registered after the settle window (a path-filtered / dispatch-only /
+   * uninstalled-app check that GitHub reports "Expected" forever), so waiting out
+   * the timeout and re-running the agent would achieve nothing (issue #74).
+   * `unverified` is distinct from `green`: no check was ever consulted, so the PR
+   * must never be reported as CI-green even though it is still flipped to ready
+   * after the settle window (captain 7.2). `stalled` leaves an annotated draft.
    */
-  outcome: "green" | "failed" | "unverified";
+  outcome: "green" | "failed" | "unverified" | "stalled";
   /** True when the wait hit `timeoutMs` before the gating set settled. */
   timedOut: boolean;
   /** The gating checks seen on the final poll (used to build agent feedback). */
@@ -69,17 +84,43 @@ export async function waitForRequiredChecks(
     required: RequiredChecks;
     timeoutMs: number;
     pollMs?: number;
+    /** Consecutive transient read errors tolerated before giving up (issue #73). */
+    maxPollErrors?: number;
   },
 ): Promise<WaitForChecksResult> {
   const { github, log, clock } = deps;
   const pollMs = params.pollMs ?? CI_POLL_INTERVAL_MS;
+  const maxPollErrors = params.maxPollErrors ?? CI_POLL_MAX_CONSECUTIVE_ERRORS;
   const start = clock.now();
   const settleMs = Math.min(2 * pollMs, params.timeoutMs);
   let warnedFallback = false;
   let warnedUnreadable = false;
+  let consecutiveErrors = 0;
 
   for (;;) {
-    const checks = await github.getChecksForRef(params.sha);
+    let checks: ChecksForRef;
+    try {
+      checks = await github.getChecksForRef(params.sha);
+      consecutiveErrors = 0;
+    } catch (error) {
+      // A single transient read error (502 / ECONNRESET / secondary-rate-limit
+      // 403 - the last two the read edge re-throws by design, so as not to mistake
+      // a rate limit for "no CI") must NOT abort the issue and strand the pushed
+      // draft (issue #73). Absorb it and keep polling; give up only after
+      // `maxPollErrors` in a row or once the overall timeout elapses - the head's
+      // checks are simply unknown, so let the caller (processIssue) annotate the
+      // draft it already opened rather than crash.
+      consecutiveErrors += 1;
+      log.warn(
+        `transient error reading checks for ${params.sha} (${String(error)}); ` +
+          `${consecutiveErrors}/${maxPollErrors} consecutive, continuing to poll`,
+      );
+      if (consecutiveErrors >= maxPollErrors || clock.now() - start >= params.timeoutMs) {
+        throw error;
+      }
+      await clock.sleep(pollMs);
+      continue;
+    }
     // The runtime credential could not read the ref's checks at all (an App
     // installation without Checks: read is 403'd). CI cannot be verified,
     // so settle then flip to ready as the no-CI fallback does (captain 7.2), but
@@ -124,6 +165,26 @@ export async function waitForRequiredChecks(
     if (decision !== "pending" && !withinSettleWindow) {
       return {
         outcome: decision,
+        timedOut: false,
+        gating: gating.checks,
+        failed: failedChecks(gating),
+        usedFallback: gating.usedFallback,
+      };
+    }
+    // After the settle window, a required context that never registered (missing,
+    // with nothing in flight) will never run for this change; stop now rather than
+    // waiting out the full timeout and re-running the paid agent (issue #74).
+    if (
+      decision === "pending" &&
+      clock.now() - start >= settleMs &&
+      requiredContextsStalled(gating, params.required)
+    ) {
+      log.warn(
+        `required check(s) for ${params.base} never started for ${params.sha} after the settle ` +
+          `window; leaving an annotated draft instead of waiting out the timeout`,
+      );
+      return {
+        outcome: "stalled",
         timedOut: false,
         gating: gating.checks,
         failed: failedChecks(gating),
