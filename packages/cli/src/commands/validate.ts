@@ -85,7 +85,8 @@ export async function validateCommand(ctx: CliContext): Promise<boolean> {
       // usage-window budget and can never be observed for an api-credit agent
       // (codex, or claude on an API key), so at night it would fall through and
       // re-warn every run. Catch it once here and point at `total_token_budget`.
-      const budgetWarning = usageBudgetBillingMismatch(settings, adapter.env);
+      const presentEnv = adapter.env.filter((name) => !missing.includes(name));
+      const budgetWarning = usageBudgetBillingMismatch(settings, presentEnv);
       if (budgetWarning !== undefined) log.warn(`repo ${repoEntry.name}: ${budgetWarning}`);
 
       // Live provider check: for agents whose provider serves a queryable model
