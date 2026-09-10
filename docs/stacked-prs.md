@@ -15,7 +15,11 @@ Each stacked PR carries a banner: `Stacked on #<parent> - merge that first.`
    shipping tonight, B stacks on A and is ordered after it. If A is **not** in
    tonight's shippable set - not selected, capped out, cross-repo, or it failed
    to ship - B is **deferred**: no PR is attempted, and the reason is logged and
-   listed under "Deferred" in the night summary. A closed blocker counts as
+   listed under "Deferred" in the night summary. "Shipped" here means a
+   green/ready PR: a prerequisite that only left a **draft** because its CI never
+   went green does not count as shipped and is never used as a stack base (issue
+   #76) - stacking B on it would inherit that red base CI - so B defers with a
+   reason that names the draft. A closed blocker counts as
    satisfied. A dependency cycle defers the whole cycle. Unlike a same-code
    chain (below), a deferred dependent is never rebased onto the default branch:
    a real prerequisite that didn't land means the work genuinely cannot proceed.
