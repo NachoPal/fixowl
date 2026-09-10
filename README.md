@@ -127,12 +127,13 @@ fixowl start         # installs and starts the runner service(s); no admin token
 ```
 
 The admin token is **setup-only**: `fixowl provision` is the only thing that
-spends it (registration is the one step needing Administration: write). After
-provisioning you can revoke it, or downgrade it to read-only if you want
+spends it (registration is the one step needing Administration: write). It is
+**optional** - after provisioning you can drop it entirely (remove the
+`admin_token:` line and its secret), or downgrade it to read-only if you want
 `fixowl status`/`fixowl start` to confirm the runner is online. Routine
-`fixowl start` needs no admin token. Provisioning from a different host than the
-runner? Use `fixowl provision --no-register`, then `fixowl start --register` on
-the runner host.
+`fixowl start` needs no admin token and loads fine without one. Provisioning from
+a different host than the runner? Use `fixowl provision --no-register`, then
+`fixowl start --register` on the runner host.
 
 Don't want to hand fixowl an admin token at all? `fixowl provision --manual`
 renders the same workflow, `.fixowl.yml`, and issue template and prints the

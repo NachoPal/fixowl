@@ -36,9 +36,14 @@ See [docs/releasing.md](docs/releasing.md).
 - **The admin token is setup-only.** Runner registration (the only step needing
   Administration: write) lives in `fixowl provision` (and the explicit
   `fixowl start --register` for another host), via `registerRunner`
-  (`packages/cli/src/runner/register.ts`). Routine `fixowl start` uses no admin
-  token; its online check (and `fixowl status`) soft-fails when the token is
-  revoked/downgraded. Never move a write-scoped GitHub call into the routine
+  (`packages/cli/src/runner/register.ts`). `admin_token` is **optional at config
+  load** (a present-but-empty value is still rejected) and the admin Octokit is
+  built lazily (`makeContext`), so routine commands (`fixowl start`,
+  `fixowl status`, `fixowl fallback check`) load and run with **no** admin token,
+  soft-failing the admin-backed reads (e.g. the online-runner check); only the
+  setup-only paths (`fixowl provision`, `fixowl start --register`) need it and
+  fail clearly via `requireAdmin` (`packages/cli/src/context.ts`,
+  `ADMIN_TOKEN_MISSING_MESSAGE`) when it is absent. Never move a write-scoped GitHub call into the routine
   `start` path, and never grant the runtime credential any Administration
   **write** (or other write beyond Contents/Pull requests/Issues). The CI-gated
   fix loop adds read-only Checks/Commit statuses/Actions/Administration to the
