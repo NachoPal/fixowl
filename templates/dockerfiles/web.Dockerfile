@@ -5,8 +5,12 @@
 # `verify.web` screenshots work out of the box.
 FROM mcr.microsoft.com/playwright:v1.55.0-noble
 
-# The coding agent CLI (swap for your agent of choice)
-RUN npm install -g @anthropic-ai/claude-code
+# Coding agent CLIs. Install the one for whichever agent this repo runs:
+#   agent: claude -> the `claude` CLI (@anthropic-ai/claude-code)
+#   agent: codex  -> the `codex` CLI (@openai/codex), which needs OPENAI_API_KEY
+#                    opted into the repo's agent env (see .fixowl.yml)
+# Both are installed here so this image supports either agent with no edits.
+RUN npm install -g @anthropic-ai/claude-code @openai/codex
 
 WORKDIR /workspace
 
