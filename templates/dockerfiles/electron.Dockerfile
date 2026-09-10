@@ -12,7 +12,12 @@ RUN apt-get update \
     xvfb \
   && rm -rf /var/lib/apt/lists/*
 
-RUN npm install -g @anthropic-ai/claude-code
+# Coding agent CLIs. Install the one for whichever agent this repo runs:
+#   agent: claude -> the `claude` CLI (@anthropic-ai/claude-code)
+#   agent: codex  -> the `codex` CLI (@openai/codex), which needs OPENAI_API_KEY
+#                    opted into the repo's agent env (see .fixowl.yml)
+# Both are installed here so this image supports either agent with no edits.
+RUN npm install -g @anthropic-ai/claude-code @openai/codex
 
 WORKDIR /workspace
 

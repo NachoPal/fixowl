@@ -286,9 +286,22 @@ and the in-band spend meter behind `SpendMeter`/`getSpendMeter` in
 
 Each target repo carries a `.fixowl.yml` (proposed by `provision` when
 missing) declaring its Dockerfile, verify commands, optional web screenshot
-targets, and repo-specific prompt instructions. The Dockerfile contract: the
-image contains the agent CLI, git, your toolchain, and (for web verification)
-Playwright with chromium. Samples live in [templates/dockerfiles/](templates/dockerfiles/).
+targets, and repo-specific prompt instructions.
+
+**The Dockerfile contract:** fixowl runs the coding agent inside this per-repo
+image, so the image must contain the CLI for whichever agent the repo runs, plus
+git, your toolchain, and (for web verification) Playwright with chromium:
+
+- `agent: claude` needs the `claude` CLI (`@anthropic-ai/claude-code`).
+- `agent: codex` needs the `codex` CLI (`@openai/codex`), and `OPENAI_API_KEY`
+  opted into the repo's agent env (the credential rides the config env allowlist,
+  never the image).
+
+The samples in **[templates/dockerfiles/](templates/dockerfiles/)**
+(`web.Dockerfile`, `electron.Dockerfile`) install **both** the `claude` and
+`codex` CLIs, so most repos can copy a sample as-is and run either agent without
+hand-writing a Dockerfile. Add any repo-specific build tools your verify commands
+need on top.
 
 ## Scheduling trigger
 
