@@ -463,9 +463,11 @@ Opening your browser. Review the pre-filled App on GitHub's page and click
 
 /**
  * The headless variant: the manifest form is written to an HTML file the user
- * opens in ANY browser (copy it to a laptop when this host is remote), and the
- * redirect lands on github.com with the code in the address bar - no localhost
- * server, nothing to reach this machine. Same one-hour conversion window.
+ * opens in ANY browser (copy it to a laptop when this host is remote). After
+ * "Create GitHub App" the browser navigates to the non-listening loopback URL
+ * and shows "refused to connect", while the full URL (code and all) stays in
+ * the address bar for the user to copy back - no github.com landing, no
+ * localhost server on this host. Same one-hour conversion window.
  */
 async function headlessManifestFlow(
   prompter: Prompter,
@@ -485,8 +487,10 @@ Wrote ${pagePath} (no secrets in it).
 1. Open that file in any browser - copy it to your own machine first if this
    host is remote (e.g. scp).
 2. Review the pre-filled App on GitHub's page and click "Create GitHub App".
-3. You land back on ${HEADLESS_REDIRECT_URL} with ?code=… in the
-   address bar. Paste the code (or the whole URL) here within 1 hour.`);
+3. Your browser then tries to open ${HEADLESS_REDIRECT_URL}?code=…
+   and shows "This site can't be reached / refused to connect". That is
+   EXPECTED - nothing is meant to be running there. Copy the full URL from the
+   address bar (it carries the code) and paste it here within 1 hour.`);
   const answer = await prompter.ask("  code (or the full redirected URL)", {
     validate: (value) =>
       extractManifestCode(value) === undefined

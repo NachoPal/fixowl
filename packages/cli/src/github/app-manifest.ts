@@ -264,11 +264,18 @@ export function appInstallUrl(slug: string): string {
 }
 
 /**
- * The headless flow's redirect target. GitHub appends `?code=...&state=...`,
- * so landing the user on their own Apps settings page puts the code in the
- * address bar of a page that is obviously theirs, with no server involved.
+ * The headless flow's redirect target. GitHub appends `?code=...&state=...` and
+ * the user's browser navigates here after "Create GitHub App". Nothing listens
+ * on this loopback port, so the browser shows "refused to connect" while the
+ * full URL - code and all - stays in the address bar for the user to copy back.
+ * A github.com target does NOT surface a copyable code: GitHub keeps the user on
+ * its own /settings/apps/manifest confirmation surface instead of doing the
+ * external `redirect_url?code=` bounce. This is the same shape the working
+ * Browser flow uses (`manifest-server.ts`), minus the local capture server. The
+ * port must be a non-restricted one (Chrome refuses a fixed list, e.g. 9, with
+ * ERR_UNSAFE_PORT); the path is cosmetic, making the error page self-explanatory.
  */
-export const HEADLESS_REDIRECT_URL = "https://github.com/settings/apps";
+export const HEADLESS_REDIRECT_URL = "http://127.0.0.1:9280/fixowl/app-created";
 
 /**
  * Pulls the temporary code out of a headless answer: the raw code, or the full

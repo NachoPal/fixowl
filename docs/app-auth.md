@@ -42,8 +42,12 @@ into the config. No permission-ticking, no key download, no base64 by hand.
 
 On an SSH or no-browser host, pick the wizard's **headless** option: it writes
 a small `app-manifest.html` you open in any browser (copy it to your laptop
-first if needed), and you paste one code back into the terminal. The code is
-single-use and expires **1 hour** after GitHub issues it.
+first if needed). After you click "Create GitHub App", the browser is redirected
+to a loopback URL (`http://127.0.0.1:9280/…`) and shows **"This site can't be
+reached / refused to connect" - that is expected**; nothing runs there. Copy the
+full URL from the address bar (it carries the `?code=`) and paste it back into
+the terminal. The code lands only in your own address bar, never on the network;
+it is single-use and expires **1 hour** after GitHub issues it.
 
 ### What the manifest pre-fills, and why
 
