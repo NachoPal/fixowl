@@ -88,6 +88,12 @@ const repoEntrySchema = z.object({
   max_issues_per_run: z.number().int().positive().optional(),
   /** Stop before starting a new issue once the agent's usage window hits this % (0..100). */
   usage_budget_percent: z.number().min(0).max(100).optional(),
+  /**
+   * Total-token hard cap for an API-credit agent (codex/aider): stop before a new
+   * issue once the night's accumulated token spend reaches this. The API-credit
+   * counterpart to `usage_budget_percent`; measured in-band (agent-spend.ts).
+   */
+  total_token_budget: z.number().int().positive().optional(),
   /** Graceful wall-clock: don't start a new issue after this many minutes of the run. */
   run_budget_minutes: z.number().int().positive().optional(),
   issue_timeout_minutes: z.number().int().positive().optional(),
@@ -175,6 +181,8 @@ export const globalConfigSchema = z.object({
       max_issues_per_run: z.number().int().positive().optional(),
       /** Default usage-budget stop % for every repo (issue #21). */
       usage_budget_percent: z.number().min(0).max(100).optional(),
+      /** Default total-token hard cap for every repo (API-credit agents). */
+      total_token_budget: z.number().int().positive().optional(),
       /** Default graceful wall-clock stop, in minutes, for every repo (issue #21). */
       run_budget_minutes: z.number().int().positive().optional(),
       issue_timeout_minutes: z.number().int().positive().optional(),
@@ -240,8 +248,11 @@ export const FIXOWL_DEFAULTS = {
    * `run_budget_minutes` unset opts that axis out (undefined), so a config
    * written before this feature behaves exactly as it did. 240 min sits
    * comfortably under the workflow's blunt `timeout-minutes: 300` ceiling.
+   * `totalTokenBudget` is likewise a starter, offered by `init` only for an
+   * API-credit agent (codex/aider); unset stays opted out.
    */
   usageBudgetPercent: 85,
+  totalTokenBudget: 3_000_000,
   runBudgetMinutes: 240,
   issueTimeoutMinutes: 45,
   /**
@@ -285,6 +296,12 @@ export interface ResolvedRepoSettings {
    * out. No built-in fallback, so an unset value stays undefined.
    */
   usageBudgetPercent: number | undefined;
+  /**
+   * Total-token hard cap for an API-credit agent (issue: API-credit spend cap),
+   * or undefined to opt the token condition out. No built-in fallback, so an
+   * unset value stays undefined.
+   */
+  totalTokenBudget: number | undefined;
   /** Graceful wall-clock stop in minutes (issue #21), or undefined to opt out. */
   runBudgetMinutes: number | undefined;
   issueTimeoutMinutes: number;
@@ -329,6 +346,7 @@ export function resolveRepoSettings(config: GlobalConfig, repoName: string): Res
     // (opted out), so a pre-#21 config is unchanged. The starter values live in
     // FIXOWL_DEFAULTS only for `init` to write into a fresh config.
     usageBudgetPercent: entry.usage_budget_percent ?? defaults.usage_budget_percent,
+    totalTokenBudget: entry.total_token_budget ?? defaults.total_token_budget,
     runBudgetMinutes: entry.run_budget_minutes ?? defaults.run_budget_minutes,
     issueTimeoutMinutes:
       entry.issue_timeout_minutes ??

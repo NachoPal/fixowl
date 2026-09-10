@@ -85,9 +85,17 @@ const codex: AgentAdapter = {
   // fixowl moves `.git` out of the tree, so codex must tolerate a git-less root.
   // `--ephemeral` keeps codex from persisting session/rollout files. Reasoning
   // effort has no dedicated flag; it is a config override (`-c`).
-  argv: (_mode, selection) => [
+  //
+  // `--json` (fix mode only) turns stdout into a JSONL event stream whose
+  // `turn.completed` events carry a `usage` object, which the host parses in-band
+  // for the `total_token_budget` run budget (agent-spend.ts::parseCodexUsage).
+  // It is NOT set in classify mode: classify parses the agent's final message out
+  // of raw stdout (main.ts::parseClassification), which JSONL would break; a
+  // single classify call's token spend is a negligible, accepted under-count.
+  argv: (mode, selection) => [
     "codex",
     "exec",
+    ...(mode === "fix" ? ["--json"] : []),
     "--skip-git-repo-check",
     "--dangerously-bypass-approvals-and-sandbox",
     "--ephemeral",

@@ -4,28 +4,36 @@
  * conditions evaluated at two gates (pre-run and between-issues). The run stops
  * on the FIRST condition that trips.
  *
- * Three orthogonal axes, each opted out by leaving its limit `undefined`:
+ * Four orthogonal axes, each opted out by leaving its limit `undefined`:
  * - count       (`maxIssues`)     - how MANY PRs may ship. The kept secondary cap.
- * - usage %     (`usagePercent`)  - how much of the subscription window is spent
- *                                   (the flagship). Abstains when usage is
+ * - usage %     (`usagePercent`)  - how much of the SUBSCRIPTION window is spent
+ *                                   (the flagship, for subscription-billed agents
+ *                                   like claude). Abstains when usage is
  *                                   unobservable this run, so it never aborts a
  *                                   night that count + wall-clock would allow.
+ * - tokens      (`totalTokens`)   - the total TOKENS an API-credit agent (codex,
+ *                                   aider) may spend; the API-credit counterpart
+ *                                   to usage %. Measured IN-BAND (accumulated
+ *                                   from the agent's own reported token usage,
+ *                                   see agent-spend.ts), not from a provider
+ *                                   endpoint. Abstains when the agent's spend is
+ *                                   unmeasurable this run, exactly like usage %.
  * - wall-clock  (`runMinutes`)    - how LONG the night runs; a graceful "don't
  *                                   start a new issue after N minutes", distinct
  *                                   from the workflow's blunt `timeout-minutes`.
  *
  * This module is pure (no I/O): the gate in `main.ts` assembles a `BudgetState`
- * snapshot (shipped count, elapsed wall-clock, latest usage read) and calls
- * `evaluateBudget`. That keeps trip/no-trip and first-trip-wins ordering unit-
- * testable like `prereq-planner`/`classify`, and leaves concurrency-safety to
- * the state assembly if/when parallel chains land (issue #36): the conditions
- * stay pure; only the snapshot must be consistent.
+ * snapshot (shipped count, elapsed wall-clock, latest usage read, accumulated
+ * tokens) and calls `evaluateBudget`. That keeps trip/no-trip and first-trip-wins
+ * ordering unit-testable like `prereq-planner`/`classify`, and leaves
+ * concurrency-safety to the state assembly if/when parallel chains land (issue
+ * #36): the conditions stay pure; only the snapshot must be consistent.
  */
 
 import type { UsageSnapshot } from "./agent-usage.ts";
 
-/** The three stop-condition axes, in first-trip-wins evaluation order. */
-export type BudgetConditionName = "count" | "usage" | "wallclock";
+/** The stop-condition axes, in first-trip-wins evaluation order. */
+export type BudgetConditionName = "count" | "usage" | "tokens" | "wallclock";
 
 /** A consistent snapshot of the run's progress at one gate. */
 export interface BudgetState {
@@ -35,12 +43,20 @@ export interface BudgetState {
   elapsedMs: number;
   /** Latest usage snapshot, or undefined if unobservable / unread this run. */
   usage: UsageSnapshot | undefined;
+  /**
+   * Total tokens the agent has spent so far tonight, accumulated in-band from
+   * its reported usage; `undefined` when the agent's spend is unmeasurable this
+   * run (the token condition then abstains, exactly like `usage`).
+   */
+  tokensUsed: number | undefined;
 }
 
 /** Each limit is optional; `undefined` opts its condition out entirely. */
 export interface BudgetLimits {
   maxIssues?: number;
   usagePercent?: number;
+  /** Total-token hard cap for an API-credit agent (issue: API-credit spend cap). */
+  totalTokens?: number;
   runMinutes?: number;
 }
 
@@ -93,6 +109,26 @@ export function buildStopConditions(limits: BudgetLimits): StopCondition[] {
           reason: `usage budget reached: ${state.usage.limiting} window at ${formatPercent(
             state.usage.usedPercent,
           )}% (budget ${budget}%)`,
+        };
+      },
+    });
+  }
+
+  if (limits.totalTokens !== undefined) {
+    const cap = limits.totalTokens;
+    conditions.push({
+      name: "tokens",
+      evaluate: (state) => {
+        // Abstain when spend is unmeasurable this run: fail-open like usage, so
+        // an agent that reports no usage never aborts a night the other caps
+        // would allow. At the pre-run gate tokensUsed is 0, so this never trips
+        // there (like the count condition).
+        if (state.tokensUsed === undefined) return { stop: false };
+        if (state.tokensUsed < cap) return { stop: false };
+        return {
+          stop: true,
+          condition: "tokens",
+          reason: `token budget reached: ${state.tokensUsed} token(s) spent (cap ${cap})`,
         };
       },
     });

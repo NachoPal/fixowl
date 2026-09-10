@@ -369,6 +369,55 @@ describe("runNight", () => {
     });
   });
 
+  describe("token budget (API-credit agents)", () => {
+    it("stops on the token budget, measured in-band from codex JSONL usage", async () => {
+      const { workspaceDir, inputs } = await setup();
+      const github = new FakeGitHub(structuredClone(threeIssues));
+      // Each codex agent pass emits `codex exec --json` usage totalling 1000
+      // tokens (600 in + 400 out); the engine also writes the per-issue fix file.
+      const codexUsage =
+        `{"type":"turn.completed","usage":` +
+        `{"input_tokens":600,"cached_input_tokens":0,"output_tokens":400,"reasoning_output_tokens":0}}`;
+      const engine = new FakeEngine((spec): ExecResult | undefined => {
+        const issueNumber = issueNumberOfAgentRun(spec);
+        if (issueNumber !== undefined) {
+          writeFileSync(join(workspaceDir, `fix-${issueNumber}.txt`), `fixed ${issueNumber}\n`);
+          return ok(codexUsage);
+        }
+        return ok(); // verification checks pass
+      });
+
+      // #1 (1000) leaves 1000 < 1500 so #2 starts; after #2 (2000 >= 1500) the
+      // gate before #3 trips.
+      const summary = await runNight(
+        { github, engine, exec: realExec, log: silentLog, clock: instantClock() },
+        { ...inputs, agentName: "codex", heuristicConflictOrdering: false, totalTokenBudget: 1500 },
+      );
+
+      expect(summary.budgetStop?.condition).toBe("tokens");
+      expect(summary.notStarted?.map((i) => i.number)).toEqual([3]);
+      expect(
+        summary.results.filter((r) => r.status === "pr-opened").map((r) => r.issue.number),
+      ).toEqual([1, 2]);
+      expect(summary.results.find((r) => r.issue.number === 1)?.usage?.totalTokens).toBe(1000);
+    });
+
+    it("abstains when the agent reports no usage, falling through to count + wall-clock", async () => {
+      const { workspaceDir, inputs } = await setup();
+      const github = new FakeGitHub(structuredClone(threeIssues));
+      // codex agent whose output carries no usage: spend is unmeasurable, so the
+      // token cap must not stop the run, and a one-time warning is surfaced.
+      const engine = makeEngine({ workspaceDir });
+      const summary = await runNight(
+        { github, engine, exec: realExec, log: silentLog, clock: instantClock() },
+        { ...inputs, agentName: "codex", heuristicConflictOrdering: false, totalTokenBudget: 1 },
+      );
+      expect(summary.budgetStop).toBeUndefined();
+      expect(summary.results.filter((r) => r.status === "pr-opened").length).toBe(3);
+      expect(summary.warnings.some((w) => w.includes("unmeasurable"))).toBe(true);
+    });
+  });
+
   it("agent failure error carries a sanitized tail of the agent's real output", async () => {
     const { inputs } = await setup();
     const github = new FakeGitHub([issue(1, "Fix header", "x")]);

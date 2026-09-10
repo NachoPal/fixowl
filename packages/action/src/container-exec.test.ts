@@ -194,7 +194,7 @@ describe("codex adapter end-to-end plumbing (no live codex)", () => {
     });
     const joined = runArgv.join(" ");
     expect(joined).toContain(
-      "codex exec --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox --ephemeral -C /workspace -m gpt-5-codex -c model_reasoning_effort=high",
+      "codex exec --json --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox --ephemeral -C /workspace -m gpt-5-codex -c model_reasoning_effort=high",
     );
     // The prompt rides stdin, never the argv.
     expect(runArgv).toContain("-i");

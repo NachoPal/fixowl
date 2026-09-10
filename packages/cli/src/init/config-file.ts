@@ -17,6 +17,8 @@ export interface RepoAnswers {
   maxIssuesPerRun: number;
   /** Usage-budget stop % (issue #21); undefined opts the usage condition out. */
   usageBudgetPercent?: number;
+  /** Total-token hard cap for an API-credit agent; undefined opts the token condition out. */
+  totalTokenBudget?: number;
   /** Graceful wall-clock stop in minutes (issue #21); undefined opts it out. */
   runBudgetMinutes?: number;
   /** Per-issue hard timeout in minutes; falls back to the built-in default when unset. */
@@ -172,6 +174,9 @@ function repoOverrideLines(
   ) {
     lines.push(`    usage_budget_percent: ${repo.usageBudgetPercent}`);
   }
+  if (repo.totalTokenBudget !== base.totalTokenBudget && repo.totalTokenBudget !== undefined) {
+    lines.push(`    total_token_budget: ${repo.totalTokenBudget}`);
+  }
   if (repo.runBudgetMinutes !== base.runBudgetMinutes && repo.runBudgetMinutes !== undefined) {
     lines.push(`    run_budget_minutes: ${repo.runBudgetMinutes}`);
   }
@@ -276,7 +281,8 @@ ${scheduleTriggerLine("  ", base.scheduleTrigger)}
   # Layered run-budget (issue #21): the night stops on the first condition that
   # trips. Each is optional; delete a line to opt that axis out.
   max_issues_per_run: ${base.maxIssuesPerRun}   # secondary cap: at most this many PRs ship
-${budgetLine("usage_budget_percent", base.usageBudgetPercent, FIXOWL_DEFAULTS.usageBudgetPercent, "stop before a new issue once the agent usage window hits this %")}
+${budgetLine("usage_budget_percent", base.usageBudgetPercent, FIXOWL_DEFAULTS.usageBudgetPercent, "subscription agents: stop before a new issue once the usage window hits this %")}
+${budgetLine("total_token_budget", base.totalTokenBudget, FIXOWL_DEFAULTS.totalTokenBudget, "API-credit agents: stop before a new issue once total token spend hits this")}
 ${budgetLine("run_budget_minutes", base.runBudgetMinutes, FIXOWL_DEFAULTS.runBudgetMinutes, "graceful wall-clock: don't start a new issue after this many minutes")}
   issue_timeout_minutes: ${base.issueTimeoutMinutes ?? FIXOWL_DEFAULTS.issueTimeoutMinutes}   # per-issue hard timeout (a stuck agent is killed)
   ci_max_tries: ${base.ciMaxTries ?? FIXOWL_DEFAULTS.ciMaxTries}          # CI-gated fix loop: agent passes before a draft PR is left

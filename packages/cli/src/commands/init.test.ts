@@ -16,8 +16,10 @@ import {
   initCommand,
   NO_ADMIN_SIGNPOST,
   offerToCreateSelectorLabels,
+  promptRepoSettings,
   renderActionsNeeded,
   stepTokens,
+  type RepoSettingsPrefill,
 } from "./init.ts";
 import type { ProvisionResult } from "./provision.ts";
 
@@ -385,5 +387,87 @@ describe("offerToCreateSelectorLabels", () => {
     ).resolves.toBeUndefined();
 
     expect(warnSpy.mock.calls.flat().join("\n")).toContain("provision");
+  });
+});
+
+/**
+ * A scripted prompter for the per-repo question block: `ask` answers by question
+ * substring, `confirm` always declines, `choose` takes the first option. It
+ * records every `ask` so a test can assert which spend-cap prompt was shown.
+ */
+function repoPromptAnswer(q: string): string {
+  if (q.includes("Nightly run time")) return "02:37";
+  if (q.includes("Labels that mark")) return "overnight";
+  if (q.includes("Token budget")) return "2000000";
+  if (q.includes("Usage budget")) return "85";
+  if (q.includes("max issues")) return "4";
+  if (q.includes("Per-issue timeout")) return "45";
+  if (q.includes("max agent passes")) return "3";
+  if (q.includes("minutes each pass")) return "60";
+  return ""; // graceful run budget and anything else: opt out / default
+}
+
+function scriptedRepoPrompter(): { prompter: Prompter; questions: string[] } {
+  const questions: string[] = [];
+  const prompter = {
+    ask: async (question: string) => {
+      questions.push(question);
+      return repoPromptAnswer(question);
+    },
+    confirm: async () => false,
+    choose: async (_q: string, choices: ReadonlyArray<{ value: unknown }>) => choices[0]?.value,
+    multiChoose: async () => [],
+    secret: async () => "",
+    pause: async () => {},
+    say: () => {},
+    close: () => {},
+  } as unknown as Prompter;
+  return { prompter, questions };
+}
+
+describe("promptRepoSettings billing-aware spend cap", () => {
+  // fetchLabelCandidates tolerates a throwing client (its listLabelsForRepo call
+  // is wrapped in try/catch), so a bare stub yields no selector-label candidates.
+  const admin = {} as unknown as Octokit;
+  const prefill: RepoSettingsPrefill = {
+    schedule: "02:37",
+    scheduleTrigger: "host-scheduler",
+    labels: "overnight",
+    maxIssuesPerRun: 4,
+    usageBudgetPercent: 85,
+    totalTokenBudget: 3_000_000,
+    runBudgetMinutes: 240,
+    issueTimeoutMinutes: 45,
+    ciMaxTries: 3,
+    ciTimeoutMinutes: 60,
+    heuristicConflictOrdering: false,
+  };
+
+  it("offers the total-token budget for an API-credit agent (codex)", async () => {
+    const { prompter, questions } = scriptedRepoPrompter();
+    const answers = await promptRepoSettings(prompter, admin, "codex", "acme/widgets", prefill);
+    expect(questions.some((q) => q.includes("Token budget"))).toBe(true);
+    expect(questions.some((q) => q.includes("Usage budget"))).toBe(false);
+    expect(answers.totalTokenBudget).toBe(2_000_000);
+    expect(answers.usageBudgetPercent).toBeUndefined();
+  });
+
+  it("offers the usage-window budget for a subscription agent (claude)", async () => {
+    const { prompter, questions } = scriptedRepoPrompter();
+    const answers = await promptRepoSettings(prompter, admin, "claude", "acme/widgets", prefill);
+    expect(questions.some((q) => q.includes("Usage budget"))).toBe(true);
+    expect(questions.some((q) => q.includes("Token budget"))).toBe(false);
+    expect(answers.usageBudgetPercent).toBe(85);
+    expect(answers.totalTokenBudget).toBeUndefined();
+  });
+
+  it("offers neither spend cap for the zero-spend script agent", async () => {
+    const { prompter, questions } = scriptedRepoPrompter();
+    const answers = await promptRepoSettings(prompter, admin, "script", "acme/widgets", prefill);
+    expect(questions.some((q) => q.includes("Usage budget") || q.includes("Token budget"))).toBe(
+      false,
+    );
+    expect(answers.usageBudgetPercent).toBeUndefined();
+    expect(answers.totalTokenBudget).toBeUndefined();
   });
 });

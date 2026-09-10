@@ -122,6 +122,7 @@ export async function provisionCommand(
       agentEnv: adapter.env,
       maxIssuesPerRun: settings.maxIssuesPerRun,
       usageBudgetPercent: settings.usageBudgetPercent,
+      totalTokenBudget: settings.totalTokenBudget,
       runBudgetMinutes: settings.runBudgetMinutes,
       issueTimeoutMinutes: settings.issueTimeoutMinutes,
       ciMaxTries: settings.ciMaxTries,
