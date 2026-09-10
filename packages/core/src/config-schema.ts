@@ -113,6 +113,17 @@ const repoEntrySchema = z.object({
    * `blocked_by` ordering (Layer 1) is always-on and unaffected.
    */
   heuristic_conflict_ordering: z.boolean().optional(),
+  /**
+   * Pre-work issue-triage gate (all default ON, all free). Layer A skips an OPEN
+   * issue GitHub already records as fixed by a closing-keyword-linked merged PR
+   * (`skip_already_fixed`) or as a duplicate / `duplicate`-labeled
+   * (`skip_duplicates`), before any agent run. Layer B (`verify_before_fix`) has
+   * the agent verify against the CURRENT code first, so a no-diff run leaves an
+   * explanatory comment and opens NO PR. See docs/issue-triage.md.
+   */
+  skip_already_fixed: z.boolean().optional(),
+  skip_duplicates: z.boolean().optional(),
+  verify_before_fix: z.boolean().optional(),
 });
 
 export { labelModelsSchema };
@@ -196,6 +207,10 @@ export const globalConfigSchema = z.object({
       effort: z.string().min(1).optional(),
       /** Default Layer 2 (heuristic conflict-ordering) toggle for every repo. */
       heuristic_conflict_ordering: z.boolean().optional(),
+      /** Default pre-work triage toggles for every repo (see the repo entry). */
+      skip_already_fixed: z.boolean().optional(),
+      skip_duplicates: z.boolean().optional(),
+      verify_before_fix: z.boolean().optional(),
     })
     .optional(),
   agents: z.record(z.string(), agentSettingsSchema).optional(),
@@ -263,6 +278,16 @@ export const FIXOWL_DEFAULTS = {
    */
   heuristicConflictOrdering: false,
   /**
+   * Pre-work issue-triage gate (all default ON, all free). Unlike the run-budget
+   * axes, these DO act as the resolution fallback, so triage is on for every
+   * repo (including a pre-triage config) unless it explicitly opts out. Layer A
+   * is one read-only GraphQL round-trip; Layer B piggybacks on the agent run.
+   * See docs/issue-triage.md.
+   */
+  skipAlreadyFixed: true,
+  skipDuplicates: true,
+  verifyBeforeFix: true,
+  /**
    * CI-gated fix loop: at most this many agent passes before a draft PR is
    * left with the outstanding failures, and how long each pass waits for the
    * pushed head's required checks before counting a CI timeout. See
@@ -322,6 +347,12 @@ export interface ResolvedRepoSettings {
    * Off by default; Layer 1 native `blocked_by` ordering is always-on regardless.
    */
   heuristicConflictOrdering: boolean;
+  /** Layer A: skip an issue GitHub records as fixed by a closing-keyword-linked merged PR. Default on. */
+  skipAlreadyFixed: boolean;
+  /** Layer A: skip an issue GitHub records as a duplicate, or that carries a `duplicate` label. Default on. */
+  skipDuplicates: boolean;
+  /** Layer B: have the agent verify against current code first; a no-diff run comments and opens no PR. Default on. */
+  verifyBeforeFix: boolean;
 }
 
 export function resolveRepoSettings(config: GlobalConfig, repoName: string): ResolvedRepoSettings {
@@ -364,6 +395,12 @@ export function resolveRepoSettings(config: GlobalConfig, repoName: string): Res
       entry.heuristic_conflict_ordering ??
       defaults.heuristic_conflict_ordering ??
       FIXOWL_DEFAULTS.heuristicConflictOrdering,
+    skipAlreadyFixed:
+      entry.skip_already_fixed ?? defaults.skip_already_fixed ?? FIXOWL_DEFAULTS.skipAlreadyFixed,
+    skipDuplicates:
+      entry.skip_duplicates ?? defaults.skip_duplicates ?? FIXOWL_DEFAULTS.skipDuplicates,
+    verifyBeforeFix:
+      entry.verify_before_fix ?? defaults.verify_before_fix ?? FIXOWL_DEFAULTS.verifyBeforeFix,
   };
 }
 

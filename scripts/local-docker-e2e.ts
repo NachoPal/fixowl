@@ -122,6 +122,13 @@ const github: GitHubApi = {
   async getIssueDependencies(numbers) {
     return new Map(numbers.map((n) => [n, { number: n, blockedBy: [] }]));
   },
+  async getIssueTriageSignals(numbers) {
+    // No triage signals in the local e2e: every candidate is worked as before.
+    return new Map(numbers.map((n) => [n, { number: n }]));
+  },
+  async addLabels(issueNumber, labels) {
+    log.info(`addLabels #${issueNumber}: ${labels.join(", ")}`);
+  },
   async getPullRequestForBranch() {
     return undefined;
   },

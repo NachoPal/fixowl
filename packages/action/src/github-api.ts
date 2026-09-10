@@ -1,6 +1,12 @@
 import type { Octokit } from "@octokit/rest";
 import type { CheckStatusLite, ChecksForRef, RequiredChecks } from "@fixowl/core";
-import type { GitHubApi, IssueDeps, IssueLite, PullRequestLite } from "./deps.ts";
+import type {
+  GitHubApi,
+  IssueDeps,
+  IssueLite,
+  IssueTriageSignals,
+  PullRequestLite,
+} from "./deps.ts";
 
 /** The GitHub-API edge of the action: the real `GitHubApi` implementation. */
 
@@ -21,6 +27,40 @@ interface GraphqlIssueNode {
       state: "OPEN" | "CLOSED";
       repository: { nameWithOwner: string };
     } | null> | null;
+  } | null;
+}
+
+/**
+ * One aliased issue's triage-signal payload (Layer A). The timeline node union
+ * (CrossReferencedEvent / MarkedAsDuplicateEvent / UnmarkedAsDuplicateEvent) is
+ * discriminated by field presence rather than a type-name field: each inline
+ * fragment selects fields unique to its type, so `willCloseTarget` marks a
+ * cross-reference, `canonical` a duplicate mark, and the aliased `unmarkedAt` a
+ * duplicate unmark.
+ */
+interface GraphqlTriageTimelineNode {
+  /** CrossReferencedEvent: whether the reference used a closing keyword. */
+  willCloseTarget?: boolean;
+  /** CrossReferencedEvent source; PR fields only (absent/empty for a non-PR source). */
+  source?: {
+    number?: number;
+    url?: string;
+    merged?: boolean;
+    repository?: { nameWithOwner: string };
+  } | null;
+  /** MarkedAsDuplicateEvent: the canonical original (Issue or PR). */
+  canonical?: { number?: number; url?: string } | null;
+  /** UnmarkedAsDuplicateEvent: aliased `createdAt`, present only on an unmark. */
+  unmarkedAt?: string;
+}
+
+interface GraphqlTriageNode {
+  number: number;
+  closedByPullRequestsReferences: {
+    nodes: Array<{ number: number; url: string; merged: boolean } | null> | null;
+  } | null;
+  timelineItems: {
+    nodes: Array<GraphqlTriageTimelineNode | null> | null;
   } | null;
 }
 
@@ -265,5 +305,113 @@ export function makeGitHubApi(
       }
       return result;
     },
+    async addLabels(issueNumber, labels): Promise<void> {
+      if (labels.length === 0) return;
+      await octokit.issues.addLabels({
+        owner,
+        repo,
+        issue_number: issueNumber,
+        labels: [...labels],
+      });
+    },
+    async getIssueTriageSignals(
+      numbers: readonly number[],
+    ): Promise<Map<number, IssueTriageSignals>> {
+      const result = new Map<number, IssueTriageSignals>();
+      if (numbers.length === 0) return result;
+      const thisRepo = `${owner}/${repo}`;
+      // One aliased GraphQL round-trip over the whole candidate set (the
+      // getIssueDependencies technique). first:50 covers the timeline; a signal
+      // beyond it is simply not surfaced (no false skip - Layer B still runs).
+      const aliases = numbers
+        .map(
+          (n) =>
+            `i${n}: issue(number: ${n}) { number ` +
+            `closedByPullRequestsReferences(first: 5, includeClosedPrs: true) { nodes { number url merged } } ` +
+            `timelineItems(first: 50, itemTypes: [CROSS_REFERENCED_EVENT, MARKED_AS_DUPLICATE_EVENT, UNMARKED_AS_DUPLICATE_EVENT]) { nodes { ` +
+            `... on CrossReferencedEvent { willCloseTarget source { ... on PullRequest { number url merged repository { nameWithOwner } } } } ` +
+            `... on MarkedAsDuplicateEvent { canonical { ... on Issue { number url } ... on PullRequest { number url } } } ` +
+            `... on UnmarkedAsDuplicateEvent { unmarkedAt: createdAt } ` +
+            `} } }`,
+        )
+        .join("\n");
+      const query = `query($owner: String!, $repo: String!) { repository(owner: $owner, name: $repo) { ${aliases} } }`;
+      const data = await octokit.graphql<{
+        repository: Record<string, GraphqlTriageNode | null>;
+      }>(query, { owner, repo });
+      const repository = data.repository ?? {};
+      for (const n of numbers) {
+        result.set(n, reduceTriageNode(repository[`i${n}`], n, thisRepo));
+      }
+      return result;
+    },
   };
+}
+
+/**
+ * Reduce one aliased issue's raw triage node to the high-precision signals
+ * Layer A acts on. `fixedByMergedPr`: a merged PR formally linked by a closing
+ * keyword (the `closedByPullRequestsReferences` list, or a `willCloseTarget`
+ * cross-reference from a merged PR in this repo). `duplicateOf`: the canonical
+ * of the latest mark-as-duplicate event that a later unmark did not undo.
+ */
+export function reduceTriageNode(
+  node: GraphqlTriageNode | null | undefined,
+  number: number,
+  thisRepo: string,
+): IssueTriageSignals {
+  const signals: IssueTriageSignals = { number };
+  if (node == null) return signals;
+
+  const closingMerged = (node.closedByPullRequestsReferences?.nodes ?? []).find(
+    (pr): pr is { number: number; url: string; merged: boolean } => pr != null && pr.merged,
+  );
+  if (closingMerged !== undefined) {
+    signals.fixedByMergedPr = { number: closingMerged.number, url: closingMerged.url };
+  }
+
+  // Duplicate state is the LATEST mark/unmark in chronological order (timelineItems
+  // is chronological): a mark sets the canonical, a later unmark clears it. Node
+  // types are discriminated by which fields the inline fragment populated. A
+  // cross-reference from a merged, closing-keyword PR in this repo is the fallback
+  // `fixedByMergedPr` when there was no formal `closedByPullRequestsReferences`.
+  let duplicateOf: TriageRefLocal | undefined;
+  for (const item of node.timelineItems?.nodes ?? []) {
+    if (item == null) continue;
+    if (item.unmarkedAt !== undefined) {
+      duplicateOf = undefined;
+    } else if ("canonical" in item) {
+      duplicateOf = asRef(item.canonical);
+    } else if (item.willCloseTarget !== undefined) {
+      const source = item.source;
+      if (
+        signals.fixedByMergedPr === undefined &&
+        item.willCloseTarget === true &&
+        source?.merged === true &&
+        source.repository?.nameWithOwner === thisRepo &&
+        typeof source.number === "number" &&
+        typeof source.url === "string"
+      ) {
+        signals.fixedByMergedPr = { number: source.number, url: source.url };
+      }
+    }
+  }
+  if (duplicateOf !== undefined) signals.duplicateOf = duplicateOf;
+  return signals;
+}
+
+interface TriageRefLocal {
+  number: number;
+  url: string;
+}
+
+/** Narrow a GraphQL canonical (Issue|PR) to a linkable {number, url}, or undefined. */
+function asRef(
+  value: { number?: number; url?: string } | null | undefined,
+): TriageRefLocal | undefined {
+  if (value == null) return undefined;
+  if (typeof value.number === "number" && typeof value.url === "string") {
+    return { number: value.number, url: value.url };
+  }
+  return undefined;
 }

@@ -123,6 +123,9 @@ describe("resolveRepoSettings", () => {
       defaultEffort: undefined,
       labelModels: {},
       heuristicConflictOrdering: false,
+      skipAlreadyFixed: true,
+      skipDuplicates: true,
+      verifyBeforeFix: true,
     });
   });
 

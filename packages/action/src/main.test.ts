@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import type { ContainerRunSpec, Exec, ExecResult, IssueLite } from "./deps.ts";
 import { renderSummary, runNight, wipeoutFailure, type NightInputs } from "./main.ts";
 import type { IssueResult } from "./issue-pipeline.ts";
+import { TRIAGED_LABEL } from "./triage.ts";
 import { realExec } from "./real-exec.ts";
 import {
   FakeArtifactUploader,
@@ -1463,5 +1464,160 @@ describe("runNight", () => {
       expect(summary.results[0]?.draft).toBe(false);
       expect(github.pulls[0]?.draft).toBe(false);
     });
+  });
+});
+
+describe("pre-work triage gate", () => {
+  it("Layer A skips an already-fixed issue: no PR, comment + label, reported, others worked", async () => {
+    const { workspaceDir, inputs } = await setup();
+    const github = new FakeGitHub([issue(1, "Already done", "x"), issue(2, "Real bug", "y")]);
+    github.triageSignals.set(1, {
+      number: 1,
+      fixedByMergedPr: { number: 51, url: "https://github.com/test/repo/pull/51" },
+    });
+    const engine = makeEngine({ workspaceDir });
+
+    const summary = await runNight(
+      { github, engine, exec: realExec, log: silentLog, clock: instantClock() },
+      inputs,
+    );
+
+    // #1 triaged out: not in results, no PR, comment + fixowl:triaged label.
+    expect(summary.results.map((r) => r.issue.number)).toEqual([2]);
+    expect(summary.triaged?.map((t) => t.issue.number)).toEqual([1]);
+    expect(summary.triaged?.[0]).toMatchObject({ layer: "gate", category: "already-fixed" });
+    expect(github.pulls.map((p) => p.title)).not.toContain("fix #1: Already done");
+    expect(github.labelsAdded).toContainEqual({ issueNumber: 1, labels: [TRIAGED_LABEL] });
+    const triageComment = github.comments.find((c) => c.issueNumber === 1);
+    expect(triageComment?.body).toContain("pull/51");
+    // #2 is a real bug and gets worked.
+    expect(summary.results[0]?.status).toBe("pr-opened");
+  });
+
+  it("Layer A skips a duplicate via the `duplicate` label with no GraphQL signal", async () => {
+    const { workspaceDir, inputs } = await setup();
+    const github = new FakeGitHub([issue(1, "Dup", "x", ["overnight", "duplicate"])]);
+    const engine = makeEngine({ workspaceDir });
+
+    const summary = await runNight(
+      { github, engine, exec: realExec, log: silentLog, clock: instantClock() },
+      inputs,
+    );
+    expect(summary.results).toHaveLength(0);
+    expect(summary.triaged?.[0]).toMatchObject({ category: "duplicate" });
+    expect(github.pulls).toHaveLength(0);
+  });
+
+  it("Layer B: a no-diff run leaves a comment + label and is reported (verify-first default on)", async () => {
+    const { originDir, workspaceDir, inputs } = await setup();
+    const github = new FakeGitHub([issue(1, "Maybe done", "x")]);
+    const engine = makeEngine({ workspaceDir, silentAgentFor: [1] });
+
+    const summary = await runNight(
+      { github, engine, exec: realExec, log: silentLog, clock: instantClock() },
+      inputs,
+    );
+    expect(summary.results[0]?.status).toBe("no-changes");
+    expect(summary.triaged?.[0]).toMatchObject({ issue: { number: 1 }, layer: "agent" });
+    expect(github.pulls).toHaveLength(0);
+    expect(await remoteBranches(originDir)).toEqual(["main"]);
+    expect(github.labelsAdded).toContainEqual({ issueNumber: 1, labels: [TRIAGED_LABEL] });
+    expect(github.comments.find((c) => c.issueNumber === 1)?.body).toContain("no PR");
+  });
+
+  it("Layer B: an already-implemented verdict is recorded and worded as such", async () => {
+    const { inputs } = await setup();
+    const github = new FakeGitHub([issue(1, "Check it", "x")]);
+    // The agent makes no change and prints a verdict on stdout.
+    const engine = new FakeEngine((spec): ExecResult => {
+      if (spec.name.endsWith("-1-agent")) {
+        return ok(
+          'looked at it.\nFIXOWL_VERDICT: {"verdict":"already-implemented","explanation":"config already defaults true"}',
+        );
+      }
+      return ok();
+    });
+
+    const summary = await runNight(
+      { github, engine, exec: realExec, log: silentLog, clock: instantClock() },
+      inputs,
+    );
+    expect(summary.triaged?.[0]).toMatchObject({ category: "already-implemented" });
+    expect(github.comments.find((c) => c.issueNumber === 1)?.body).toContain(
+      "config already defaults true",
+    );
+  });
+
+  it("excludes an issue already carrying the fixowl:triaged marker label from selection", async () => {
+    const { workspaceDir, inputs } = await setup();
+    const github = new FakeGitHub([issue(1, "Done last night", "x", ["overnight", TRIAGED_LABEL])]);
+    const engine = makeEngine({ workspaceDir });
+
+    const summary = await runNight(
+      { github, engine, exec: realExec, log: silentLog, clock: instantClock() },
+      inputs,
+    );
+    // Never re-scanned, re-run, or re-reported.
+    expect(summary.results).toHaveLength(0);
+    expect(summary.triaged ?? []).toHaveLength(0);
+    expect(github.pulls).toHaveLength(0);
+    expect(github.comments).toHaveLength(0);
+  });
+
+  it("respects skip_already_fixed=false / verify_before_fix=false (opt-out restores old behavior)", async () => {
+    const { workspaceDir, inputs } = await setup();
+    const github = new FakeGitHub([issue(1, "Already done", "x")]);
+    github.triageSignals.set(1, {
+      number: 1,
+      fixedByMergedPr: { number: 51, url: "https://github.com/test/repo/pull/51" },
+    });
+    const engine = makeEngine({ workspaceDir, silentAgentFor: [1] });
+
+    const summary = await runNight(
+      { github, engine, exec: realExec, log: silentLog, clock: instantClock() },
+      { ...inputs, skipAlreadyFixed: false, verifyBeforeFix: false },
+    );
+    // Gate off: the issue is worked; agent produces no diff; silent no-changes, no comment/label.
+    expect(summary.results[0]?.status).toBe("no-changes");
+    expect(summary.triaged ?? []).toHaveLength(0);
+    expect(github.comments).toHaveLength(0);
+    expect(github.labelsAdded).toHaveLength(0);
+  });
+
+  it("fails open when the triage-signal read throws: works every candidate, warns", async () => {
+    const { workspaceDir, inputs } = await setup();
+    const github = new FakeGitHub([issue(1, "Real bug", "x")]);
+    github.getIssueTriageSignals = async () => {
+      throw new Error("graphql boom");
+    };
+    const engine = makeEngine({ workspaceDir });
+
+    const summary = await runNight(
+      { github, engine, exec: realExec, log: silentLog, clock: instantClock() },
+      inputs,
+    );
+    expect(summary.results[0]?.status).toBe("pr-opened");
+    expect(summary.triaged ?? []).toHaveLength(0);
+    expect(summary.warnings.some((w) => w.includes("triage signal read failed"))).toBe(true);
+  });
+
+  it("renderSummary lists a Triaged-out section", () => {
+    const markdown = renderSummary("test/repo", {
+      results: [],
+      skipped: [],
+      triaged: [
+        {
+          issue: issue(1, "Already fixed"),
+          layer: "gate",
+          category: "already-fixed",
+          ref: { number: 51, url: "https://github.com/test/repo/pull/51" },
+        },
+      ],
+      deferred: [],
+      warnings: [],
+    });
+    expect(markdown).toContain("## Triaged out (not worked)");
+    expect(markdown).toContain("#1");
+    expect(markdown).toContain("pull/51");
   });
 });

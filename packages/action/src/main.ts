@@ -38,6 +38,7 @@ import type {
   GitHubApi,
   IssueDeps,
   IssueLite,
+  IssueTriageSignals,
   Logger,
 } from "./deps.ts";
 import { issueEvidenceArtifactName, issueEvidenceDir } from "./evidence.ts";
@@ -45,6 +46,7 @@ import { extractGitDir, GitWorkspace, restoreGitDir } from "./git-ops.ts";
 import { filterAlreadyAttempted } from "./idempotency.ts";
 import { selectIssues } from "./issue-selection.ts";
 import { markdownCell, processIssue, tail, type IssueResult } from "./issue-pipeline.ts";
+import { planTriage, TRIAGED_LABEL, triageComment, type TriagedIssue } from "./triage.ts";
 
 const CLASSIFY_TIMEOUT_MS = 10 * 60 * 1000;
 
@@ -88,6 +90,16 @@ export interface NightInputs {
    * `blocked_by` ordering is always-on regardless.
    */
   heuristicConflictOrdering?: boolean;
+  /**
+   * Pre-work issue-triage gate (all default ON when undefined). Layer A skips an
+   * OPEN issue GitHub records as already-fixed (`skipAlreadyFixed`) or a
+   * duplicate (`skipDuplicates`) before any agent run; Layer B (`verifyBeforeFix`)
+   * has the agent verify against the current code first, so a no-diff run leaves
+   * a comment and opens no PR. See docs/issue-triage.md.
+   */
+  skipAlreadyFixed?: boolean;
+  skipDuplicates?: boolean;
+  verifyBeforeFix?: boolean;
   workspaceDir: string;
   tempDir: string;
   runUrl?: string;
@@ -151,6 +163,13 @@ export interface NightDeps {
 export interface NightSummary {
   results: IssueResult[];
   skipped: Array<{ issue: IssueLite; branch: string }>;
+  /**
+   * Issues skipped by the pre-work triage gate (issue-triage): Layer A (already
+   * fixed / duplicate, decided before any agent run) and Layer B (the agent
+   * verified against the current code and produced no diff). Each carried a
+   * comment + the `fixowl:triaged` label. Disjoint from `skipped` (branch-exists).
+   */
+  triaged?: TriagedIssue[];
   /** Issues held back tonight because a native prerequisite has not shipped (Layer 1). */
   deferred: DeferredIssue[];
   /**
@@ -309,8 +328,27 @@ async function runNightWithGit(
     return { shipped, elapsedMs: Date.now() - runStart, usage, tokensUsed: tokens };
   };
 
-  const matching = await selectIssues(github, inputs.labels);
-  log.info(`${matching.length} open issue(s) match the label rule`);
+  // Pre-work triage config (all default ON; a pre-triage config still gets the
+  // behavior because these are the resolution fallback). See docs/issue-triage.md.
+  const skipAlreadyFixed = inputs.skipAlreadyFixed ?? FIXOWL_DEFAULTS.skipAlreadyFixed;
+  const skipDuplicates = inputs.skipDuplicates ?? FIXOWL_DEFAULTS.skipDuplicates;
+  const verifyBeforeFix = inputs.verifyBeforeFix ?? FIXOWL_DEFAULTS.verifyBeforeFix;
+  const triaged: TriagedIssue[] = [];
+
+  // An issue fixowl already triaged out on a prior night carries the
+  // `fixowl:triaged` marker label; drop it here so it is never re-scanned,
+  // re-run, or re-reported (the durable, human-visible "already decided" hint -
+  // remove the label to re-arm). This is fixowl's only cross-run triage state,
+  // and it lives on GitHub, not in fixowl.
+  const allMatching = await selectIssues(github, inputs.labels);
+  const matching = allMatching.filter((issue) => !issue.labels.includes(TRIAGED_LABEL));
+  const previouslyTriaged = allMatching.length - matching.length;
+  log.info(
+    `${matching.length} open issue(s) match the label rule` +
+      (previouslyTriaged > 0
+        ? ` (${previouslyTriaged} already carry ${TRIAGED_LABEL}, excluded)`
+        : ""),
+  );
   // An existing branch only *marks* an issue as touched; a branch with no PR at
   // all is orphaned interrupted work (pushed, then interrupted before the PR
   // opened), not a genuine attempt - it must be retried, not stranded (issue
@@ -347,15 +385,44 @@ async function runNightWithGit(
   }
   const skippedNumbers = new Set(skipped.map((skip) => skip.issue.number));
   const fresh = matching.filter((issue) => !skippedNumbers.has(issue.number));
-  const selected = fresh.slice(0, inputs.maxIssues);
-  if (fresh.length > selected.length) {
+
+  // Layer A (deterministic pre-gate): one aliased read-only GraphQL round-trip
+  // over the fresh candidates. Skip the issues GitHub already records as fixed
+  // (closing-keyword-linked merged PR) or duplicate (marked / `duplicate` label)
+  // BEFORE the cap, so an obvious skip never wastes a nightly slot; comment +
+  // `fixowl:triaged` label each, and report them. A bare merged-PR cross-ref is
+  // NOT skipped here - Layer B (verify-first, in processIssue) handles that.
+  let work = fresh;
+  if ((skipAlreadyFixed || skipDuplicates) && fresh.length > 0) {
+    // Fail-open: a triage-signal read failure must never crash a default-on gate.
+    // Warn and work every candidate this run (Layer B still verifies each).
+    let signals: Map<number, IssueTriageSignals> | undefined;
+    try {
+      signals = await github.getIssueTriageSignals(fresh.map((issue) => issue.number));
+    } catch (error) {
+      const warning = `triage signal read failed (${String(error)}); working all candidates this run`;
+      warnings.push(warning);
+      log.warn(warning);
+    }
+    if (signals !== undefined) {
+      const plan = planTriage(fresh, signals, { skipAlreadyFixed, skipDuplicates });
+      work = plan.work;
+      for (const item of plan.triaged) {
+        await applyTriageSkip(github, log, item);
+        triaged.push(item);
+      }
+    }
+  }
+
+  const selected = work.slice(0, inputs.maxIssues);
+  if (work.length > selected.length) {
     log.info(
-      `capping to ${inputs.maxIssues} issue(s); ${fresh.length - selected.length} left for the next night`,
+      `capping to ${inputs.maxIssues} issue(s); ${work.length - selected.length} left for the next night`,
     );
   }
   if (selected.length === 0) {
     log.info("nothing to do tonight");
-    return { results: [], skipped, deferred: [], warnings };
+    return { results: [], skipped, triaged, deferred: [], warnings };
   }
 
   // Pre-run gate: if a budget already trips (e.g. the usage window is spent),
@@ -367,6 +434,7 @@ async function runNightWithGit(
     return {
       results: [],
       skipped,
+      triaged,
       deferred: [],
       notStarted: selected,
       budgetStop: { condition: preRunVerdict.condition, reason: preRunVerdict.reason },
@@ -399,7 +467,7 @@ async function runNightWithGit(
   const shippable = prereqPlan.shippable;
   if (shippable.length === 0) {
     log.info("nothing shippable tonight; every selected issue is deferred");
-    return { results: [], skipped, deferred, warnings };
+    return { results: [], skipped, triaged, deferred, warnings };
   }
 
   const image = await buildTargetImage(engine, git, inputs.workspaceDir, repoConfig);
@@ -542,6 +610,7 @@ async function runNightWithGit(
             timeoutMs: inputs.issueTimeoutMinutes * 60 * 1000,
             ciMaxTries: inputs.ciMaxTries ?? FIXOWL_DEFAULTS.ciMaxTries,
             ciTimeoutMs: (inputs.ciTimeoutMinutes ?? FIXOWL_DEFAULTS.ciTimeoutMinutes) * 60 * 1000,
+            verifyBeforeFix,
             runUrl: inputs.runUrl,
           },
         );
@@ -583,6 +652,10 @@ async function runNightWithGit(
         warnings.push(warning);
         log.warn(warning);
       }
+      // Layer B skip: the agent produced no diff, so processIssue left a comment
+      // + `fixowl:triaged` label and opened no PR. Fold it into the summary's
+      // Triaged-out section alongside the Layer A gate skips.
+      if (result.triaged !== undefined) triaged.push(result.triaged);
       // Progressive upload: this issue has finished, so its evidence is complete.
       // Uploading it now - while the job is still genuinely running - is what
       // makes it survive a later cancellation; the single end-of-job step never
@@ -601,11 +674,30 @@ async function runNightWithGit(
   return {
     results,
     skipped,
+    triaged,
     deferred,
     notStarted: notStarted.length > 0 ? notStarted : undefined,
     budgetStop,
     warnings,
   };
+}
+
+/**
+ * Best-effort comment + `fixowl:triaged` label for a Layer A gate skip. A write
+ * failure is logged and swallowed - the skip is still recorded in the run
+ * summary, and a missing label only means the issue is re-scanned next night.
+ */
+async function applyTriageSkip(github: GitHubApi, log: Logger, item: TriagedIssue): Promise<void> {
+  try {
+    await github.createIssueComment(item.issue.number, triageComment(item));
+    await github.addLabels(item.issue.number, [TRIAGED_LABEL]);
+  } catch (error) {
+    log.warn(
+      `issue #${item.issue.number}: could not leave the triage comment/label (${String(error)}); ` +
+        `it is still reported in the run summary`,
+    );
+  }
+  log.info(`issue #${item.issue.number}: triaged (${item.category}); no PR opened`);
 }
 
 /**
@@ -838,6 +930,15 @@ export function wipeoutFailure(summary: NightSummary): string | undefined {
   );
 }
 
+/** Human phrase per triage category for the run summary's Triaged-out section. */
+const TRIAGE_REASON: Record<TriagedIssue["category"], string> = {
+  "already-fixed": "already fixed by a merged PR",
+  duplicate: "duplicate",
+  "already-implemented": "already implemented (agent verified against current code)",
+  "not-applicable": "no longer applicable (agent verified against current code)",
+  "no-change": "agent produced no change",
+};
+
 export function renderSummary(repoFullName: string, summary: NightSummary): string {
   const lines: string[] = [`# 🦉 fixowl night run: ${repoFullName}`, ""];
   if (summary.standDown !== undefined) {
@@ -847,6 +948,7 @@ export function renderSummary(repoFullName: string, summary: NightSummary): stri
   } else if (
     summary.results.length === 0 &&
     summary.skipped.length === 0 &&
+    (summary.triaged?.length ?? 0) === 0 &&
     summary.deferred.length === 0 &&
     (summary.notStarted?.length ?? 0) === 0 &&
     summary.budgetStop === undefined
@@ -894,6 +996,18 @@ export function renderSummary(repoFullName: string, summary: NightSummary): stri
     lines.push(`## Skipped (branch already exists)`, "");
     for (const skip of summary.skipped) {
       lines.push(`- #${skip.issue.number} ${markdownCell(skip.issue.title)}: \`${skip.branch}\``);
+    }
+    lines.push("");
+  }
+  if ((summary.triaged?.length ?? 0) > 0) {
+    lines.push(`## Triaged out (not worked)`, "");
+    for (const item of summary.triaged ?? []) {
+      const reason = TRIAGE_REASON[item.category];
+      const ref = item.ref !== undefined ? ` (${item.ref.url})` : "";
+      const why = item.explanation !== undefined ? ` - ${markdownCell(item.explanation)}` : "";
+      lines.push(
+        `- #${item.issue.number} ${markdownCell(item.issue.title)}: ${reason}${ref}${why}`,
+      );
     }
     lines.push("");
   }

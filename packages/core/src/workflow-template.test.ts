@@ -107,6 +107,31 @@ describe("renderFixowlWorkflow", () => {
     );
   });
 
+  it("renders triage inputs only on opt-out (default-on stays byte-for-byte stable)", () => {
+    // Default and explicit-true render nothing (the action defaults them true).
+    for (const value of [undefined, true]) {
+      const rendered = renderFixowlWorkflow({
+        ...baseOptions,
+        skipAlreadyFixed: value,
+        skipDuplicates: value,
+        verifyBeforeFix: value,
+      });
+      expect(rendered).not.toContain("skip-already-fixed:");
+      expect(rendered).not.toContain("skip-duplicates:");
+      expect(rendered).not.toContain("verify-before-fix:");
+    }
+    // Opt-out renders the "false" input.
+    const optedOut = renderFixowlWorkflow({
+      ...baseOptions,
+      skipAlreadyFixed: false,
+      skipDuplicates: false,
+      verifyBeforeFix: false,
+    });
+    expect(optedOut).toContain('skip-already-fixed: "false"');
+    expect(optedOut).toContain('skip-duplicates: "false"');
+    expect(optedOut).toContain('verify-before-fix: "false"');
+  });
+
   it("renders default model/effort and a JSON label-models input when set", () => {
     const rendered = renderFixowlWorkflow({
       ...baseOptions,

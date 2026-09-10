@@ -85870,7 +85870,18 @@ var repoEntrySchema = external_exports.object({
    * non-dependent issues to reduce merge conflicts. Default off; native
    * `blocked_by` ordering (Layer 1) is always-on and unaffected.
    */
-  heuristic_conflict_ordering: external_exports.boolean().optional()
+  heuristic_conflict_ordering: external_exports.boolean().optional(),
+  /**
+   * Pre-work issue-triage gate (all default ON, all free). Layer A skips an OPEN
+   * issue GitHub already records as fixed by a closing-keyword-linked merged PR
+   * (`skip_already_fixed`) or as a duplicate / `duplicate`-labeled
+   * (`skip_duplicates`), before any agent run. Layer B (`verify_before_fix`) has
+   * the agent verify against the CURRENT code first, so a no-diff run leaves an
+   * explanatory comment and opens NO PR. See docs/issue-triage.md.
+   */
+  skip_already_fixed: external_exports.boolean().optional(),
+  skip_duplicates: external_exports.boolean().optional(),
+  verify_before_fix: external_exports.boolean().optional()
 });
 var githubAppSchema = external_exports.object({
   app_id: external_exports.union([external_exports.number().int().positive(), external_exports.string().regex(/^\d+$/)]),
@@ -85924,7 +85935,11 @@ var globalConfigSchema = external_exports.object({
     /** Fallback reasoning effort used by any repo that does not set its own. */
     effort: external_exports.string().min(1).optional(),
     /** Default Layer 2 (heuristic conflict-ordering) toggle for every repo. */
-    heuristic_conflict_ordering: external_exports.boolean().optional()
+    heuristic_conflict_ordering: external_exports.boolean().optional(),
+    /** Default pre-work triage toggles for every repo (see the repo entry). */
+    skip_already_fixed: external_exports.boolean().optional(),
+    skip_duplicates: external_exports.boolean().optional(),
+    verify_before_fix: external_exports.boolean().optional()
   }).optional(),
   agents: external_exports.record(external_exports.string(), agentSettingsSchema).optional(),
   repos: external_exports.array(repoEntrySchema).min(1)
@@ -85976,6 +85991,16 @@ var FIXOWL_DEFAULTS = {
    */
   heuristicConflictOrdering: false,
   /**
+   * Pre-work issue-triage gate (all default ON, all free). Unlike the run-budget
+   * axes, these DO act as the resolution fallback, so triage is on for every
+   * repo (including a pre-triage config) unless it explicitly opts out. Layer A
+   * is one read-only GraphQL round-trip; Layer B piggybacks on the agent run.
+   * See docs/issue-triage.md.
+   */
+  skipAlreadyFixed: true,
+  skipDuplicates: true,
+  verifyBeforeFix: true,
+  /**
    * CI-gated fix loop: at most this many agent passes before a draft PR is
    * left with the outstanding failures, and how long each pass waits for the
    * pushed head's required checks before counting a CI timeout. See
@@ -86022,7 +86047,10 @@ function resolveRepoSettings(config2, repoName) {
     defaultEffort: entry.effort ?? defaults2.effort,
     // Selector labels are per-repo by design; they are not merged from defaults.
     labelModels: entry.label_models ?? {},
-    heuristicConflictOrdering: entry.heuristic_conflict_ordering ?? defaults2.heuristic_conflict_ordering ?? FIXOWL_DEFAULTS.heuristicConflictOrdering
+    heuristicConflictOrdering: entry.heuristic_conflict_ordering ?? defaults2.heuristic_conflict_ordering ?? FIXOWL_DEFAULTS.heuristicConflictOrdering,
+    skipAlreadyFixed: entry.skip_already_fixed ?? defaults2.skip_already_fixed ?? FIXOWL_DEFAULTS.skipAlreadyFixed,
+    skipDuplicates: entry.skip_duplicates ?? defaults2.skip_duplicates ?? FIXOWL_DEFAULTS.skipDuplicates,
+    verifyBeforeFix: entry.verify_before_fix ?? defaults2.verify_before_fix ?? FIXOWL_DEFAULTS.verifyBeforeFix
   };
 }
 function resolvedModelSelectionErrors(settings) {
@@ -125361,8 +125389,65 @@ ${trimmed.slice(-CHECK_LOG_MAX)}`;
         });
       }
       return result;
+    },
+    async addLabels(issueNumber, labels) {
+      if (labels.length === 0) return;
+      await octokit.issues.addLabels({
+        owner,
+        repo,
+        issue_number: issueNumber,
+        labels: [...labels]
+      });
+    },
+    async getIssueTriageSignals(numbers) {
+      const result = /* @__PURE__ */ new Map();
+      if (numbers.length === 0) return result;
+      const thisRepo = `${owner}/${repo}`;
+      const aliases = numbers.map(
+        (n) => `i${n}: issue(number: ${n}) { number closedByPullRequestsReferences(first: 5, includeClosedPrs: true) { nodes { number url merged } } timelineItems(first: 50, itemTypes: [CROSS_REFERENCED_EVENT, MARKED_AS_DUPLICATE_EVENT, UNMARKED_AS_DUPLICATE_EVENT]) { nodes { ... on CrossReferencedEvent { willCloseTarget source { ... on PullRequest { number url merged repository { nameWithOwner } } } } ... on MarkedAsDuplicateEvent { canonical { ... on Issue { number url } ... on PullRequest { number url } } } ... on UnmarkedAsDuplicateEvent { unmarkedAt: createdAt } } } }`
+      ).join("\n");
+      const query = `query($owner: String!, $repo: String!) { repository(owner: $owner, name: $repo) { ${aliases} } }`;
+      const data = await octokit.graphql(query, { owner, repo });
+      const repository = data.repository ?? {};
+      for (const n of numbers) {
+        result.set(n, reduceTriageNode(repository[`i${n}`], n, thisRepo));
+      }
+      return result;
     }
   };
+}
+function reduceTriageNode(node2, number4, thisRepo) {
+  const signals = { number: number4 };
+  if (node2 == null) return signals;
+  const closingMerged = (node2.closedByPullRequestsReferences?.nodes ?? []).find(
+    (pr) => pr != null && pr.merged
+  );
+  if (closingMerged !== void 0) {
+    signals.fixedByMergedPr = { number: closingMerged.number, url: closingMerged.url };
+  }
+  let duplicateOf;
+  for (const item of node2.timelineItems?.nodes ?? []) {
+    if (item == null) continue;
+    if (item.unmarkedAt !== void 0) {
+      duplicateOf = void 0;
+    } else if ("canonical" in item) {
+      duplicateOf = asRef(item.canonical);
+    } else if (item.willCloseTarget !== void 0) {
+      const source = item.source;
+      if (signals.fixedByMergedPr === void 0 && item.willCloseTarget === true && source?.merged === true && source.repository?.nameWithOwner === thisRepo && typeof source.number === "number" && typeof source.url === "string") {
+        signals.fixedByMergedPr = { number: source.number, url: source.url };
+      }
+    }
+  }
+  if (duplicateOf !== void 0) signals.duplicateOf = duplicateOf;
+  return signals;
+}
+function asRef(value) {
+  if (value == null) return void 0;
+  if (typeof value.number === "number" && typeof value.url === "string") {
+    return { number: value.number, url: value.url };
+  }
+  return void 0;
 }
 
 // packages/action/src/main.ts
@@ -125404,6 +125489,21 @@ function buildFailureFeedback(failures) {
   }
   return lines.join("\n").trimEnd();
 }
+var VERIFY_FIRST_INSTRUCTION = `First, before changing anything, check whether this issue is ALREADY handled by the current
+code you have checked out. Inspect the relevant code, then choose exactly one:
+- already-implemented: the requested behavior is fully present. Make NO code change.
+- partial: some of it exists. Implement ONLY the missing part.
+- not-implemented: implement the fix as usual.
+- not-applicable: the code the issue refers to is gone or has changed so the request is moot.
+  Make NO code change.
+
+When you are done, print your verdict as the final line of your output, exactly:
+FIXOWL_VERDICT: {"verdict":"already-implemented"|"partial"|"not-implemented"|"not-applicable","explanation":"<one to three sentences a human can read>"}
+
+Do NOT comment on the issue, push, or open a PR yourself - you have no network or GitHub
+access. fixowl reads your verdict and your file changes on the host and handles the issue
+comment, the label, and the PR. If you make no code change, fixowl opens no PR and leaves a
+comment explaining why.`;
 var STANDING_GUARDRAILS = `Ground rules:
 - You are running unattended. Do not ask questions; make the best call and finish.
 - Change only what this issue requires. No drive-by refactors, no dependency bumps.
@@ -125417,12 +125517,16 @@ var STANDING_GUARDRAILS = `Ground rules:
   stated problem.`;
 function buildFixPrompt(params) {
   const { issue: issue3, repoConfig, previousFailures } = params;
+  const isFirstPass = previousFailures === void 0 || previousFailures.length === 0;
   const sections = [];
   sections.push(
     `You are fixing GitHub issue #${issue3.number} in the repository mounted at the current directory.`
   );
   sections.push(`Issue title: ${fenceUntrustedTitle(issue3.title)}`);
   sections.push(fenceUntrustedBody(issue3.body));
+  if (params.verifyFirst === true && isFirstPass) {
+    sections.push(VERIFY_FIRST_INSTRUCTION);
+  }
   sections.push(STANDING_GUARDRAILS);
   if (previousFailures !== void 0 && previousFailures.length > 0) {
     sections.push(buildFailureFeedback(previousFailures));
@@ -126129,6 +126233,109 @@ function buildPrBody(params) {
   return lines.join("\n") + "\n";
 }
 
+// packages/action/src/triage.ts
+var TRIAGED_LABEL = "fixowl:triaged";
+var DUPLICATE_LABEL = "duplicate";
+function planTriage(fresh, signals, options) {
+  const work = [];
+  const triaged = [];
+  for (const issue3 of fresh) {
+    const signal = signals.get(issue3.number);
+    if (options.skipDuplicates) {
+      const canonical = signal?.duplicateOf;
+      const labeled = issue3.labels.includes(DUPLICATE_LABEL);
+      if (canonical !== void 0 || labeled) {
+        triaged.push({ issue: issue3, layer: "gate", category: "duplicate", ref: canonical });
+        continue;
+      }
+    }
+    if (options.skipAlreadyFixed && signal?.fixedByMergedPr !== void 0) {
+      triaged.push({
+        issue: issue3,
+        layer: "gate",
+        category: "already-fixed",
+        ref: signal.fixedByMergedPr
+      });
+      continue;
+    }
+    work.push(issue3);
+  }
+  return { work, triaged };
+}
+function triageComment(triaged) {
+  const link = triaged.ref !== void 0 ? triaged.ref.url : void 0;
+  const reArm = `Remove the \`${TRIAGED_LABEL}\` label if you want fixowl to reconsider it.`;
+  switch (triaged.category) {
+    case "already-fixed":
+      return `\u{1F989} fixowl skipped this issue and opened no PR: it looks already addressed` + (link !== void 0 ? ` by ${link}` : "") + `. ${reArm}`;
+    case "duplicate":
+      return `\u{1F989} fixowl skipped this issue as a duplicate` + (link !== void 0 ? ` of ${link}` : "") + ` and opened no PR. ${reArm}`;
+    case "already-implemented":
+      return `\u{1F989} fixowl checked the current code and opened no PR - this looks already implemented` + (triaged.explanation !== void 0 ? `: ${triaged.explanation}` : "") + `. ${reArm}`;
+    case "not-applicable":
+      return `\u{1F989} fixowl checked the current code and opened no PR - this no longer seems to apply` + (triaged.explanation !== void 0 ? `: ${triaged.explanation}` : "") + `. ${reArm}`;
+    case "no-change":
+      return `\u{1F989} fixowl ran the agent but it produced no change, so no PR was opened` + (triaged.explanation !== void 0 ? ` (${triaged.explanation})` : "") + `. ${reArm}`;
+  }
+}
+
+// packages/action/src/verdict.ts
+var VERDICT_MARKER = "FIXOWL_VERDICT:";
+var VERDICT_VALUES = [
+  "already-implemented",
+  "partial",
+  "not-implemented",
+  "not-applicable"
+];
+var EXPLANATION_MAX = 500;
+var verdictSchema = external_exports.object({
+  verdict: external_exports.enum(VERDICT_VALUES),
+  explanation: external_exports.string().optional()
+});
+function parseVerdict(stdout) {
+  const markerAt = stdout.lastIndexOf(VERDICT_MARKER);
+  if (markerAt < 0) return void 0;
+  const after = stdout.slice(markerAt + VERDICT_MARKER.length);
+  const parsed = extractFirstJsonObject(after);
+  if (parsed === void 0) return void 0;
+  const result = verdictSchema.safeParse(parsed);
+  if (!result.success) return void 0;
+  const explanation = result.data.explanation?.trim();
+  return {
+    verdict: result.data.verdict,
+    explanation: explanation !== void 0 && explanation !== "" ? explanation.slice(0, EXPLANATION_MAX) : void 0
+  };
+}
+function extractFirstJsonObject(text) {
+  const start = text.indexOf("{");
+  if (start < 0) return void 0;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) {
+        try {
+          return JSON.parse(text.slice(start, i + 1));
+        } catch {
+          return void 0;
+        }
+      }
+    }
+  }
+  return void 0;
+}
+
 // packages/action/src/verification.ts
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join as join5 } from "node:path";
@@ -126323,11 +126530,15 @@ async function processIssue(deps, ctx) {
   let pr;
   let lastVerification = [];
   let lastCi;
+  let firstPassVerdict;
   for (let attempt = 1; attempt <= maxTries; attempt++) {
     const agentResult = await runAgent(deps, ctx, { attempt, previousFailures });
     if (agentResult.usage !== void 0) {
       usage = usage === void 0 ? agentResult.usage : addSamples(usage, agentResult.usage);
       base.usage = usage;
+    }
+    if (attempt === 1 && ctx.verifyBeforeFix) {
+      firstPassVerdict = parseVerdict(agentResult.stdout);
     }
     if (agentResult.timedOut || agentResult.code !== 0) {
       await git.discardAllChanges();
@@ -126342,8 +126553,7 @@ ${agentResult.stderr}`.trim();
       };
     }
     if (attempt === 1 && !await git.hasChangesAgainst(ctx.baseRef)) {
-      log3.warn(`issue #${issue3.number}: agent finished but produced no changes`);
-      return { ...base, status: "no-changes" };
+      return await handleNoDiff(deps, ctx, base, firstPassVerdict);
     }
     const verification = await runVerification({
       engine,
@@ -126422,7 +126632,42 @@ ${agentResult.stderr}`.trim();
       `issue #${issue3.number}: CI ${ci.timedOut ? "did not complete in time" : "is red"} (attempt ${attempt}/${maxTries})`
     );
   }
-  return finishExhausted(deps, ctx, { title, pr, lastVerification, lastCi, usage });
+  return finishExhausted(deps, ctx, {
+    title,
+    pr,
+    lastVerification,
+    lastCi,
+    usage,
+    firstPassVerdict
+  });
+}
+async function handleNoDiff(deps, ctx, base, verdict) {
+  const { github, log: log3 } = deps;
+  const { issue: issue3 } = ctx;
+  log3.warn(`issue #${issue3.number}: agent finished but produced no changes`);
+  if (!ctx.verifyBeforeFix) {
+    return { ...base, status: "no-changes" };
+  }
+  const category = noDiffCategory(verdict);
+  const explanation = verdict?.explanation !== void 0 ? markdownCell(verdict.explanation) : void 0;
+  const triaged = { issue: issue3, layer: "agent", category, explanation };
+  try {
+    await github.createIssueComment(issue3.number, triageComment(triaged));
+    await github.addLabels(issue3.number, [TRIAGED_LABEL]);
+  } catch (error62) {
+    log3.warn(
+      `issue #${issue3.number}: could not leave the no-change triage comment/label (${String(error62)}); it is still reported in the run summary`
+    );
+  }
+  log3.info(`issue #${issue3.number}: triaged (${category}); no PR opened`);
+  return { ...base, status: "no-changes", triaged };
+}
+function noDiffCategory(verdict) {
+  if (verdict?.verdict === "already-implemented" || verdict?.verdict === "partial") {
+    return "already-implemented";
+  }
+  if (verdict?.verdict === "not-applicable") return "not-applicable";
+  return "no-change";
 }
 async function runAgent(deps, ctx, params) {
   const { engine, log: log3 } = deps;
@@ -126430,7 +126675,8 @@ async function runAgent(deps, ctx, params) {
   const prompt = buildFixPrompt({
     issue: issue3,
     repoConfig: ctx.repoConfig,
-    previousFailures: params.previousFailures
+    previousFailures: params.previousFailures,
+    verifyFirst: ctx.verifyBeforeFix
   });
   const promptFile = join6(ctx.promptDir, `issue-${issue3.number}.md`);
   writeFileSync2(promptFile, prompt);
@@ -126477,7 +126723,12 @@ async function finishExhausted(deps, ctx, state3) {
   let pr = state3.pr;
   if (pr === void 0) {
     if (!await git.hasChangesAgainst(ctx.baseRef)) {
-      return { ...base, status: "no-changes", verification: state3.lastVerification };
+      return await handleNoDiff(
+        deps,
+        ctx,
+        { ...base, verification: state3.lastVerification },
+        state3.firstPassVerdict
+      );
     }
     await git.commitAll(state3.title);
     await git.push(ctx.branch);
@@ -126652,8 +126903,16 @@ async function runNightWithGit(deps, inputs, git) {
     const tokens = inputs.totalTokenBudget !== void 0 && tokensMeasured ? tokensUsed : void 0;
     return { shipped: shipped2, elapsedMs: Date.now() - runStart, usage, tokensUsed: tokens };
   };
-  const matching = await selectIssues(github, inputs.labels);
-  log3.info(`${matching.length} open issue(s) match the label rule`);
+  const skipAlreadyFixed = inputs.skipAlreadyFixed ?? FIXOWL_DEFAULTS.skipAlreadyFixed;
+  const skipDuplicates = inputs.skipDuplicates ?? FIXOWL_DEFAULTS.skipDuplicates;
+  const verifyBeforeFix = inputs.verifyBeforeFix ?? FIXOWL_DEFAULTS.verifyBeforeFix;
+  const triaged = [];
+  const allMatching = await selectIssues(github, inputs.labels);
+  const matching = allMatching.filter((issue3) => !issue3.labels.includes(TRIAGED_LABEL));
+  const previouslyTriaged = allMatching.length - matching.length;
+  log3.info(
+    `${matching.length} open issue(s) match the label rule` + (previouslyTriaged > 0 ? ` (${previouslyTriaged} already carry ${TRIAGED_LABEL}, excluded)` : "")
+  );
   const withBranch = filterAlreadyAttempted(matching, await git.listRemoteIssueBranches()).skipped;
   const { attempted: skipped, orphaned } = await resolveAttemptedBranches(github, withBranch);
   for (const item of orphaned) {
@@ -126675,15 +126934,34 @@ async function runNightWithGit(deps, inputs, git) {
   }
   const skippedNumbers = new Set(skipped.map((skip) => skip.issue.number));
   const fresh = matching.filter((issue3) => !skippedNumbers.has(issue3.number));
-  const selected = fresh.slice(0, inputs.maxIssues);
-  if (fresh.length > selected.length) {
+  let work = fresh;
+  if ((skipAlreadyFixed || skipDuplicates) && fresh.length > 0) {
+    let signals;
+    try {
+      signals = await github.getIssueTriageSignals(fresh.map((issue3) => issue3.number));
+    } catch (error62) {
+      const warning2 = `triage signal read failed (${String(error62)}); working all candidates this run`;
+      warnings.push(warning2);
+      log3.warn(warning2);
+    }
+    if (signals !== void 0) {
+      const plan = planTriage(fresh, signals, { skipAlreadyFixed, skipDuplicates });
+      work = plan.work;
+      for (const item of plan.triaged) {
+        await applyTriageSkip(github, log3, item);
+        triaged.push(item);
+      }
+    }
+  }
+  const selected = work.slice(0, inputs.maxIssues);
+  if (work.length > selected.length) {
     log3.info(
-      `capping to ${inputs.maxIssues} issue(s); ${fresh.length - selected.length} left for the next night`
+      `capping to ${inputs.maxIssues} issue(s); ${work.length - selected.length} left for the next night`
     );
   }
   if (selected.length === 0) {
     log3.info("nothing to do tonight");
-    return { results: [], skipped, deferred: [], warnings };
+    return { results: [], skipped, triaged, deferred: [], warnings };
   }
   const preRunVerdict = evaluateBudget(stopConditions, await assembleBudgetState(0));
   if (preRunVerdict.stop) {
@@ -126691,6 +126969,7 @@ async function runNightWithGit(deps, inputs, git) {
     return {
       results: [],
       skipped,
+      triaged,
       deferred: [],
       notStarted: selected,
       budgetStop: { condition: preRunVerdict.condition, reason: preRunVerdict.reason },
@@ -126711,7 +126990,7 @@ async function runNightWithGit(deps, inputs, git) {
   const shippable = prereqPlan.shippable;
   if (shippable.length === 0) {
     log3.info("nothing shippable tonight; every selected issue is deferred");
-    return { results: [], skipped, deferred, warnings };
+    return { results: [], skipped, triaged, deferred, warnings };
   }
   const image = await buildTargetImage(engine, git, inputs.workspaceDir, repoConfig);
   const labelModels = inputs.labelModels ?? {};
@@ -126822,6 +127101,7 @@ async function runNightWithGit(deps, inputs, git) {
             timeoutMs: inputs.issueTimeoutMinutes * 60 * 1e3,
             ciMaxTries: inputs.ciMaxTries ?? FIXOWL_DEFAULTS.ciMaxTries,
             ciTimeoutMs: (inputs.ciTimeoutMinutes ?? FIXOWL_DEFAULTS.ciTimeoutMinutes) * 60 * 1e3,
+            verifyBeforeFix,
             runUrl: inputs.runUrl
           }
         );
@@ -126849,6 +127129,7 @@ async function runNightWithGit(deps, inputs, git) {
         warnings.push(warning2);
         log3.warn(warning2);
       }
+      if (result.triaged !== void 0) triaged.push(result.triaged);
       await uploadIssueEvidence(deps, issue3.number, evidenceDir);
       if (result.status === "pr-opened" && result.prNumber !== void 0) {
         baseRef = branch;
@@ -126861,11 +127142,23 @@ async function runNightWithGit(deps, inputs, git) {
   return {
     results,
     skipped,
+    triaged,
     deferred,
     notStarted: notStarted.length > 0 ? notStarted : void 0,
     budgetStop,
     warnings
   };
+}
+async function applyTriageSkip(github, log3, item) {
+  try {
+    await github.createIssueComment(item.issue.number, triageComment(item));
+    await github.addLabels(item.issue.number, [TRIAGED_LABEL]);
+  } catch (error62) {
+    log3.warn(
+      `issue #${item.issue.number}: could not leave the triage comment/label (${String(error62)}); it is still reported in the run summary`
+    );
+  }
+  log3.info(`issue #${item.issue.number}: triaged (${item.category}); no PR opened`);
 }
 async function uploadIssueEvidence(deps, issueNumber, evidenceDir) {
   if (deps.artifacts === void 0) return;
@@ -127010,11 +127303,18 @@ function wipeoutFailure(summary2) {
   const numbers = attempted.map((result) => `#${result.issue.number}`).join(", ");
   return `every one of the ${attempted.length} shippable issue(s) failed and no PR was opened (${numbers}); see the run summary for per-issue errors`;
 }
+var TRIAGE_REASON = {
+  "already-fixed": "already fixed by a merged PR",
+  duplicate: "duplicate",
+  "already-implemented": "already implemented (agent verified against current code)",
+  "not-applicable": "no longer applicable (agent verified against current code)",
+  "no-change": "agent produced no change"
+};
 function renderSummary(repoFullName, summary2) {
   const lines = [`# \u{1F989} fixowl night run: ${repoFullName}`, ""];
   if (summary2.standDown !== void 0) {
     lines.push(`Stood down: ${summary2.standDown.reason}`, "");
-  } else if (summary2.results.length === 0 && summary2.skipped.length === 0 && summary2.deferred.length === 0 && (summary2.notStarted?.length ?? 0) === 0 && summary2.budgetStop === void 0) {
+  } else if (summary2.results.length === 0 && summary2.skipped.length === 0 && (summary2.triaged?.length ?? 0) === 0 && summary2.deferred.length === 0 && (summary2.notStarted?.length ?? 0) === 0 && summary2.budgetStop === void 0) {
     lines.push("No open issues matched the label rule. Sleep tight.");
   }
   if (summary2.results.length > 0) {
@@ -127048,6 +127348,18 @@ function renderSummary(repoFullName, summary2) {
     lines.push(`## Skipped (branch already exists)`, "");
     for (const skip of summary2.skipped) {
       lines.push(`- #${skip.issue.number} ${markdownCell(skip.issue.title)}: \`${skip.branch}\``);
+    }
+    lines.push("");
+  }
+  if ((summary2.triaged?.length ?? 0) > 0) {
+    lines.push(`## Triaged out (not worked)`, "");
+    for (const item of summary2.triaged ?? []) {
+      const reason = TRIAGE_REASON[item.category];
+      const ref = item.ref !== void 0 ? ` (${item.ref.url})` : "";
+      const why = item.explanation !== void 0 ? ` - ${markdownCell(item.explanation)}` : "";
+      lines.push(
+        `- #${item.issue.number} ${markdownCell(item.issue.title)}: ${reason}${ref}${why}`
+      );
     }
     lines.push("");
   }
@@ -128572,6 +128884,9 @@ async function run() {
       defaultEffort: getInput("default-effort") || void 0,
       labelModels: parseLabelModelsInput(getInput("label-models")),
       heuristicConflictOrdering: booleanInput("heuristic-conflict-ordering", false),
+      skipAlreadyFixed: booleanInput("skip-already-fixed", true),
+      skipDuplicates: booleanInput("skip-duplicates", true),
+      verifyBeforeFix: booleanInput("verify-before-fix", true),
       workspaceDir,
       tempDir,
       runUrl,
