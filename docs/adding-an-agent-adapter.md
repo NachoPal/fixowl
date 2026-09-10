@@ -166,10 +166,10 @@ lives in the adapter.
 
 ## Step 3 - the model/effort catalog
 
-There is no reliable way to query a CLI agent's model list, so
-`AGENT_MODEL_CATALOG` in `agent-catalog.ts` is the single source of truth.
-`fixowl init` presents it, `fixowl validate` and the config schema reject
-anything not in it, and your adapter passes the chosen values into the CLI.
+`AGENT_MODEL_CATALOG` in `agent-catalog.ts` is the catalog of model ids fixowl
+knows about, and the safety-net source of truth. `fixowl init` presents it, the
+config schema rejects anything not in it, `fixowl validate` rejects it too, and
+your adapter passes the chosen values into the CLI.
 
 Add an entry keyed by your adapter's `name`:
 
@@ -196,6 +196,16 @@ The contract:
 The real model set is often account- or server-specific, so seed a sensible
 starting list and note in a comment that operators can extend it with any model
 their key can reach (as the `aider` and `codex` entries do).
+
+If your provider exposes a queryable model list (as OpenAI does via
+`GET /v1/models`), you can optionally register a live source in
+`packages/core/src/model-list.ts` keyed by your adapter's `name`, mirroring
+`getUsageReader` in `agent-usage.ts`: a pure parser plus the injected `fetchJson`
+I/O edge. `fixowl validate` then cross-checks each chosen id against the live
+list on top of the catalog (fail-open: an unreachable list warns and falls back
+to the catalog; a fetched list missing the model hard-fails). Agents with no
+queryable list (claude/aider) return `undefined` from `getModelListSource` and
+keep relying on the catalog alone.
 
 ## Step 4 - test it with the `script` pattern
 

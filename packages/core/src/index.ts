@@ -70,6 +70,16 @@ export {
   type ResolveModelSelectionParams,
 } from "./model-selection.ts";
 export {
+  getModelListSource,
+  liveModelCheck,
+  OPENAI_MODELS_URL,
+  parseOpenAiModels,
+  type LiveModelCheckOutcome,
+  type ModelListProbe,
+  type ModelListResult,
+  type ModelListSource,
+} from "./model-list.ts";
+export {
   fallbackGapMinutes,
   FIXOWL_DEFAULTS,
   globalConfigSchema,
