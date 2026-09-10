@@ -234,6 +234,27 @@ See [docs/releasing.md](docs/releasing.md).
   resolve `repo > defaults > built-in on` and the workflow renders an input only on
   opt-out (default-on stays byte-for-byte). See [docs/issue-triage.md](docs/issue-triage.md).
 
+- Priority-label selection is opt-in and OFF by default (an unset `priority`
+  block selects exactly as before - list all, oldest-first, cap). Pure ranking is
+  `packages/core/src/priority.ts` (`priorityTiers`, `priorityRank`,
+  `comparePriority`, mirroring the label-rule helpers); the bounded I/O
+  orchestrator is `packages/action/src/priority-selection.ts`. When enabled it
+  fills the cap highest-priority-first by paging each tier's
+  `labels=<pickup>,<tier>` AND-query oldest-first via the NEW **bounded**
+  `listOpenIssuesPage` edge (one page, NOT `octokit.paginate`), so the fetch is
+  O(cap) not O(backlog). Each fetched page runs through the SAME `resolveWork`
+  closure the default path uses (branch idempotency + Layer A), so those never
+  drift - priority only changes WHICH issues fill the cap and in what order. It
+  does NOT override `blocked_by`: Layer 1 (`prereq-planner.ts`) keeps ordering
+  authority, and priority is only its topo TIEBREAK (threaded as an optional
+  `PrioritySettings`; off == oldest-first, so existing tests are unaffected), so a
+  low-priority prerequisite still precedes its high-priority dependent
+  ("prerequisites always win"). `include_unlabeled` (default on) makes
+  un-prioritized issues the lowest tier. Config resolves `repo > defaults`
+  (unset == off, NOT default-on like triage); the workflow renders the inputs only
+  when enabled; `provision` creates the labels via `PRIORITY_LABEL_META`. See
+  [docs/priority-selection.md](docs/priority-selection.md).
+
 - Run budgets (issue #21) bound the night with a set of independent,
   each-optional stop conditions - count (`max_issues_per_run`), usage %
   (`usage_budget_percent`), total tokens (`total_token_budget`), graceful

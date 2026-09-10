@@ -111,6 +111,38 @@ export function makeGitHubApi(
           ),
         }));
     },
+    async listOpenIssuesPage(
+      labelsQuery,
+      { page, perPage },
+    ): Promise<{ issues: IssueLite[]; fetched: number }> {
+      // A single bounded page, oldest-first, WITHOUT octokit.paginate: priority
+      // selection drives paging itself and stops once the cap is filled, so the
+      // whole-backlog walk of `listOpenIssuesWithLabels` is avoided. listForRepo
+      // intermixes PRs, so the PR-filtered count can be < perPage even mid-tier;
+      // `fetched` reports the RAW page size so the caller can tell a PR-shortened
+      // page from a drained query. `labels` is a comma-joined AND query.
+      const { data } = await octokit.issues.listForRepo({
+        owner,
+        repo,
+        state: "open",
+        labels: labelsQuery,
+        sort: "created",
+        direction: "asc",
+        per_page: perPage,
+        page,
+      });
+      const issues = data
+        .filter((issue) => issue.pull_request === undefined)
+        .map((issue) => ({
+          number: issue.number,
+          title: issue.title,
+          body: issue.body ?? "",
+          labels: issue.labels.map((label) =>
+            typeof label === "string" ? label : (label.name ?? ""),
+          ),
+        }));
+      return { issues, fetched: data.length };
+    },
     async ensurePullRequest(params) {
       const { data: existing } = await octokit.pulls.list({
         owner,

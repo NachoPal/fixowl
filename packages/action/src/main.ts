@@ -9,6 +9,7 @@ import {
   guardScheduledSlot,
   isFixowlBranchTip,
   issueBranchName,
+  priorityEnabled,
   PROMPT_MOUNT_PATH,
   REPO_CONFIG_PATH,
   repoFileConfigSchema,
@@ -20,6 +21,7 @@ import {
   type LabelModelMap,
   type LabelRule,
   type ModelSelection,
+  type PrioritySettings,
   type RepoFileConfig,
   type UsageSnapshot,
 } from "@fixowl/core";
@@ -45,6 +47,7 @@ import { issueEvidenceArtifactName, issueEvidenceDir } from "./evidence.ts";
 import { extractGitDir, GitWorkspace, restoreGitDir } from "./git-ops.ts";
 import { filterAlreadyAttempted } from "./idempotency.ts";
 import { selectIssues } from "./issue-selection.ts";
+import { selectIssuesByPriority } from "./priority-selection.ts";
 import { markdownCell, processIssue, tail, type IssueResult } from "./issue-pipeline.ts";
 import { planTriage, TRIAGED_LABEL, triageComment, type TriagedIssue } from "./triage.ts";
 
@@ -100,6 +103,13 @@ export interface NightInputs {
   skipAlreadyFixed?: boolean;
   skipDuplicates?: boolean;
   verifyBeforeFix?: boolean;
+  /**
+   * Priority-label selection. When `labels` is non-empty the run fills the cap
+   * highest-priority-first, fetching tier-by-tier (O(cap), not the whole backlog);
+   * omitted / empty (the default) selects exactly as before. See
+   * docs/priority-selection.md.
+   */
+  priority?: PrioritySettings;
   workspaceDir: string;
   tempDir: string;
   runUrl?: string;
@@ -333,67 +343,69 @@ async function runNightWithGit(
   const skipAlreadyFixed = inputs.skipAlreadyFixed ?? FIXOWL_DEFAULTS.skipAlreadyFixed;
   const skipDuplicates = inputs.skipDuplicates ?? FIXOWL_DEFAULTS.skipDuplicates;
   const verifyBeforeFix = inputs.verifyBeforeFix ?? FIXOWL_DEFAULTS.verifyBeforeFix;
+  // Priority selection is off unless a non-empty label list is configured; an
+  // absent `priority` (older callers / tests) means the pre-feature behavior.
+  const priority: PrioritySettings = inputs.priority ?? { labels: [], includeUnlabeled: true };
   const triaged: TriagedIssue[] = [];
+  // Issues idempotency skipped this night (their `issue/<n>-*` branch exists).
+  const skipped: Array<{ issue: IssueLite; branch: string }> = [];
+  // The remote `issue/<n>-*` branches, fetched once and reused for every candidate
+  // batch (the default path passes the whole matching set; the priority path
+  // passes one page at a time). Bounded by branches fixowl has opened, not by the
+  // backlog.
+  const remoteBranches = await git.listRemoteIssueBranches();
 
-  // An issue fixowl already triaged out on a prior night carries the
-  // `fixowl:triaged` marker label; drop it here so it is never re-scanned,
-  // re-run, or re-reported (the durable, human-visible "already decided" hint -
-  // remove the label to re-arm). This is fixowl's only cross-run triage state,
-  // and it lives on GitHub, not in fixowl.
-  const allMatching = await selectIssues(github, inputs.labels);
-  const matching = allMatching.filter((issue) => !issue.labels.includes(TRIAGED_LABEL));
-  const previouslyTriaged = allMatching.length - matching.length;
-  log.info(
-    `${matching.length} open issue(s) match the label rule` +
-      (previouslyTriaged > 0
-        ? ` (${previouslyTriaged} already carry ${TRIAGED_LABEL}, excluded)`
-        : ""),
-  );
-  // An existing branch only *marks* an issue as touched; a branch with no PR at
-  // all is orphaned interrupted work (pushed, then interrupted before the PR
-  // opened), not a genuine attempt - it must be retried, not stranded (issue
-  // #57). Resolve each branch's PR (bounded to the branch-matching set) to split
-  // genuinely-attempted (skip, as before) from orphaned (reset the stale branch
-  // and re-select the issue).
-  const withBranch = filterAlreadyAttempted(matching, await git.listRemoteIssueBranches()).skipped;
-  const { attempted: skipped, orphaned } = await resolveAttemptedBranches(github, withBranch);
-  // A PR-less branch is only reset when it is provably fixowl's own work (issue
-  // #69): resetting force-deletes the remote branch, so a human's hand-pushed
-  // `issue/<n>-*` branch (or a third-party adopter's) must never be deleted.
-  // When ownership does not hold, treat the issue as attempted (skip it) and
-  // warn loudly rather than destroying someone else's commits.
-  for (const item of orphaned) {
-    const tip = await git.remoteBranchTip(item.branch);
-    if (!isFixowlBranchTip(tip, item.issue.number, inputs.gitIdentity?.email)) {
-      const warning =
-        `issue #${item.issue.number}: branch ${item.branch} exists and is not fixowl's ` +
-        `(tip commit by ${tip.authorEmail || "unknown"}); delete it or open a PR to proceed. ` +
-        `Skipping - fixowl will not reset a branch it did not create.`;
-      warnings.push(warning);
-      log.warn(warning);
-      skipped.push(item);
-      continue;
+  // Reduce a candidate batch (assumed already `fixowl:triaged`-excluded) to the
+  // issues that get a slot: the branch-idempotency filter (skip attempted,
+  // reset+retry orphaned) then Layer A (comment + `fixowl:triaged` label each
+  // skip). Shared by BOTH selection paths so they can never drift; accumulates
+  // `skipped` / `triaged` / `warnings` and returns the survivors in input order.
+  const resolveWork = async (candidates: readonly IssueLite[]): Promise<IssueLite[]> => {
+    // An existing branch only *marks* an issue as touched; a branch with no PR at
+    // all is orphaned interrupted work (pushed, then interrupted before the PR
+    // opened), not a genuine attempt - it must be retried, not stranded (issue
+    // #57). Resolve each branch's PR (bounded to the branch-matching set) to split
+    // genuinely-attempted (skip, as before) from orphaned (reset the stale branch
+    // and re-select the issue).
+    const withBranch = filterAlreadyAttempted(candidates, remoteBranches).skipped;
+    const { attempted, orphaned } = await resolveAttemptedBranches(github, withBranch);
+    // A PR-less branch is only reset when it is provably fixowl's own work (issue
+    // #69): resetting force-deletes the remote branch, so a human's hand-pushed
+    // `issue/<n>-*` branch (or a third-party adopter's) must never be deleted.
+    // When ownership does not hold, treat the issue as attempted (skip it) and
+    // warn loudly rather than destroying someone else's commits.
+    for (const item of orphaned) {
+      const tip = await git.remoteBranchTip(item.branch);
+      if (!isFixowlBranchTip(tip, item.issue.number, inputs.gitIdentity?.email)) {
+        const warning =
+          `issue #${item.issue.number}: branch ${item.branch} exists and is not fixowl's ` +
+          `(tip commit by ${tip.authorEmail || "unknown"}); delete it or open a PR to proceed. ` +
+          `Skipping - fixowl will not reset a branch it did not create.`;
+        warnings.push(warning);
+        log.warn(warning);
+        attempted.push(item);
+        continue;
+      }
+      log.info(
+        `issue #${item.issue.number}: branch ${item.branch} exists but has no PR (orphaned ` +
+          `interrupted work); resetting the branch and retrying`,
+      );
+      await git.deleteRemoteBranch(item.branch);
     }
-    log.info(
-      `issue #${item.issue.number}: branch ${item.branch} exists but has no PR (orphaned ` +
-        `interrupted work); resetting the branch and retrying`,
-    );
-    await git.deleteRemoteBranch(item.branch);
-  }
-  for (const skip of skipped) {
-    log.info(`issue #${skip.issue.number}: skipping, branch ${skip.branch} already exists`);
-  }
-  const skippedNumbers = new Set(skipped.map((skip) => skip.issue.number));
-  const fresh = matching.filter((issue) => !skippedNumbers.has(issue.number));
+    for (const skip of attempted) {
+      skipped.push(skip);
+      log.info(`issue #${skip.issue.number}: skipping, branch ${skip.branch} already exists`);
+    }
+    const attemptedNumbers = new Set(attempted.map((skip) => skip.issue.number));
+    const fresh = candidates.filter((issue) => !attemptedNumbers.has(issue.number));
 
-  // Layer A (deterministic pre-gate): one aliased read-only GraphQL round-trip
-  // over the fresh candidates. Skip the issues GitHub already records as fixed
-  // (closing-keyword-linked merged PR) or duplicate (marked / `duplicate` label)
-  // BEFORE the cap, so an obvious skip never wastes a nightly slot; comment +
-  // `fixowl:triaged` label each, and report them. A bare merged-PR cross-ref is
-  // NOT skipped here - Layer B (verify-first, in processIssue) handles that.
-  let work = fresh;
-  if ((skipAlreadyFixed || skipDuplicates) && fresh.length > 0) {
+    // Layer A (deterministic pre-gate): one aliased read-only GraphQL round-trip
+    // over the fresh candidates. Skip the issues GitHub already records as fixed
+    // (closing-keyword-linked merged PR) or duplicate (marked / `duplicate` label)
+    // BEFORE the cap, so an obvious skip never wastes a nightly slot; comment +
+    // `fixowl:triaged` label each, and report them. A bare merged-PR cross-ref is
+    // NOT skipped here - Layer B (verify-first, in processIssue) handles that.
+    if (!(skipAlreadyFixed || skipDuplicates) || fresh.length === 0) return fresh;
     // Fail-open: a triage-signal read failure must never crash a default-on gate.
     // Warn and work every candidate this run (Layer B still verifies each).
     let signals: Map<number, IssueTriageSignals> | undefined;
@@ -404,21 +416,57 @@ async function runNightWithGit(
       warnings.push(warning);
       log.warn(warning);
     }
-    if (signals !== undefined) {
-      const plan = planTriage(fresh, signals, { skipAlreadyFixed, skipDuplicates });
-      work = plan.work;
-      for (const item of plan.triaged) {
-        await applyTriageSkip(github, log, item);
-        triaged.push(item);
-      }
+    if (signals === undefined) return fresh;
+    const plan = planTriage(fresh, signals, { skipAlreadyFixed, skipDuplicates });
+    for (const item of plan.triaged) {
+      await applyTriageSkip(github, log, item);
+      triaged.push(item);
     }
-  }
+    return plan.work;
+  };
 
-  const selected = work.slice(0, inputs.maxIssues);
-  if (work.length > selected.length) {
+  let selected: IssueLite[];
+  if (priorityEnabled(priority)) {
+    // Priority path: fill the cap highest-priority-first, fetching tier-by-tier in
+    // bounded pages (O(cap), never the whole backlog). Each fetched page is
+    // `fixowl:triaged`-excluded, then run through the SAME resolveWork the default
+    // path uses, so branch idempotency and Layer A behave identically. What is new
+    // is only WHICH issues fill the cap, and in what order.
+    selected = await selectIssuesByPriority({
+      rule: inputs.labels,
+      priority,
+      maxIssues: inputs.maxIssues,
+      fetchPage: (labelsQuery, page, perPage) =>
+        github.listOpenIssuesPage(labelsQuery, { page, perPage }),
+      keepEligible: (candidates) =>
+        resolveWork(candidates.filter((issue) => !issue.labels.includes(TRIAGED_LABEL))),
+    });
     log.info(
-      `capping to ${inputs.maxIssues} issue(s); ${work.length - selected.length} left for the next night`,
+      `selected ${selected.length} issue(s) by priority` +
+        (selected.length >= inputs.maxIssues
+          ? ` (cap ${inputs.maxIssues}, highest-priority-first)`
+          : ""),
     );
+  } else {
+    // Default path (unchanged): list every matching open issue, drop the ones
+    // already carrying `fixowl:triaged`, run branch idempotency + Layer A over the
+    // whole set, then cap.
+    const allMatching = await selectIssues(github, inputs.labels);
+    const matching = allMatching.filter((issue) => !issue.labels.includes(TRIAGED_LABEL));
+    const previouslyTriaged = allMatching.length - matching.length;
+    log.info(
+      `${matching.length} open issue(s) match the label rule` +
+        (previouslyTriaged > 0
+          ? ` (${previouslyTriaged} already carry ${TRIAGED_LABEL}, excluded)`
+          : ""),
+    );
+    const work = await resolveWork(matching);
+    selected = work.slice(0, inputs.maxIssues);
+    if (work.length > selected.length) {
+      log.info(
+        `capping to ${inputs.maxIssues} issue(s); ${work.length - selected.length} left for the next night`,
+      );
+    }
   }
   if (selected.length === 0) {
     log.info("nothing to do tonight");
@@ -455,7 +503,7 @@ async function runNightWithGit(
   // prerequisite's PR liveness (read-only) so the pure planner can gate on it.
   const inFlight = await resolveInFlightPrereqs(github, depsMap, skipped, inputs.repoFullName);
 
-  const prereqPlan = planPrereqs(selected, depsMap, inputs.repoFullName, inFlight);
+  const prereqPlan = planPrereqs(selected, depsMap, inputs.repoFullName, inFlight, priority);
   for (const warning of prereqPlan.warnings) {
     warnings.push(warning);
     log.warn(warning);

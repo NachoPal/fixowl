@@ -75,6 +75,22 @@ export interface GitHubApi {
   /** One GitHub "list issues" call; `labelsQuery` is the comma-joined AND query. Returns issues only, never PRs. */
   listOpenIssuesWithLabels(labelsQuery: string): Promise<IssueLite[]>;
   /**
+   * One BOUNDED page of open issues matching the comma-joined AND `labelsQuery`,
+   * oldest-first (`sort=created&direction=asc`). Unlike `listOpenIssuesWithLabels`
+   * this does NOT auto-paginate: the caller drives paging (priority selection pages
+   * tier-by-tier, stopping once the cap is filled), so the fetch is O(cap), not the
+   * whole backlog. `issues` holds the PR-filtered survivors (issues only, never
+   * PRs); `fetched` is the RAW count GitHub returned for the page BEFORE PR
+   * filtering (issues + PRs). Exhaustion is signalled by a short RAW page
+   * (`fetched < perPage`), NOT the filtered length - `listForRepo` intermixes PRs,
+   * so a full GitHub page carrying a PR yields fewer issues than perPage without the
+   * query being drained. See priority-selection.ts and docs/priority-selection.md.
+   */
+  listOpenIssuesPage(
+    labelsQuery: string,
+    opts: { page: number; perPage: number },
+  ): Promise<{ issues: IssueLite[]; fetched: number }>;
+  /**
    * Read-only triage signals for the candidate issues (Layer A), in one aliased
    * GraphQL round-trip (the `getIssueDependencies` technique). An empty map (or a
    * number missing from it) means "no confident signal" - never a skip. Never

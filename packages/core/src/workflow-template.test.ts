@@ -132,6 +132,30 @@ describe("renderFixowlWorkflow", () => {
     expect(optedOut).toContain('verify-before-fix: "false"');
   });
 
+  it("renders priority inputs only when enabled; omitted keeps the workflow stable", () => {
+    // No priority block, or an empty label list, renders nothing.
+    expect(renderFixowlWorkflow(baseOptions)).not.toContain("priority-labels:");
+    expect(
+      renderFixowlWorkflow({ ...baseOptions, priority: { labels: [], includeUnlabeled: true } }),
+    ).not.toContain("priority-labels:");
+
+    // Enabled: render the ordered label list; include-unlabeled defaults ON so it
+    // is rendered only on opt-out.
+    const on = renderFixowlWorkflow({
+      ...baseOptions,
+      priority: { labels: ["priority: high", "priority: low"], includeUnlabeled: true },
+    });
+    expect(on).toContain('priority-labels: "priority: high,priority: low"');
+    expect(on).not.toContain("priority-include-unlabeled:");
+
+    const noUnlabeled = renderFixowlWorkflow({
+      ...baseOptions,
+      priority: { labels: ["priority: high"], includeUnlabeled: false },
+    });
+    expect(noUnlabeled).toContain('priority-labels: "priority: high"');
+    expect(noUnlabeled).toContain('priority-include-unlabeled: "false"');
+  });
+
   it("renders default model/effort and a JSON label-models input when set", () => {
     const rendered = renderFixowlWorkflow({
       ...baseOptions,

@@ -85362,6 +85362,38 @@ function labelQueriesForRule(rule) {
   return any2.map((label) => label);
 }
 
+// packages/core/src/priority.ts
+var prioritySchema = external_exports.object({
+  labels: external_exports.array(external_exports.string().min(1)).min(1),
+  include_unlabeled: external_exports.boolean().optional()
+});
+var UNLABELED_TIER = "\0unlabeled";
+function priorityEnabled(settings) {
+  return settings.labels.length > 0;
+}
+function priorityTiers(settings) {
+  if (settings.labels.length === 0) return [];
+  return settings.includeUnlabeled ? [...settings.labels, UNLABELED_TIER] : [...settings.labels];
+}
+function priorityRank(issueLabels, settings) {
+  if (settings.labels.length === 0) return 0;
+  const carried = new Set(issueLabels);
+  for (let i = 0; i < settings.labels.length; i += 1) {
+    if (carried.has(settings.labels[i])) return i;
+  }
+  return settings.labels.length;
+}
+function isUnlabeled(issueLabels, settings) {
+  const carried = new Set(issueLabels);
+  return !settings.labels.some((label) => carried.has(label));
+}
+function comparePriority(a, b, settings) {
+  const rankA = priorityRank(a.labels, settings);
+  const rankB = priorityRank(b.labels, settings);
+  if (rankA !== rankB) return rankA - rankB;
+  return a.number - b.number;
+}
+
 // packages/core/src/container-naming.ts
 var CONTAINER_NAME_MAX_LENGTH = 63;
 function nameSlug(text) {
@@ -85860,7 +85892,15 @@ var repoEntrySchema = external_exports.object({
    */
   skip_already_fixed: external_exports.boolean().optional(),
   skip_duplicates: external_exports.boolean().optional(),
-  verify_before_fix: external_exports.boolean().optional()
+  verify_before_fix: external_exports.boolean().optional(),
+  /**
+   * Opt-in priority-label selection: fill the run cap highest-priority-first from
+   * a family of ordered priority labels, fetching roughly the cap tier-by-tier
+   * instead of the whole backlog. Absent (the default) leaves selection exactly
+   * as before - list all matching, oldest-first, cap. A non-empty `priority.labels`
+   * enables it. See docs/priority-selection.md.
+   */
+  priority: prioritySchema.optional()
 });
 var githubAppSchema = external_exports.object({
   app_id: external_exports.union([external_exports.number().int().positive(), external_exports.string().regex(/^\d+$/)]),
@@ -85918,7 +85958,9 @@ var globalConfigSchema = external_exports.object({
     /** Default pre-work triage toggles for every repo (see the repo entry). */
     skip_already_fixed: external_exports.boolean().optional(),
     skip_duplicates: external_exports.boolean().optional(),
-    verify_before_fix: external_exports.boolean().optional()
+    verify_before_fix: external_exports.boolean().optional(),
+    /** Default priority-label selection for every repo that does not set its own. */
+    priority: prioritySchema.optional()
   }).optional(),
   agents: external_exports.record(external_exports.string(), agentSettingsSchema).optional(),
   repos: external_exports.array(repoEntrySchema).min(1)
@@ -85980,6 +86022,16 @@ var FIXOWL_DEFAULTS = {
   skipDuplicates: true,
   verifyBeforeFix: true,
   /**
+   * Recommended starter priority labels for when the operator opts into
+   * priority-label selection (the interactive `fixowl init`/`edit` prompt is a
+   * follow-up; configure by hand for now). NOT a resolution fallback: an unset `priority`
+   * block stays disabled (selection unchanged), exactly like the run-budget axes,
+   * so a config written before this feature behaves as it did. See
+   * docs/priority-selection.md.
+   */
+  priorityLabels: ["priority: high", "priority: medium", "priority: low"],
+  priorityIncludeUnlabeled: true,
+  /**
    * CI-gated fix loop: at most this many agent passes before a draft PR is
    * left with the outstanding failures, and how long each pass waits for the
    * pushed head's required checks before counting a CI timeout. See
@@ -86029,8 +86081,18 @@ function resolveRepoSettings(config2, repoName) {
     heuristicConflictOrdering: entry.heuristic_conflict_ordering ?? defaults2.heuristic_conflict_ordering ?? FIXOWL_DEFAULTS.heuristicConflictOrdering,
     skipAlreadyFixed: entry.skip_already_fixed ?? defaults2.skip_already_fixed ?? FIXOWL_DEFAULTS.skipAlreadyFixed,
     skipDuplicates: entry.skip_duplicates ?? defaults2.skip_duplicates ?? FIXOWL_DEFAULTS.skipDuplicates,
-    verifyBeforeFix: entry.verify_before_fix ?? defaults2.verify_before_fix ?? FIXOWL_DEFAULTS.verifyBeforeFix
+    verifyBeforeFix: entry.verify_before_fix ?? defaults2.verify_before_fix ?? FIXOWL_DEFAULTS.verifyBeforeFix,
+    // Priority selection has no built-in resolution fallback: an unset `priority`
+    // block on both the repo and defaults stays disabled (empty labels), so a
+    // config written before this feature selects exactly as it did. The whole
+    // block is taken from the repo or defaults (not deep-merged) so the ordered
+    // label list is never ambiguous - like `label_models`.
+    priority: resolvePriority(entry.priority ?? defaults2.priority)
   };
+}
+function resolvePriority(priority) {
+  if (priority === void 0) return { labels: [], includeUnlabeled: true };
+  return { labels: [...priority.labels], includeUnlabeled: priority.include_unlabeled ?? true };
 }
 function resolvedModelSelectionErrors(settings) {
   const errors = validateModelEffort(settings.agent, {
@@ -125209,6 +125271,27 @@ function makeGitHubApi(octokit, owner, repo, runsOctokit) {
         )
       }));
     },
+    async listOpenIssuesPage(labelsQuery, { page, perPage }) {
+      const { data } = await octokit.issues.listForRepo({
+        owner,
+        repo,
+        state: "open",
+        labels: labelsQuery,
+        sort: "created",
+        direction: "asc",
+        per_page: perPage,
+        page
+      });
+      const issues = data.filter((issue3) => issue3.pull_request === void 0).map((issue3) => ({
+        number: issue3.number,
+        title: issue3.title,
+        body: issue3.body ?? "",
+        labels: issue3.labels.map(
+          (label) => typeof label === "string" ? label : label.name ?? ""
+        )
+      }));
+      return { issues, fetched: data.length };
+    },
     async ensurePullRequest(params) {
       const { data: existing } = await octokit.pulls.list({
         owner,
@@ -125682,8 +125765,15 @@ function orderWithinChain(members2, prereqs, position) {
 }
 
 // packages/action/src/prereq-planner.ts
-function planPrereqs(selected, deps, currentRepo, inFlight = /* @__PURE__ */ new Map()) {
+var PRIORITY_OFF = { labels: [], includeUnlabeled: true };
+function planPrereqs(selected, deps, currentRepo, inFlight = /* @__PURE__ */ new Map(), priority = PRIORITY_OFF) {
   const byNumber = new Map(selected.map((issue3) => [issue3.number, issue3]));
+  const tiebreak = (a, b) => {
+    const issueA = byNumber.get(a);
+    const issueB = byNumber.get(b);
+    if (issueA === void 0 || issueB === void 0) return a - b;
+    return comparePriority(issueA, issueB, priority);
+  };
   const selectedNumbers = new Set(byNumber.keys());
   const warnings = [];
   const directDeferReason = /* @__PURE__ */ new Map();
@@ -125790,7 +125880,7 @@ function planPrereqs(selected, deps, currentRepo, inFlight = /* @__PURE__ */ new
       (inSetPrereqs.get(n) ?? []).filter((p) => shippableNumbers.has(p))
     );
   }
-  const order = topoSortOldestFirst(shippableNumbers, prereqs);
+  const order = topoSortOldestFirst(shippableNumbers, prereqs, tiebreak);
   const shippable = order.map((n) => byNumber.get(n)).filter((i) => i !== void 0);
   for (const n of stackBases.keys()) {
     if (!shippableNumbers.has(n)) stackBases.delete(n);
@@ -125822,13 +125912,13 @@ function findCycleNodes(nodes, prereqs) {
   for (const n of nodes) if (!settled.has(n)) cyclic.add(n);
   return cyclic;
 }
-function topoSortOldestFirst(nodes, prereqs) {
+function topoSortOldestFirst(nodes, prereqs, tiebreak = (a, b) => a - b) {
   const inDegree = /* @__PURE__ */ new Map();
   for (const n of nodes) inDegree.set(n, (prereqs.get(n) ?? []).filter((p) => nodes.has(p)).length);
   const ready = [...nodes].filter((n) => (inDegree.get(n) ?? 0) === 0);
   const order = [];
   while (ready.length > 0) {
-    ready.sort((a, b) => a - b);
+    ready.sort(tiebreak);
     const n = ready.shift();
     order.push(n);
     for (const m of nodes) {
@@ -126036,6 +126126,41 @@ async function selectIssues(github, rule) {
     }
   }
   return [...byNumber.values()].filter((issue3) => issueMatchesLabelRule(issue3.labels, rule)).toSorted((a, b) => a.number - b.number);
+}
+
+// packages/action/src/priority-selection.ts
+async function selectIssuesByPriority(params) {
+  const { rule, priority, maxIssues, fetchPage, keepEligible } = params;
+  const perPage = Math.min(Math.max(1, maxIssues), 100);
+  const pickupQueries = labelQueriesForRule(rule);
+  const tiers = priorityTiers(priority);
+  const selected = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const tier2 of tiers) {
+    if (selected.length >= maxIssues) break;
+    for (const pickup of pickupQueries) {
+      if (selected.length >= maxIssues) break;
+      const labelsQuery = tier2 === UNLABELED_TIER ? pickup : `${pickup},${tier2}`;
+      let page = 1;
+      for (; ; ) {
+        const { issues: rawPage, fetched } = await fetchPage(labelsQuery, page, perPage);
+        if (fetched === 0) break;
+        const candidates = rawPage.filter(
+          (issue3) => !seen.has(issue3.number) && issueMatchesLabelRule(issue3.labels, rule) && (tier2 !== UNLABELED_TIER || isUnlabeled(issue3.labels, priority))
+        );
+        for (const issue3 of candidates) seen.add(issue3.number);
+        const survivors = await keepEligible(candidates);
+        for (const issue3 of survivors) {
+          selected.push(issue3);
+          if (selected.length >= maxIssues) break;
+        }
+        if (selected.length >= maxIssues) break;
+        if (fetched < perPage) break;
+        page += 1;
+      }
+    }
+  }
+  return selected.slice(0, maxIssues);
 }
 
 // packages/action/src/issue-pipeline.ts
@@ -126885,36 +127010,34 @@ async function runNightWithGit(deps, inputs, git) {
   const skipAlreadyFixed = inputs.skipAlreadyFixed ?? FIXOWL_DEFAULTS.skipAlreadyFixed;
   const skipDuplicates = inputs.skipDuplicates ?? FIXOWL_DEFAULTS.skipDuplicates;
   const verifyBeforeFix = inputs.verifyBeforeFix ?? FIXOWL_DEFAULTS.verifyBeforeFix;
+  const priority = inputs.priority ?? { labels: [], includeUnlabeled: true };
   const triaged = [];
-  const allMatching = await selectIssues(github, inputs.labels);
-  const matching = allMatching.filter((issue3) => !issue3.labels.includes(TRIAGED_LABEL));
-  const previouslyTriaged = allMatching.length - matching.length;
-  log3.info(
-    `${matching.length} open issue(s) match the label rule` + (previouslyTriaged > 0 ? ` (${previouslyTriaged} already carry ${TRIAGED_LABEL}, excluded)` : "")
-  );
-  const withBranch = filterAlreadyAttempted(matching, await git.listRemoteIssueBranches()).skipped;
-  const { attempted: skipped, orphaned } = await resolveAttemptedBranches(github, withBranch);
-  for (const item of orphaned) {
-    const tip = await git.remoteBranchTip(item.branch);
-    if (!isFixowlBranchTip(tip, item.issue.number, inputs.gitIdentity?.email)) {
-      const warning2 = `issue #${item.issue.number}: branch ${item.branch} exists and is not fixowl's (tip commit by ${tip.authorEmail || "unknown"}); delete it or open a PR to proceed. Skipping - fixowl will not reset a branch it did not create.`;
-      warnings.push(warning2);
-      log3.warn(warning2);
-      skipped.push(item);
-      continue;
+  const skipped = [];
+  const remoteBranches = await git.listRemoteIssueBranches();
+  const resolveWork = async (candidates) => {
+    const withBranch = filterAlreadyAttempted(candidates, remoteBranches).skipped;
+    const { attempted, orphaned } = await resolveAttemptedBranches(github, withBranch);
+    for (const item of orphaned) {
+      const tip = await git.remoteBranchTip(item.branch);
+      if (!isFixowlBranchTip(tip, item.issue.number, inputs.gitIdentity?.email)) {
+        const warning2 = `issue #${item.issue.number}: branch ${item.branch} exists and is not fixowl's (tip commit by ${tip.authorEmail || "unknown"}); delete it or open a PR to proceed. Skipping - fixowl will not reset a branch it did not create.`;
+        warnings.push(warning2);
+        log3.warn(warning2);
+        attempted.push(item);
+        continue;
+      }
+      log3.info(
+        `issue #${item.issue.number}: branch ${item.branch} exists but has no PR (orphaned interrupted work); resetting the branch and retrying`
+      );
+      await git.deleteRemoteBranch(item.branch);
     }
-    log3.info(
-      `issue #${item.issue.number}: branch ${item.branch} exists but has no PR (orphaned interrupted work); resetting the branch and retrying`
-    );
-    await git.deleteRemoteBranch(item.branch);
-  }
-  for (const skip of skipped) {
-    log3.info(`issue #${skip.issue.number}: skipping, branch ${skip.branch} already exists`);
-  }
-  const skippedNumbers = new Set(skipped.map((skip) => skip.issue.number));
-  const fresh = matching.filter((issue3) => !skippedNumbers.has(issue3.number));
-  let work = fresh;
-  if ((skipAlreadyFixed || skipDuplicates) && fresh.length > 0) {
+    for (const skip of attempted) {
+      skipped.push(skip);
+      log3.info(`issue #${skip.issue.number}: skipping, branch ${skip.branch} already exists`);
+    }
+    const attemptedNumbers = new Set(attempted.map((skip) => skip.issue.number));
+    const fresh = candidates.filter((issue3) => !attemptedNumbers.has(issue3.number));
+    if (!(skipAlreadyFixed || skipDuplicates) || fresh.length === 0) return fresh;
     let signals;
     try {
       signals = await github.getIssueTriageSignals(fresh.map((issue3) => issue3.number));
@@ -126923,20 +127046,40 @@ async function runNightWithGit(deps, inputs, git) {
       warnings.push(warning2);
       log3.warn(warning2);
     }
-    if (signals !== void 0) {
-      const plan = planTriage(fresh, signals, { skipAlreadyFixed, skipDuplicates });
-      work = plan.work;
-      for (const item of plan.triaged) {
-        await applyTriageSkip(github, log3, item);
-        triaged.push(item);
-      }
+    if (signals === void 0) return fresh;
+    const plan = planTriage(fresh, signals, { skipAlreadyFixed, skipDuplicates });
+    for (const item of plan.triaged) {
+      await applyTriageSkip(github, log3, item);
+      triaged.push(item);
     }
-  }
-  const selected = work.slice(0, inputs.maxIssues);
-  if (work.length > selected.length) {
+    return plan.work;
+  };
+  let selected;
+  if (priorityEnabled(priority)) {
+    selected = await selectIssuesByPriority({
+      rule: inputs.labels,
+      priority,
+      maxIssues: inputs.maxIssues,
+      fetchPage: (labelsQuery, page, perPage) => github.listOpenIssuesPage(labelsQuery, { page, perPage }),
+      keepEligible: (candidates) => resolveWork(candidates.filter((issue3) => !issue3.labels.includes(TRIAGED_LABEL)))
+    });
     log3.info(
-      `capping to ${inputs.maxIssues} issue(s); ${work.length - selected.length} left for the next night`
+      `selected ${selected.length} issue(s) by priority` + (selected.length >= inputs.maxIssues ? ` (cap ${inputs.maxIssues}, highest-priority-first)` : "")
     );
+  } else {
+    const allMatching = await selectIssues(github, inputs.labels);
+    const matching = allMatching.filter((issue3) => !issue3.labels.includes(TRIAGED_LABEL));
+    const previouslyTriaged = allMatching.length - matching.length;
+    log3.info(
+      `${matching.length} open issue(s) match the label rule` + (previouslyTriaged > 0 ? ` (${previouslyTriaged} already carry ${TRIAGED_LABEL}, excluded)` : "")
+    );
+    const work = await resolveWork(matching);
+    selected = work.slice(0, inputs.maxIssues);
+    if (work.length > selected.length) {
+      log3.info(
+        `capping to ${inputs.maxIssues} issue(s); ${work.length - selected.length} left for the next night`
+      );
+    }
   }
   if (selected.length === 0) {
     log3.info("nothing to do tonight");
@@ -126957,7 +127100,7 @@ async function runNightWithGit(deps, inputs, git) {
   }
   const depsMap = await github.getIssueDependencies(selected.map((issue3) => issue3.number));
   const inFlight = await resolveInFlightPrereqs(github, depsMap, skipped, inputs.repoFullName);
-  const prereqPlan = planPrereqs(selected, depsMap, inputs.repoFullName, inFlight);
+  const prereqPlan = planPrereqs(selected, depsMap, inputs.repoFullName, inFlight, priority);
   for (const warning2 of prereqPlan.warnings) {
     warnings.push(warning2);
     log3.warn(warning2);
@@ -128866,6 +129009,12 @@ async function run() {
       skipAlreadyFixed: booleanInput("skip-already-fixed", true),
       skipDuplicates: booleanInput("skip-duplicates", true),
       verifyBeforeFix: booleanInput("verify-before-fix", true),
+      // Priority selection: an empty `priority-labels` (the default) means off, so
+      // selection is unchanged. A non-empty ordered list fills the cap high-first.
+      priority: {
+        labels: parseLabelInput(getInput("priority-labels")),
+        includeUnlabeled: booleanInput("priority-include-unlabeled", true)
+      },
       workspaceDir,
       tempDir,
       runUrl,

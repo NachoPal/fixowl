@@ -100,6 +100,29 @@ export class FakeGitHub implements GitHubApi {
     );
   }
 
+  /** Every (labelsQuery, page) fetched, in call order (boundedness assertions). */
+  pageFetches: Array<{ labelsQuery: string; page: number; perPage: number }> = [];
+  /**
+   * Numbers in the source list that stand in for PRs `listForRepo` intermixes:
+   * they occupy a raw-page slot (count toward `fetched`) but are dropped from
+   * `issues`, mirroring the real edge's PR filter.
+   */
+  prNumbers: Set<number> = new Set();
+
+  async listOpenIssuesPage(
+    labelsQuery: string,
+    { page, perPage }: { page: number; perPage: number },
+  ): Promise<{ issues: IssueLite[]; fetched: number }> {
+    this.pageFetches.push({ labelsQuery, page, perPage });
+    const matching = await this.listOpenIssuesWithLabels(labelsQuery);
+    const start = (page - 1) * perPage;
+    const rawSlice = matching.slice(start, start + perPage);
+    return {
+      issues: rawSlice.filter((candidate) => !this.prNumbers.has(candidate.number)),
+      fetched: rawSlice.length,
+    };
+  }
+
   async getIssueDependencies(numbers: readonly number[]): Promise<Map<number, IssueDeps>> {
     const result = new Map<number, IssueDeps>();
     for (const n of numbers) {

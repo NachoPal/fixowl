@@ -205,6 +205,12 @@ async function run(): Promise<void> {
       skipAlreadyFixed: booleanInput("skip-already-fixed", true),
       skipDuplicates: booleanInput("skip-duplicates", true),
       verifyBeforeFix: booleanInput("verify-before-fix", true),
+      // Priority selection: an empty `priority-labels` (the default) means off, so
+      // selection is unchanged. A non-empty ordered list fills the cap high-first.
+      priority: {
+        labels: parseLabelInput(core.getInput("priority-labels")),
+        includeUnlabeled: booleanInput("priority-include-unlabeled", true),
+      },
       workspaceDir,
       tempDir,
       runUrl,

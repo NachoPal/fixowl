@@ -126,6 +126,42 @@ describe("resolveRepoSettings", () => {
       skipAlreadyFixed: true,
       skipDuplicates: true,
       verifyBeforeFix: true,
+      priority: { labels: [], includeUnlabeled: true },
+    });
+  });
+
+  it("resolves the priority block: repo > defaults; unset stays off (empty labels)", () => {
+    // Unset on both repo and defaults => feature off.
+    const base = globalConfigSchema.parse(minimalConfig);
+    expect(resolveRepoSettings(base, "NachoPal/storyengine").priority).toEqual({
+      labels: [],
+      includeUnlabeled: true,
+    });
+
+    // A defaults block is inherited whole; include_unlabeled defaults to true.
+    const fromDefaults = globalConfigSchema.parse({
+      ...minimalConfig,
+      defaults: { priority: { labels: ["priority: high", "priority: low"] } },
+    });
+    expect(resolveRepoSettings(fromDefaults, "NachoPal/storyengine").priority).toEqual({
+      labels: ["priority: high", "priority: low"],
+      includeUnlabeled: true,
+    });
+
+    // A per-repo block overrides defaults and can opt out of the unlabeled tier.
+    const perRepo = globalConfigSchema.parse({
+      ...minimalConfig,
+      defaults: { priority: { labels: ["priority: high"] } },
+      repos: [
+        {
+          name: "NachoPal/storyengine",
+          priority: { labels: ["p0", "p1", "p2"], include_unlabeled: false },
+        },
+      ],
+    });
+    expect(resolveRepoSettings(perRepo, "NachoPal/storyengine").priority).toEqual({
+      labels: ["p0", "p1", "p2"],
+      includeUnlabeled: false,
     });
   });
 

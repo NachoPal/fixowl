@@ -115,6 +115,49 @@ describe("makeGitHubApi.getChecksForRef", () => {
  * field presence (no __typename), so these fixtures mirror exactly the fields
  * each inline fragment populates.
  */
+describe("makeGitHubApi.listOpenIssuesPage", () => {
+  it("fetches ONE bounded page oldest-first and drops PRs", async () => {
+    let captured: Record<string, unknown> | undefined;
+    const octokit = {
+      issues: {
+        listForRepo: async (params: Record<string, unknown>) => {
+          captured = params;
+          return {
+            data: [
+              { number: 1, title: "a", body: "x", labels: [{ name: "overnight" }] },
+              // A PR shows up in listForRepo and must be filtered out.
+              { number: 2, title: "pr", body: "", labels: [], pull_request: { url: "u" } },
+              { number: 3, title: "c", body: null, labels: ["priority: high"] },
+            ],
+          };
+        },
+      },
+    } as unknown as Octokit;
+
+    const api = makeGitHubApi(octokit, "owner", "repo", undefined);
+    const page = await api.listOpenIssuesPage("overnight,priority: high", { page: 2, perPage: 4 });
+
+    // Bounded, sorted, page-addressed query (no octokit.paginate).
+    expect(captured).toMatchObject({
+      owner: "owner",
+      repo: "repo",
+      state: "open",
+      labels: "overnight,priority: high",
+      sort: "created",
+      direction: "asc",
+      per_page: 4,
+      page: 2,
+    });
+    // PR #2 dropped; body defaults to ""; label objects and strings both mapped.
+    expect(page.issues).toEqual([
+      { number: 1, title: "a", body: "x", labels: ["overnight"] },
+      { number: 3, title: "c", body: "", labels: ["priority: high"] },
+    ]);
+    // `fetched` is the RAW count (incl. the PR), the exhaustion signal.
+    expect(page.fetched).toBe(3);
+  });
+});
+
 describe("reduceTriageNode", () => {
   const REPO = "o/r";
 

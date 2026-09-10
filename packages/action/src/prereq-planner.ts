@@ -1,4 +1,8 @@
+import { comparePriority, type PrioritySettings } from "@fixowl/core";
 import type { IssueDeps, IssueLite, PullRequestLite } from "./deps.ts";
+
+/** Priority settings meaning "feature off": every issue ranks equal, so the topo tiebreak stays oldest-first. */
+const PRIORITY_OFF: PrioritySettings = { labels: [], includeUnlabeled: true };
 
 /**
  * Layer 1 (authoritative): enforce the native GitHub `blockedBy` prerequisite
@@ -66,8 +70,20 @@ export function planPrereqs(
   deps: Map<number, IssueDeps>,
   currentRepo: string,
   inFlight: Map<number, InFlightPrereq> = new Map(),
+  priority: PrioritySettings = PRIORITY_OFF,
 ): PrereqPlan {
   const byNumber = new Map(selected.map((issue) => [issue.number, issue]));
+  // Tiebreak among topologically-ready nodes: priority rank, then oldest-first.
+  // The topological constraint always dominates, so a low-priority prerequisite
+  // still precedes its high-priority dependent ("prerequisites always win"); this
+  // only orders issues the dependency graph leaves free. With priority off every
+  // rank is equal, so this is exactly the pre-feature oldest-first order.
+  const tiebreak = (a: number, b: number): number => {
+    const issueA = byNumber.get(a);
+    const issueB = byNumber.get(b);
+    if (issueA === undefined || issueB === undefined) return a - b;
+    return comparePriority(issueA, issueB, priority);
+  };
   const selectedNumbers = new Set(byNumber.keys());
   const warnings: string[] = [];
 
@@ -201,7 +217,7 @@ export function planPrereqs(
       (inSetPrereqs.get(n) ?? []).filter((p) => shippableNumbers.has(p)),
     );
   }
-  const order = topoSortOldestFirst(shippableNumbers, prereqs);
+  const order = topoSortOldestFirst(shippableNumbers, prereqs, tiebreak);
   const shippable = order
     .map((n) => byNumber.get(n))
     .filter((i): i is IssueLite => i !== undefined);
@@ -245,14 +261,23 @@ function findCycleNodes(nodes: ReadonlySet<number>, prereqs: Map<number, number[
   return cyclic;
 }
 
-/** Kahn's topo sort; among ready nodes always pick the smallest issue number. */
-function topoSortOldestFirst(nodes: ReadonlySet<number>, prereqs: Map<number, number[]>): number[] {
+/**
+ * Kahn's topo sort; among topologically-ready nodes pick by `tiebreak` (default
+ * smallest issue number). The tiebreak never overrides a prerequisite edge - a
+ * node only becomes ready once its prerequisites are placed - so "prerequisites
+ * always win" holds regardless of the tiebreak.
+ */
+function topoSortOldestFirst(
+  nodes: ReadonlySet<number>,
+  prereqs: Map<number, number[]>,
+  tiebreak: (a: number, b: number) => number = (a, b) => a - b,
+): number[] {
   const inDegree = new Map<number, number>();
   for (const n of nodes) inDegree.set(n, (prereqs.get(n) ?? []).filter((p) => nodes.has(p)).length);
   const ready = [...nodes].filter((n) => (inDegree.get(n) ?? 0) === 0);
   const order: number[] = [];
   while (ready.length > 0) {
-    ready.sort((a, b) => a - b);
+    ready.sort(tiebreak);
     const n = ready.shift() as number;
     order.push(n);
     for (const m of nodes) {
