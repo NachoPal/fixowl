@@ -1,4 +1,5 @@
 import {
+  agentBilling,
   getAgentAdapter,
   getModelListSource,
   liveModelCheck,
@@ -80,6 +81,13 @@ export async function validateCommand(ctx: CliContext): Promise<boolean> {
         );
       }
 
+      // Budget/billing mismatch: `usage_budget_percent` is a subscription
+      // usage-window budget and can never be observed for an api-credit agent
+      // (codex, or claude on an API key), so at night it would fall through and
+      // re-warn every run. Catch it once here and point at `total_token_budget`.
+      const budgetWarning = usageBudgetBillingMismatch(settings, adapter.env);
+      if (budgetWarning !== undefined) log.warn(`repo ${repoEntry.name}: ${budgetWarning}`);
+
       // Live provider check: for agents whose provider serves a queryable model
       // list, confirm each chosen id is actually reachable. Only when the
       // catalog check passed (a catalog miss already fails above). Fail-open: an
@@ -119,6 +127,29 @@ export async function validateCommand(ctx: CliContext): Promise<boolean> {
   if (!ok) log.error("validation failed");
   else log.ok("everything checks out");
   return ok;
+}
+
+/**
+ * Detect a `usage_budget_percent` set for an api-credit agent, which has no
+ * observable subscription usage window - so the budget can never apply and the
+ * night run would otherwise warn about it on every run. Returns a single
+ * actionable message (pointing at `total_token_budget`) or undefined when the
+ * config is fine: no usage budget set, or a subscription agent (for which
+ * `usage_budget_percent` is correct). Billing is resolved with the same
+ * auth-aware `agentBilling` classifier `fixowl init` uses, so claude-on-API-key
+ * is caught while claude-on-OAuth is left alone. Exported for direct testing.
+ */
+export function usageBudgetBillingMismatch(
+  settings: ResolvedRepoSettings,
+  agentEnv: readonly string[],
+): string | undefined {
+  if (settings.usageBudgetPercent === undefined) return undefined;
+  if (agentBilling(settings.agent, agentEnv) !== "api-credit") return undefined;
+  return (
+    `usage_budget_percent is set for agent "${settings.agent}", which bills as metered API ` +
+    "usage and has no usage window to read - it will never apply. Use total_token_budget " +
+    "instead (or remove usage_budget_percent)."
+  );
 }
 
 /**

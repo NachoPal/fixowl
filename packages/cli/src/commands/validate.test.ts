@@ -28,7 +28,8 @@ vi.mock("../github/app-key.ts", () => ({
   toPkcs8Pem: (value: string) => value,
 }));
 
-const { validateRuntimeCredential, validateModelsAgainstLiveList } = await import("./validate.ts");
+const { validateRuntimeCredential, validateModelsAgainstLiveList, usageBudgetBillingMismatch } =
+  await import("./validate.ts");
 
 function ctxWith(github: Record<string, unknown>): CliContext {
   return { config: { github, repos: [{ name: "o/r" }] } } as unknown as CliContext;
@@ -127,6 +128,7 @@ interface Settings {
   agent: string;
   defaultModel?: string;
   labelModels?: Record<string, { model?: string; effort?: string }>;
+  usageBudgetPercent?: number;
 }
 
 function settingsFor(s: Settings): ResolvedRepoSettings {
@@ -134,6 +136,7 @@ function settingsFor(s: Settings): ResolvedRepoSettings {
     agent: s.agent,
     defaultModel: s.defaultModel,
     labelModels: s.labelModels ?? {},
+    usageBudgetPercent: s.usageBudgetPercent,
   } as unknown as ResolvedRepoSettings;
 }
 
@@ -248,5 +251,38 @@ describe("validateModelsAgainstLiveList", () => {
     });
     expect(s.failed).toHaveLength(1);
     expect(s.failed[0]).toContain("gpt-5-missing");
+  });
+});
+
+describe("usageBudgetBillingMismatch", () => {
+  it("warns when usage_budget_percent is set for an api-credit agent (codex)", () => {
+    const msg = usageBudgetBillingMismatch(
+      settingsFor({ agent: "codex", usageBudgetPercent: 85 }),
+      ["OPENAI_API_KEY"],
+    );
+    expect(msg).toContain("usage_budget_percent");
+    expect(msg).toContain("codex");
+    expect(msg).toContain("total_token_budget");
+  });
+
+  it("warns for claude on an API key (auth-aware api-credit)", () => {
+    const msg = usageBudgetBillingMismatch(
+      settingsFor({ agent: "claude", usageBudgetPercent: 85 }),
+      ["ANTHROPIC_API_KEY"],
+    );
+    expect(msg).toContain("total_token_budget");
+  });
+
+  it("does not warn for a subscription agent (claude on OAuth)", () => {
+    const msg = usageBudgetBillingMismatch(
+      settingsFor({ agent: "claude", usageBudgetPercent: 85 }),
+      ["CLAUDE_CODE_OAUTH_TOKEN"],
+    );
+    expect(msg).toBeUndefined();
+  });
+
+  it("does not warn when no usage budget is set", () => {
+    const msg = usageBudgetBillingMismatch(settingsFor({ agent: "codex" }), ["OPENAI_API_KEY"]);
+    expect(msg).toBeUndefined();
   });
 });
