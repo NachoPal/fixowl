@@ -15,13 +15,12 @@ import {
 describe("agent adapters", () => {
   it("claude: headless argv, prompt on stdin, both credentials allowlisted", () => {
     const claude = getAgentAdapter("claude");
-    // Fix mode emits --output-format json so the host can meter tokens in-band;
-    // classify mode stays plain -p (its stdout is parsed as text).
+    // Fix mode stays plain -p (no --output-format json): its stdout is parsed as
+    // plain text by verify_before_fix's verdict parser, which the JSON wrapper
+    // would break. classify is likewise plain -p.
     expect(claude.argv("fix")).toEqual([
       "claude",
       "-p",
-      "--output-format",
-      "json",
       "--dangerously-skip-permissions",
       "--max-turns",
       "80",
@@ -38,13 +37,11 @@ describe("agent adapters", () => {
     expect(claude.env).toEqual([CLAUDE_OAUTH_TOKEN_ENV, ANTHROPIC_API_KEY_ENV]);
   });
 
-  it("claude: appends --model and --effort when a selection is given (after --output-format json in fix)", () => {
+  it("claude: appends --model and --effort when a selection is given", () => {
     const claude = getAgentAdapter("claude");
     expect(claude.argv("fix", { model: "opus", effort: "max" })).toEqual([
       "claude",
       "-p",
-      "--output-format",
-      "json",
       "--dangerously-skip-permissions",
       "--max-turns",
       "80",
@@ -57,8 +54,6 @@ describe("agent adapters", () => {
     expect(claude.argv("fix", { effort: "low" })).toEqual([
       "claude",
       "-p",
-      "--output-format",
-      "json",
       "--dangerously-skip-permissions",
       "--max-turns",
       "80",
@@ -68,8 +63,6 @@ describe("agent adapters", () => {
     expect(claude.argv("fix", {})).toEqual([
       "claude",
       "-p",
-      "--output-format",
-      "json",
       "--dangerously-skip-permissions",
       "--max-turns",
       "80",

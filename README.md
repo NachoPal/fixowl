@@ -290,13 +290,18 @@ that trips, and the night summary names which:
   before starting a new issue once the night's accumulated token spend reaches
   this total. Unlike the usage window, this is measured **in-band** - fixowl
   accumulates the token counts the agent reports in its own output
-  (`codex exec --json` `turn.completed.usage`; `claude -p --output-format json`'s
-  `usage` object), with no
+  (`codex exec --json` `turn.completed.usage`), with no
   provider endpoint to poll (OpenAI's spend API needs an org Admin key and
   buckets by day, unusable for a live gate). Denominated in tokens, not dollars:
   tokens are the one quantity every API-credit agent reports directly, with no
   price table to drift. Abstains (falls through) when the agent's spend is
   unmeasurable this run. Opted out when unset.
+  > **codex is the metered agent today.** `claude` on `ANTHROPIC_API_KEY` accepts
+  > this cap in config, but it is **not yet enforced in-band** for claude: reading
+  > claude's per-run usage needs `claude -p --output-format json`, and that JSON
+  > wrapper breaks the plain-text verdict the verify-before-fix triage parses from
+  > claude's fix output, so the claude meter abstains fail-open (a documented
+  > follow-up). Such a run is still bounded by count and wall-clock.
 - **`run_budget_minutes`** - a graceful wall-clock cap: don't *start* a new issue
   after this many minutes. Distinct from the workflow's blunt `timeout-minutes`
   hard-kill ceiling. Opted out when unset.

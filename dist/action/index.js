@@ -85394,20 +85394,19 @@ var claude = {
   // non-root (docker `--user`, injected in DockerEngine.run).
   // The Claude Code CLI accepts --model and --effort in -p (headless) mode.
   //
-  // `--output-format json` (fix mode only) makes `claude -p` emit a single JSON
-  // result object carrying a `usage` token breakdown, which the host parses
-  // in-band for the `total_token_budget` run budget when the API-key credential
-  // is in use (agent-spend.ts::parseClaudeCodeUsage). It is NOT set in classify
-  // mode: classify parses the agent's final message out of raw stdout
-  // (main.ts::parseClassification), which the JSON wrapper would break. Emitting
-  // it unconditionally in fix mode (rather than only under API-key auth) keeps
-  // the adapter auth-agnostic and mirrors codex's `--json`; for a subscription
-  // run the parsed sample is simply carried and never trips a token cap that
-  // subscription configs do not set.
+  // claude fix-mode stdout is consumed as PLAIN TEXT: verify_before_fix's
+  // parseVerdict (issue-pipeline.ts / verdict.ts, from #143) reads a
+  // `FIXOWL_VERDICT: {...}` line the agent prints to stdout, and classify parses
+  // the final message out of raw stdout (main.ts::parseClassification). So fixowl
+  // must NOT switch fix mode to `--output-format json`: the JSON wrapper escapes
+  // the verdict marker's quotes and breaks parseVerdict. As a consequence the
+  // in-band token meter for claude abstains (agent-spend.ts), so enforcing
+  // `total_token_budget` for claude-on-ANTHROPIC_API_KEY is a documented
+  // follow-up that needs a json-safe verdict path; codex remains the metered
+  // API-credit agent.
   argv: (mode, selection) => [
     "claude",
     "-p",
-    ...mode === "fix" ? ["--output-format", "json"] : [],
     "--dangerously-skip-permissions",
     "--max-turns",
     mode === "classify" ? "30" : "80",
@@ -85608,40 +85607,9 @@ function parseCodexUsage(stdout) {
   }
   return found ? acc : void 0;
 }
-function parseClaudeCodeUsage(stdout) {
-  for (const line of stdout.split("\n")) {
-    const trimmed = line.trim();
-    if (trimmed === "" || trimmed[0] !== "{") continue;
-    let event;
-    try {
-      event = JSON.parse(trimmed);
-    } catch {
-      continue;
-    }
-    if (event === null || typeof event !== "object") continue;
-    const usage = event.usage;
-    if (usage === null || typeof usage !== "object") continue;
-    const u = usage;
-    const promptTokens = readNum(u, "input_tokens");
-    const cacheCreationTokens = readNum(u, "cache_creation_input_tokens");
-    const cacheReadTokens = readNum(u, "cache_read_input_tokens");
-    const outputTokens = readNum(u, "output_tokens");
-    const inputTokens = promptTokens + cacheCreationTokens + cacheReadTokens;
-    if (inputTokens === 0 && outputTokens === 0) continue;
-    return {
-      totalTokens: inputTokens + outputTokens,
-      inputTokens,
-      cachedInputTokens: cacheReadTokens,
-      outputTokens,
-      reasoningOutputTokens: 0
-    };
-  }
-  return void 0;
-}
 var codexMeter = { parse: (stdout) => parseCodexUsage(stdout) };
-var claudeMeter = { parse: (stdout) => parseClaudeCodeUsage(stdout) };
 var noSpendMeter = { parse: () => void 0 };
-var SPEND_METERS = { codex: codexMeter, claude: claudeMeter };
+var SPEND_METERS = { codex: codexMeter };
 function getSpendMeter(agentName) {
   return SPEND_METERS[agentName] ?? noSpendMeter;
 }

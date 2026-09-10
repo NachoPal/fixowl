@@ -15,6 +15,15 @@
  * accumulates it across issues. There is no network edge and no credential here;
  * this module is a pure parser.
  *
+ * NOTE: only codex is metered in-band today. claude-on-ANTHROPIC_API_KEY is NOT
+ * metered here (its meter abstains, fail-open): reading claude's per-run token
+ * usage would require `claude -p --output-format json`, but claude fix-mode
+ * stdout is parsed as PLAIN TEXT by verify_before_fix's parseVerdict (#143), and
+ * the JSON wrapper breaks that. So the `total_token_budget` cap is accepted in
+ * config for claude-on-API-key but not yet enforced at runtime for it - a
+ * documented follow-up (add a json-safe claude token meter once verify_before_fix
+ * can read a json result). See agent-adapters.ts (claude argv comment).
+ *
  * Denomination is TOKENS, not dollars. Tokens are the one quantity every
  * API-credit agent reports directly and identically; a dollar figure would need
  * a per-model price table that drifts on every provider price change and every
@@ -139,81 +148,22 @@ export function parseCodexUsage(stdout: string): SpendSample | undefined {
   return found ? acc : undefined;
 }
 
-/**
- * Sum the token usage Claude Code reports when run headless as
- * `claude -p --output-format json` (the fix-mode adapter argv sets this). That
- * mode prints a SINGLE JSON result object whose `usage` field carries the
- * Messages-API token breakdown: `input_tokens`, `cache_creation_input_tokens`,
- * `cache_read_input_tokens`, and `output_tokens`. Unlike codex's `usage`
- * (where cached is a subset of `input_tokens`), Claude Code reports the
- * non-cached prompt tokens in `input_tokens` and the cached halves separately,
- * so the billable input is the SUM of all three; `cache_read_input_tokens` is
- * carried as the cached subset for a future dollar layer, and Claude Code does
- * not break out reasoning tokens (kept 0). The billable total is
- * `input + output`.
- *
- * Defensive by design: the object is located by scanning for the first line
- * that parses to a JSON object carrying a usage object (tolerating a leading
- * banner, and `--output-format stream-json`'s trailing result line if that is
- * ever used); a shape with no recognizable token field, or no JSON at all,
- * returns `undefined` (abstain), so a format change fails open to count /
- * wall-clock rather than crashing the night.
- *
- * OPEN VERIFICATION: this parser was built to Claude Code's documented
- * `--output-format json` result shape and the Messages-API `usage` field names;
- * a real `claude -p --output-format json` transcript was not captured in this
- * change (a live run is a paid call). Confirm the exact `usage` envelope against
- * a real run before relying on the claude token cap - in particular that the
- * token counts sit on a top-level `usage` object with these field names. Until
- * then the abstain-on-unexpected-shape keeps it fail-open. (Follow-up: capture
- * one real transcript, alongside the codex Open-risk-1 verification.)
- */
-export function parseClaudeCodeUsage(stdout: string): SpendSample | undefined {
-  for (const line of stdout.split("\n")) {
-    const trimmed = line.trim();
-    if (trimmed === "" || trimmed[0] !== "{") continue;
-    let event: unknown;
-    try {
-      event = JSON.parse(trimmed);
-    } catch {
-      continue; // a non-JSON line (e.g. a preamble) is not the result object
-    }
-    if (event === null || typeof event !== "object") continue;
-    const usage = (event as Record<string, unknown>).usage;
-    if (usage === null || typeof usage !== "object") continue;
-    const u = usage as Record<string, unknown>;
-    const promptTokens = readNum(u, "input_tokens");
-    const cacheCreationTokens = readNum(u, "cache_creation_input_tokens");
-    const cacheReadTokens = readNum(u, "cache_read_input_tokens");
-    const outputTokens = readNum(u, "output_tokens");
-    const inputTokens = promptTokens + cacheCreationTokens + cacheReadTokens;
-    // A usage object with no recognizable token field is not a measurement.
-    if (inputTokens === 0 && outputTokens === 0) continue;
-    return {
-      totalTokens: inputTokens + outputTokens,
-      inputTokens,
-      cachedInputTokens: cacheReadTokens,
-      outputTokens,
-      reasoningOutputTokens: 0,
-    };
-  }
-  return undefined;
-}
-
 const codexMeter: SpendMeter = { parse: (stdout) => parseCodexUsage(stdout) };
-const claudeMeter: SpendMeter = { parse: (stdout) => parseClaudeCodeUsage(stdout) };
 
 /** A meter for agents whose spend is not measurable in-band; always abstains. */
 const noSpendMeter: SpendMeter = { parse: () => undefined };
 
 /**
- * `claude` is metered too, so the `total_token_budget` cap enforces for a
- * claude-on-ANTHROPIC_API_KEY (api-credit) run. It is harmless for a
- * claude-on-subscription run: that config offers no `total_token_budget`, so the
- * parsed sample is accumulated but never trips a cap, and the usage-% window
- * bounds it instead.
+ * Only codex is metered in-band. `claude` is deliberately absent, so
+ * `getSpendMeter("claude")` returns `noSpendMeter` and abstains (fail-open): the
+ * `total_token_budget` cap is accepted in config for a claude-on-ANTHROPIC_API_KEY
+ * (api-credit) run but not yet enforced at runtime, because reading claude's
+ * per-run token usage would require `claude -p --output-format json`, which
+ * breaks verify_before_fix's plain-text verdict parsing (#143). Documented
+ * follow-up: add a json-safe claude token meter once verify_before_fix can read a
+ * json result. See agent-adapters.ts (claude argv comment).
  */
-const SPEND_METERS: Record<string, SpendMeter> = { codex: codexMeter, claude: claudeMeter };
+const SPEND_METERS: Record<string, SpendMeter> = { codex: codexMeter };
 
 /**
  * The spend meter for `agentName`. Unknown agents and the zero-spend `script`

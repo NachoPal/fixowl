@@ -49,7 +49,6 @@ export {
   addSamples,
   EMPTY_SPEND,
   getSpendMeter,
-  parseClaudeCodeUsage,
   parseCodexUsage,
   type SpendMeter,
   type SpendSample,

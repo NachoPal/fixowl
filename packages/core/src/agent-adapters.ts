@@ -27,8 +27,11 @@ export const WORKSPACE_MOUNT_PATH = "/workspace";
  *    subscription (`claude setup-token`); the run bills against the
  *    subscription's rolling usage window (readable out-of-band, agent-usage.ts).
  *  - `ANTHROPIC_API_KEY` - a Console API key; the run bills as metered API
- *    usage, with no usage window to read (bounded instead by the in-band
- *    `total_token_budget`, agent-spend.ts).
+ *    usage, with no usage window to read. The `total_token_budget` cap is
+ *    accepted for this credential in config, but is NOT yet enforced in-band:
+ *    the claude spend meter abstains fail-open (agent-spend.ts). See the argv
+ *    comment below for why (verify_before_fix parses claude fix-mode stdout as
+ *    plain text, so fixowl must not switch it to `--output-format json`).
  *
  * PRECEDENCE (the reason both must never reach the container at once): in
  * headless `claude -p` mode `ANTHROPIC_API_KEY` WINS over
@@ -71,20 +74,19 @@ const claude: AgentAdapter = {
   // non-root (docker `--user`, injected in DockerEngine.run).
   // The Claude Code CLI accepts --model and --effort in -p (headless) mode.
   //
-  // `--output-format json` (fix mode only) makes `claude -p` emit a single JSON
-  // result object carrying a `usage` token breakdown, which the host parses
-  // in-band for the `total_token_budget` run budget when the API-key credential
-  // is in use (agent-spend.ts::parseClaudeCodeUsage). It is NOT set in classify
-  // mode: classify parses the agent's final message out of raw stdout
-  // (main.ts::parseClassification), which the JSON wrapper would break. Emitting
-  // it unconditionally in fix mode (rather than only under API-key auth) keeps
-  // the adapter auth-agnostic and mirrors codex's `--json`; for a subscription
-  // run the parsed sample is simply carried and never trips a token cap that
-  // subscription configs do not set.
+  // claude fix-mode stdout is consumed as PLAIN TEXT: verify_before_fix's
+  // parseVerdict (issue-pipeline.ts / verdict.ts, from #143) reads a
+  // `FIXOWL_VERDICT: {...}` line the agent prints to stdout, and classify parses
+  // the final message out of raw stdout (main.ts::parseClassification). So fixowl
+  // must NOT switch fix mode to `--output-format json`: the JSON wrapper escapes
+  // the verdict marker's quotes and breaks parseVerdict. As a consequence the
+  // in-band token meter for claude abstains (agent-spend.ts), so enforcing
+  // `total_token_budget` for claude-on-ANTHROPIC_API_KEY is a documented
+  // follow-up that needs a json-safe verdict path; codex remains the metered
+  // API-credit agent.
   argv: (mode, selection) => [
     "claude",
     "-p",
-    ...(mode === "fix" ? ["--output-format", "json"] : []),
     "--dangerously-skip-permissions",
     "--max-turns",
     mode === "classify" ? "30" : "80",

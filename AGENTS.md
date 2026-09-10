@@ -247,16 +247,18 @@ See [docs/releasing.md](docs/releasing.md).
   usage % is for **subscription** agents and is read **out-of-band** on the host
   behind the model-agnostic `UsageReader` (`agent-usage.ts`, selected by
   `getUsageReader(agentName)`); `total_token_budget` is for **API-credit** agents
-  (codex, or claude on `ANTHROPIC_API_KEY`) and is measured **in-band** - `main.ts`
+  and is measured **in-band** - `main.ts`
   accumulates each finished
   issue's `IssueResult.usage`, parsed from the agent's own captured output by
   `getSpendMeter(agentName)` (`agent-spend.ts`, the pure counterpart to
   `agent-usage.ts`; `parseCodexUsage` sums `codex exec --json`
   `turn.completed.usage`, so the codex adapter passes `--json` in **fix** mode
-  only; `parseClaudeCodeUsage` reads the `usage` object of
-  `claude -p --output-format json`, so the claude adapter passes
-  `--output-format json` in **fix** mode only - both leave classify's stdout
-  parsing untouched). Both spend axes abstain
+  only). Codex is the only in-band-metered agent today: claude on
+  `ANTHROPIC_API_KEY` accepts the `total_token_budget` cap in config but is **not
+  yet enforced in-band** - `getSpendMeter("claude")` abstains fail-open, because
+  reading claude's per-run usage needs `claude -p --output-format json` and the
+  JSON wrapper would break verify_before_fix's plain-text verdict parse (#143); a
+  json-safe claude meter is a documented follow-up. Both spend axes abstain
   fail-open (subscription window unreadable, or spend unmeasurable) so they never
   abort a night count + wall-clock would allow. Denomination is **tokens, not
   dollars** - tokens are what every API-credit agent reports directly, with no
@@ -271,10 +273,9 @@ See [docs/releasing.md](docs/releasing.md).
   have no built-in resolution fallback (unset == opted out), so a pre-#21 config
   is unchanged; the starter values in `FIXOWL_DEFAULTS` are only what `fixowl
   init` writes. `max_issues_per_run` stays the count cap and still bounds how many
-  issues are selected/classified. NOTE (open verification): `parseCodexUsage` and
-  `parseClaudeCodeUsage` were built to the documented output shapes; a live
-  codex / `claude --output-format json`
-  transcript was not captured, so the parsers abstain defensively on any
+  issues are selected/classified. NOTE (open verification): `parseCodexUsage`
+  was built to the documented `codex exec --json` output shape; a live codex
+  transcript was not captured, so the parser abstains defensively on any
   unexpected shape - confirm the exact envelope against a real run before relying
   on the cap. See the README "Run budgets" section.
 
