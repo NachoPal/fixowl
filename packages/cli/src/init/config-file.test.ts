@@ -2,6 +2,7 @@ import { globalConfigSchema, resolveRepoSettings } from "@fixowl/core";
 import { parse as parseYaml } from "yaml";
 import { describe, expect, it } from "vitest";
 import { parseSecretsEnv, substituteSecretRefs } from "../config-load.ts";
+import type { RunnerMode } from "@fixowl/core";
 import {
   parseLabels,
   parseSchedule,
@@ -33,7 +34,7 @@ function loadRendered(yaml: string): ReturnType<typeof globalConfigSchema.parse>
 }
 
 /** The wizard's answers with the constant parts (agent, App) filled in. */
-function answers(repos: RepoAnswers[], over: { fallback?: boolean } = {}) {
+function answers(repos: RepoAnswers[], over: { fallback?: boolean; runnerMode?: RunnerMode } = {}) {
   return { agent: "claude", agentEnv: ["CLAUDE_CODE_OAUTH_TOKEN"], repos, app: APP, ...over };
 }
 
@@ -295,6 +296,24 @@ describe("renderConfigYaml", () => {
       substituteSecretRefs(parseYaml(yaml), { ...SECRETS, FIXOWL_FALLBACK_TOKEN: "fb" }),
     );
     expect(config.github.fallback_token).toBe("fb");
+  });
+
+  it("omits runner_mode for the self-hosted default (byte-for-byte unchanged)", () => {
+    // No runnerMode, and an explicit self-hosted, both leave the config as before.
+    expect(renderConfigYaml(answers([repo()]))).not.toContain("runner_mode");
+    expect(renderConfigYaml(answers([repo()], { runnerMode: "self-hosted" }))).not.toContain(
+      "runner_mode",
+    );
+  });
+
+  it("writes defaults.runner_mode for the GitHub-hosted (cloud) path", () => {
+    const yaml = renderConfigYaml(
+      answers([repo({ scheduleTrigger: "github-cron" })], { runnerMode: "github-hosted" }),
+    );
+    expect(yaml).toContain("runner_mode: github-hosted");
+    const config = loadRendered(yaml);
+    expect(config.defaults?.runner_mode).toBe("github-hosted");
+    expect(resolveRepoSettings(config, "NachoPal/storyengine").runnerMode).toBe("github-hosted");
   });
 });
 

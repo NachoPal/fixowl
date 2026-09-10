@@ -170,6 +170,9 @@ function toPrefill(current: ResolvedRepoSettings): RepoSettingsPrefill {
   return {
     schedule: current.schedule,
     scheduleTrigger: current.scheduleTrigger,
+    // Carry the resolved runner mode so a github-hosted repo keeps skipping the
+    // schedule-trigger prompt (forced github-cron) on the shared question block.
+    runnerMode: current.runnerMode,
     labels: labelsInRule(current.labels).join(", "),
     maxIssuesPerRun: current.maxIssuesPerRun,
     usageBudgetPercent: current.usageBudgetPercent,

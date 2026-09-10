@@ -28,6 +28,24 @@ export const scheduleTriggerSchema = z.enum(["github-cron", "host-scheduler", "b
 export type ScheduleTrigger = z.infer<typeof scheduleTriggerSchema>;
 
 /**
+ * Where the night run executes (a first-class `fixowl init` choice):
+ *
+ *  - `self-hosted`    the workflow runs on the self-hosted `[self-hosted, fixowl]`
+ *                    runner this host registers (`fixowl provision` / `fixowl
+ *                    start`). fixowl's original target; needs a supported runner
+ *                    platform (macOS, or linux-x64).
+ *  - `github-hosted`  the workflow runs on GitHub's cloud `ubuntu-latest` runner
+ *                    (the "one-line cloud move" the workflow template is built
+ *                    for). Nothing runs on the operator's machine, so no runner
+ *                    is registered and it works on any OS (Windows/arm64 too).
+ *
+ * The container image is Linux either way, so the cloud path is OS-agnostic. See
+ * docs/host-bootstrap.md and workflow-template.ts.
+ */
+export const runnerModeSchema = z.enum(["self-hosted", "github-hosted"]);
+export type RunnerMode = z.infer<typeof runnerModeSchema>;
+
+/**
  * Whether a scheduling mode installs the host launchd agent, and in which mode.
  * `github-cron` installs nothing; `host-scheduler` runs it as the *primary*
  * dispatcher; `both` runs it as the cron *fallback*. Used by the fallback
@@ -79,6 +97,11 @@ const repoEntrySchema = z.object({
    * keeps its cron; a launchd agent, if installed, runs as the fallback).
    */
   schedule_trigger: scheduleTriggerSchema.optional(),
+  /**
+   * Where this repo's night run executes (see runnerModeSchema). Unset resolves
+   * to `self-hosted`, which preserves the pre-choice behavior.
+   */
+  runner_mode: runnerModeSchema.optional(),
   labels: labelRuleSchema.optional(),
   agent: z.string().optional(),
   /**
@@ -197,6 +220,8 @@ export const globalConfigSchema = z.object({
       schedule: cronSchema.optional(),
       /** Default scheduling trigger for every repo that does not set its own. */
       schedule_trigger: scheduleTriggerSchema.optional(),
+      /** Default runner mode for every repo that does not set its own (see runnerModeSchema). */
+      runner_mode: runnerModeSchema.optional(),
       labels: labelRuleSchema.optional(),
       agent: z.string().optional(),
       max_issues_per_run: z.number().int().positive().optional(),
@@ -265,6 +290,13 @@ export const FIXOWL_DEFAULTS = {
    * `host-scheduler` for self-hosted runners and writes whatever the operator picks.
    */
   scheduleTrigger: "both" as ScheduleTrigger,
+  /**
+   * Default runner mode. `self-hosted` is also the resolution fallback for an
+   * unset value, so a config written before this choice existed behaves exactly
+   * as it did (the workflow runs on the self-hosted runner). `fixowl init` offers
+   * `github-hosted` for a turn-key OS-agnostic cloud setup.
+   */
+  runnerMode: "self-hosted" as RunnerMode,
   labels: { any: ["overnight"] } satisfies LabelRule,
   agent: "claude",
   maxIssuesPerRun: 4,
@@ -335,6 +367,12 @@ export interface ResolvedRepoSettings {
    * only (primary dispatch), or both (cron + host fallback). See scheduleTriggerSchema.
    */
   scheduleTrigger: ScheduleTrigger;
+  /**
+   * Where the night run executes: the self-hosted runner this host registers, or
+   * GitHub's cloud `ubuntu-latest`. Drives the workflow's `runs-on` and whether
+   * `fixowl provision` registers a runner. See runnerModeSchema.
+   */
+  runnerMode: RunnerMode;
   labels: LabelRule;
   agent: string;
   maxIssuesPerRun: number;
@@ -397,6 +435,7 @@ export function resolveRepoSettings(config: GlobalConfig, repoName: string): Res
     schedule: entry.schedule ?? defaults.schedule ?? FIXOWL_DEFAULTS.schedule,
     scheduleTrigger:
       entry.schedule_trigger ?? defaults.schedule_trigger ?? FIXOWL_DEFAULTS.scheduleTrigger,
+    runnerMode: entry.runner_mode ?? defaults.runner_mode ?? FIXOWL_DEFAULTS.runnerMode,
     labels: entry.labels ?? defaults.labels ?? FIXOWL_DEFAULTS.labels,
     agent,
     maxIssuesPerRun:

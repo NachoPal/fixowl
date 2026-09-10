@@ -106,7 +106,7 @@ function fakeOctokit(branchExists = false): FakeOctokit {
   return { octokit, fileWrites, prsCreated, secretNames, createRef };
 }
 
-function makeCtx(admin: Octokit, scheduleTrigger?: string): CliContext {
+function makeCtx(admin: Octokit, scheduleTrigger?: string, runnerMode?: string): CliContext {
   return {
     config: globalConfigSchema.parse({
       version: 1,
@@ -119,7 +119,7 @@ function makeCtx(admin: Octokit, scheduleTrigger?: string): CliContext {
       // The adapter's default allowlist lists both claude credentials, but a
       // real config always pins exactly one.
       agents: { claude: { env: ["CLAUDE_CODE_OAUTH_TOKEN"] } },
-      repos: [{ name: "acme/widgets", schedule_trigger: scheduleTrigger }],
+      repos: [{ name: "acme/widgets", schedule_trigger: scheduleTrigger, runner_mode: runnerMode }],
     }),
     secrets: { CLAUDE_CODE_OAUTH_TOKEN: "oauth-token" },
     admin,
@@ -132,15 +132,26 @@ async function runProvision(
   options: ProvisionOptions = {},
   branchExists = false,
   scheduleTrigger?: string,
-): Promise<FakeOctokit & { result: Awaited<ReturnType<typeof provisionCommand>> }> {
+  runnerMode?: string,
+): Promise<
+  FakeOctokit & {
+    result: Awaited<ReturnType<typeof provisionCommand>>;
+    registerRunner: ReturnType<typeof vi.fn>;
+  }
+> {
   vi.spyOn(console, "log").mockImplementation(() => {});
   vi.spyOn(console, "warn").mockImplementation(() => {});
   const fake = fakeOctokit(branchExists);
-  const result = await provisionCommand(makeCtx(fake.octokit, scheduleTrigger), undefined, {
-    registerRunner: vi.fn(async () => "configured" as const),
-    ...options,
-  });
-  return { ...fake, result };
+  const registerRunner = vi.fn(async () => "configured" as const);
+  const result = await provisionCommand(
+    makeCtx(fake.octokit, scheduleTrigger, runnerMode),
+    undefined,
+    {
+      registerRunner,
+      ...options,
+    },
+  );
+  return { ...fake, result, registerRunner };
 }
 
 describe("fixowl provision", () => {
@@ -278,5 +289,29 @@ describe("fixowl provision", () => {
     });
 
     expect(registerRunner).not.toHaveBeenCalled();
+  });
+
+  it("renders runs-on: ubuntu-latest and skips registration for a github-hosted repo", async () => {
+    const { fileWrites, registerRunner } = await runProvision(
+      {},
+      false,
+      "github-cron",
+      "github-hosted",
+    );
+
+    const workflow = fileWrites.find((w) => w.path === WORKFLOW_PATH);
+    // The one-line cloud move: the workflow runs on GitHub's cloud runner.
+    expect(workflow?.content).toContain("runs-on: ubuntu-latest");
+    expect(workflow?.content).not.toContain("[self-hosted, fixowl]");
+    // Nothing runs on this machine, so no self-hosted runner is registered - the
+    // #79 fail-fast never even reaches runnerPlatform on the cloud path.
+    expect(registerRunner).not.toHaveBeenCalled();
+  });
+
+  it("keeps runs-on the self-hosted runner for a self-hosted repo (default)", async () => {
+    const { fileWrites, registerRunner } = await runProvision();
+    const workflow = fileWrites.find((w) => w.path === WORKFLOW_PATH);
+    expect(workflow?.content).toContain("runs-on: [self-hosted, fixowl]");
+    expect(registerRunner).toHaveBeenCalledTimes(1);
   });
 });

@@ -111,13 +111,24 @@ The canary check for a fresh host is a repo whose issue makes the agent run
 `docker run --rm -v "$GITHUB_WORKSPACE:/w" alpine ls /w`: it proves the runner,
 the Colima engine, and workspace mounting in one shot.
 
-## 6. Moving to the cloud later
+## 6. Running on a GitHub-hosted (cloud) runner
 
-The generated workflow runs on `[self-hosted, fixowl]`. Changing that one line
-to `ubuntu-latest` moves the job to GitHub-hosted runners: Docker is
-preinstalled there, the action is plain Node, and the same `docker run` steps
-just work. Host-bound verification (visible browsers, iOS/macOS targets) is
-the only thing you give up. Every container already runs as the host runner's
-`--user <uid>:<gid>` (injected in `DockerEngine.run`), so on Linux agent writes
-to the mounted workspace stay owned by the runner user and clean up normally;
-see the security model's container hardening in [security.md](security.md).
+`fixowl init` asks where the night run executes: a **self-hosted** runner (this
+machine, the default and the subject of the sections above) or a **GitHub-hosted**
+runner (GitHub's cloud `ubuntu-latest`). The cloud path is turn-key - pick it and
+`init` renders the workflow with `runs-on: ubuntu-latest`, defaults the schedule
+to GitHub cron, skips runner registration, and starts nothing on your machine -
+so onboarding is OS-agnostic: a Windows or arm64 host (where fixowl ships no
+self-hosted runner build) can complete `init` on the cloud path, and `init`
+steers you there rather than half-provisioning if you pick self-hosted on such a
+host. To switch an existing repo, set `runner_mode: github-hosted` (with
+`schedule_trigger: github-cron`) in `~/.fixowl/config.yaml` and re-run `fixowl
+provision`.
+
+On a GitHub-hosted runner Docker is preinstalled, the action is plain Node, and
+the same `docker run` steps just work. Host-bound verification (visible browsers,
+iOS/macOS targets) is the only thing you give up. Every container already runs as
+the host runner's `--user <uid>:<gid>` (injected in `DockerEngine.run`), so on
+Linux agent writes to the mounted workspace stay owned by the runner user and
+clean up normally; see the security model's container hardening in
+[security.md](security.md).

@@ -66,7 +66,9 @@ In the morning you review. **fixowl never merges.**
   the guide in [docs/adding-an-agent-adapter.md](docs/adding-an-agent-adapter.md).
 - **Cloud-portable by construction**: the generated workflow has no
   `container:` key and no host assumptions; swapping `runs-on` to
-  `ubuntu-latest` is the entire migration.
+  `ubuntu-latest` is the entire migration - and `fixowl init` offers that
+  GitHub-hosted (cloud) runner as a turn-key choice (`runner_mode`), so it needs
+  no self-hosted host at all.
 - **Sandboxed and never-merging**: the agent container gets no GitHub token,
   no docker socket, dropped capabilities, and resource limits; pushes happen
   on the host by the harness. See [SECURITY.md](SECURITY.md) for the trust
@@ -181,6 +183,8 @@ defaults:
   schedule: "37 1 * * *"                  # UTC
   schedule_trigger: host-scheduler        # host launchd dispatches on schedule (recommended for self-hosted);
                                           #   also: github-cron (cron only) | both (cron + host fallback)
+  # runner_mode: github-hosted            # run on GitHub's ubuntu-latest cloud runner (pair with github-cron);
+                                          #   default self-hosted. Nothing runs on your machine.
   labels: { any: [overnight] }            # any/all combinations supported
   agent: claude
   max_issues_per_run: 4                   # run budget: at most this many PRs ship
@@ -377,7 +381,11 @@ token and never start a duplicate run or mask whether the cron works. See
 
 Any Mac or Linux box with Docker. The reference setup is a spare Intel MacBook
 Pro with Colima; the host runs nothing stack-specific, only Docker and the
-runner. See [docs/host-bootstrap.md](docs/host-bootstrap.md).
+runner. Or skip the host entirely: `fixowl init` can pick a **GitHub-hosted
+(cloud) runner** (`runner_mode: github-hosted`), which renders the workflow with
+`runs-on: ubuntu-latest`, registers no runner, and runs nothing on your machine -
+so onboarding is OS-agnostic (Windows/arm64 hosts too). See
+[docs/host-bootstrap.md](docs/host-bootstrap.md).
 
 ## Development
 

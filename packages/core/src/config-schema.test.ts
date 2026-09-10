@@ -109,6 +109,7 @@ describe("resolveRepoSettings", () => {
       name: "NachoPal/storyengine",
       schedule: "37 1 * * *",
       scheduleTrigger: "both",
+      runnerMode: "self-hosted",
       labels: { any: ["overnight"] },
       agent: "claude",
       maxIssuesPerRun: 4,
@@ -195,6 +196,40 @@ describe("resolveRepoSettings", () => {
       globalConfigSchema.parse({
         ...minimalConfig,
         defaults: { schedule_trigger: "cron-only" },
+      }),
+    ).toThrow();
+  });
+
+  it("resolves runner_mode: repo > defaults > built-in (self-hosted)", () => {
+    // Unset resolves to `self-hosted`, preserving pre-choice behavior.
+    const base = globalConfigSchema.parse(minimalConfig);
+    expect(resolveRepoSettings(base, "NachoPal/storyengine").runnerMode).toBe("self-hosted");
+
+    // A defaults value is inherited when the repo does not override it.
+    const fromDefaults = globalConfigSchema.parse({
+      ...minimalConfig,
+      defaults: { runner_mode: "github-hosted" },
+    });
+    expect(resolveRepoSettings(fromDefaults, "NachoPal/storyengine").runnerMode).toBe(
+      "github-hosted",
+    );
+
+    // A per-repo value wins over defaults.
+    const repoOverride = globalConfigSchema.parse({
+      ...minimalConfig,
+      defaults: { runner_mode: "github-hosted" },
+      repos: [{ name: "NachoPal/storyengine", runner_mode: "self-hosted" }],
+    });
+    expect(resolveRepoSettings(repoOverride, "NachoPal/storyengine").runnerMode).toBe(
+      "self-hosted",
+    );
+  });
+
+  it("rejects an unknown runner_mode value", () => {
+    expect(() =>
+      globalConfigSchema.parse({
+        ...minimalConfig,
+        defaults: { runner_mode: "cloud" },
       }),
     ).toThrow();
   });
