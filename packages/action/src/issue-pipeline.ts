@@ -29,6 +29,8 @@ import {
   type CiGateSummary,
 } from "./pr-body.ts";
 import { buildFixPrompt, type CheckFailureFeedback } from "./prompt-builder.ts";
+import { TRIAGED_LABEL, triageComment, type TriageCategory, type TriagedIssue } from "./triage.ts";
+import { parseVerdict, type Verdict } from "./verdict.ts";
 import { runVerification } from "./verification.ts";
 
 export interface IssuePipelineDeps {
@@ -64,6 +66,13 @@ export interface IssueRunContext {
   ciMaxTries: number;
   /** How long each pass waits for the pushed head's required checks. */
   ciTimeoutMs: number;
+  /**
+   * Layer B: when true, the fix prompt asks the agent to verify against the
+   * current code first, and a no-diff run leaves a comment + `fixowl:triaged`
+   * label and opens NO PR (instead of a silent no-changes). Default resolves on
+   * from config (see docs/issue-triage.md).
+   */
+  verifyBeforeFix: boolean;
   runUrl?: string;
 }
 
@@ -83,6 +92,12 @@ export interface IssueResult {
    * across issues for the `total_token_budget` stop condition.
    */
   usage?: SpendSample;
+  /**
+   * Set on a Layer B skip: the agent produced no diff, so no PR was opened and
+   * fixowl left a comment + `fixowl:triaged` label. main.ts folds this into the
+   * run summary's Triaged-out section. Status stays "no-changes" (benign).
+   */
+  triaged?: TriagedIssue;
 }
 
 /** Longest agent output excerpt carried into a failure's `error` string. */
@@ -133,12 +148,18 @@ export async function processIssue(
   let pr: { number: number; url: string } | undefined;
   let lastVerification: CheckOutcome[] = [];
   let lastCi: WaitForChecksResult | undefined;
+  // Layer B: the first pass's verify-first verdict (advisory), read from stdout.
+  let firstPassVerdict: Verdict | undefined;
 
   for (let attempt = 1; attempt <= maxTries; attempt++) {
     const agentResult = await runAgent(deps, ctx, { attempt, previousFailures });
     if (agentResult.usage !== undefined) {
       usage = usage === undefined ? agentResult.usage : addSamples(usage, agentResult.usage);
       base.usage = usage;
+    }
+
+    if (attempt === 1 && ctx.verifyBeforeFix) {
+      firstPassVerdict = parseVerdict(agentResult.stdout);
     }
 
     if (agentResult.timedOut || agentResult.code !== 0) {
@@ -158,8 +179,10 @@ export async function processIssue(
     }
 
     if (attempt === 1 && !(await git.hasChangesAgainst(ctx.baseRef))) {
-      log.warn(`issue #${issue.number}: agent finished but produced no changes`);
-      return { ...base, status: "no-changes" };
+      // No diff: never open a PR. Layer B turns this into a triage skip (comment
+      // + `fixowl:triaged` label + summary line); with verify-first off it is the
+      // pre-existing silent no-changes.
+      return await handleNoDiff(deps, ctx, base, firstPassVerdict);
     }
 
     const verification = await runVerification({
@@ -263,7 +286,61 @@ export async function processIssue(
     );
   }
 
-  return finishExhausted(deps, ctx, { title, pr, lastVerification, lastCi, usage });
+  return finishExhausted(deps, ctx, {
+    title,
+    pr,
+    lastVerification,
+    lastCi,
+    usage,
+    firstPassVerdict,
+  });
+}
+
+/**
+ * The agent produced no diff, so no PR is opened. With verify-first on (Layer B)
+ * fixowl leaves an explanatory comment and stamps the `fixowl:triaged` label so
+ * the issue drops out of the next night, and reports it via `IssueResult.triaged`;
+ * the comment/label are best-effort so a write failure never aborts the night.
+ * With verify-first off this is the pre-existing silent no-changes.
+ */
+async function handleNoDiff(
+  deps: IssuePipelineDeps,
+  ctx: IssueRunContext,
+  base: Omit<IssueResult, "status">,
+  verdict: Verdict | undefined,
+): Promise<IssueResult> {
+  const { github, log } = deps;
+  const { issue } = ctx;
+  log.warn(`issue #${issue.number}: agent finished but produced no changes`);
+  if (!ctx.verifyBeforeFix) {
+    return { ...base, status: "no-changes" };
+  }
+  const category = noDiffCategory(verdict);
+  const explanation =
+    verdict?.explanation !== undefined ? markdownCell(verdict.explanation) : undefined;
+  const triaged: TriagedIssue = { issue, layer: "agent", category, explanation };
+  try {
+    await github.createIssueComment(issue.number, triageComment(triaged));
+    await github.addLabels(issue.number, [TRIAGED_LABEL]);
+  } catch (error) {
+    log.warn(
+      `issue #${issue.number}: could not leave the no-change triage comment/label (${String(error)}); ` +
+        `it is still reported in the run summary`,
+    );
+  }
+  log.info(`issue #${issue.number}: triaged (${category}); no PR opened`);
+  return { ...base, status: "no-changes", triaged };
+}
+
+/** Map a Layer B verdict to the no-diff triage category (default: a plain no-change). */
+function noDiffCategory(verdict: Verdict | undefined): TriageCategory {
+  if (verdict?.verdict === "already-implemented" || verdict?.verdict === "partial") {
+    // A `partial` verdict with no diff means the agent judged the remainder
+    // already present too; treat it as already-implemented for the comment.
+    return "already-implemented";
+  }
+  if (verdict?.verdict === "not-applicable") return "not-applicable";
+  return "no-change";
 }
 
 /** Runs the agent container once, writing its output to the per-attempt evidence log. */
@@ -285,6 +362,7 @@ async function runAgent(
     issue,
     repoConfig: ctx.repoConfig,
     previousFailures: params.previousFailures,
+    verifyFirst: ctx.verifyBeforeFix,
   });
   const promptFile = join(ctx.promptDir, `issue-${issue.number}.md`);
   writeFileSync(promptFile, prompt);
@@ -335,6 +413,7 @@ async function finishExhausted(
     lastVerification: CheckOutcome[];
     lastCi: WaitForChecksResult | undefined;
     usage: SpendSample | undefined;
+    firstPassVerdict: Verdict | undefined;
   },
 ): Promise<IssueResult> {
   const { git, github, log } = deps;
@@ -350,7 +429,12 @@ async function finishExhausted(
   let pr = state.pr;
   if (pr === undefined) {
     if (!(await git.hasChangesAgainst(ctx.baseRef))) {
-      return { ...base, status: "no-changes", verification: state.lastVerification };
+      return await handleNoDiff(
+        deps,
+        ctx,
+        { ...base, verification: state.lastVerification },
+        state.firstPassVerdict,
+      );
     }
     await git.commitAll(state.title);
     await git.push(ctx.branch);

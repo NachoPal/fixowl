@@ -131,6 +131,9 @@ export async function provisionCommand(
       defaultEffort: settings.defaultEffort,
       labelModels: settings.labelModels,
       heuristicConflictOrdering: settings.heuristicConflictOrdering,
+      skipAlreadyFixed: settings.skipAlreadyFixed,
+      skipDuplicates: settings.skipDuplicates,
+      verifyBeforeFix: settings.verifyBeforeFix,
       actionRef: actionRef.ref,
       actionRefComment: actionRef.comment,
     });

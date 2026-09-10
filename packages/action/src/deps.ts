@@ -42,9 +42,51 @@ export interface PullRequestLite {
   state: "OPEN" | "MERGED" | "CLOSED";
 }
 
+/** A pull request (or issue) reference fixowl links in a triage-skip comment. */
+export interface TriageRef {
+  number: number;
+  url: string;
+}
+
+/**
+ * The pre-work triage signals GitHub exposes for one OPEN issue (Layer A), read
+ * read-only in one aliased GraphQL round-trip. All fields are high-precision:
+ * they mean GitHub itself recorded the relationship. A bare merged-PR
+ * cross-reference (no closing keyword) is deliberately NOT surfaced here - it is
+ * ambiguous, so it is left for Layer B (the agent verifies against the code).
+ */
+export interface IssueTriageSignals {
+  number: number;
+  /**
+   * A merged PR in THIS repo that closes the issue via a closing keyword
+   * (GitHub's `closedByPullRequestsReferences`, or a `willCloseTarget`
+   * cross-reference from a merged PR). Present => already fixed.
+   */
+  fixedByMergedPr?: TriageRef;
+  /**
+   * The canonical original when GitHub records the issue as a duplicate (the
+   * latest `MarkedAsDuplicateEvent` not undone by a later unmark). Present =>
+   * duplicate.
+   */
+  duplicateOf?: TriageRef;
+}
+
 export interface GitHubApi {
   /** One GitHub "list issues" call; `labelsQuery` is the comma-joined AND query. Returns issues only, never PRs. */
   listOpenIssuesWithLabels(labelsQuery: string): Promise<IssueLite[]>;
+  /**
+   * Read-only triage signals for the candidate issues (Layer A), in one aliased
+   * GraphQL round-trip (the `getIssueDependencies` technique). An empty map (or a
+   * number missing from it) means "no confident signal" - never a skip. Never
+   * writes. See triage.ts and docs/issue-triage.md.
+   */
+  getIssueTriageSignals(numbers: readonly number[]): Promise<Map<number, IssueTriageSignals>>;
+  /**
+   * Apply labels to an issue (Issues: write, already held by the runtime App).
+   * Used to stamp the `fixowl:triaged` marker on a triaged-out issue so it drops
+   * out of the next night's candidate set. Best-effort at the call site.
+   */
+  addLabels(issueNumber: number, labels: readonly string[]): Promise<void>;
   /**
    * Read-only fetch of the native `blockedBy` dependency edges for the given
    * issue numbers, in one aliased GraphQL round-trip. Layer-1 planner input;

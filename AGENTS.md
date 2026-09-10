@@ -204,6 +204,27 @@ See [docs/releasing.md](docs/releasing.md).
   `ci_timeout_minutes` (60) in `config-schema.ts`, propagated through
   `provision` -> `action.yml` inputs. See [docs/ci-fix-loop.md](docs/ci-fix-loop.md).
 
+- Pre-work issue triage is two layers between selection and the agent, both
+  default ON and free. Layer A (the deterministic pre-gate, `triage.ts::planTriage`
+  + the read-only `getIssueTriageSignals` edge) runs on the fresh set before the
+  `max_issues` cap: one aliased GraphQL round-trip (the `getIssueDependencies`
+  technique, one rate-limit point) reads each issue's own cross-reference graph -
+  never a PR scan - and skips only GitHub's high-precision signals
+  (`reduceTriageNode`): a closing-keyword-linked merged PR (`skip_already_fixed`)
+  or a marked/`duplicate`-labeled duplicate (`skip_duplicates`). A **bare** merged-PR
+  cross-reference is deliberately NOT skipped (the verified #136 false-positive) -
+  it is left to Layer B. Layer B (`verify_before_fix`, in `processIssue`) prepends
+  the verify-first prompt (`VERIFY_FIRST_INSTRUCTION`, first pass only); the agent
+  emits a verdict to stdout (`parseVerdict` - never a workspace file, which would
+  defeat `hasChangesAgainst`) and **never touches GitHub** (the token invariant).
+  The HOST reads the verdict + diff: a no-diff run opens NO PR and instead does
+  `createIssueComment` + `addLabels(['fixowl:triaged'])` (the one new write edge),
+  reported under `## Triaged out` (`NightSummary.triaged`, disjoint from the
+  branch-exists `skipped`). The `fixowl:triaged` label is the comment-once /
+  cross-run marker (selection excludes it; GitHub is the only state). Config keys
+  resolve `repo > defaults > built-in on` and the workflow renders an input only on
+  opt-out (default-on stays byte-for-byte). See [docs/issue-triage.md](docs/issue-triage.md).
+
 - Run budgets (issue #21) bound the night with a set of independent,
   each-optional stop conditions - count (`max_issues_per_run`), usage %
   (`usage_budget_percent`), total tokens (`total_token_budget`), graceful

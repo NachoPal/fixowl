@@ -24,6 +24,15 @@ In the morning you review. **fixowl never merges.**
   anyone else) pushed under that name is never deleted - fixowl skips the issue
   and warns instead. See [docs/stacked-prs.md](docs/stacked-prs.md) (Retry
   semantics) for the ownership rule.
+- **Triage before it works**: a two-layer gate (both on by default, free)
+  keeps fixowl from blindly implementing every labeled issue. Layer A skips an
+  issue GitHub already records as fixed (a closing-keyword-linked merged PR) or
+  as a duplicate before any agent run; Layer B makes the agent verify against the
+  current code first, so an issue that needs no change opens **no** PR. A
+  triaged-out issue gets one explanatory comment, the `fixowl:triaged` label (so
+  it is never re-scanned), and a line under the night summary's `Triaged out`
+  section instead of a PR. Tune with `skip_already_fixed` / `skip_duplicates` /
+  `verify_before_fix`. See [docs/issue-triage.md](docs/issue-triage.md).
 - **Dependency-aware**: two layers decide branch topology. First, fixowl reads
   the night's issues' native GitHub `blocked-by` edges and enforces them: a
   dependent stacks on and ships after its prerequisite when that prerequisite is

@@ -9,6 +9,7 @@ import type {
   GitHubApi,
   IssueDeps,
   IssueLite,
+  IssueTriageSignals,
   Logger,
   PullRequestLite,
 } from "./deps.ts";
@@ -54,6 +55,10 @@ export interface CreatedPull {
 export class FakeGitHub implements GitHubApi {
   pulls: CreatedPull[] = [];
   comments: Array<{ issueNumber: number; body: string }> = [];
+  /** Layer A triage signals keyed by issue number; empty means "no signal" (today's behavior). */
+  triageSignals: Map<number, IssueTriageSignals> = new Map();
+  /** Labels applied via addLabels, in call order (triage-marker assertions). */
+  labelsAdded: Array<{ issueNumber: number; labels: string[] }> = [];
   /** Native dependency edges keyed by issue number; empty means no edges (today's behavior). */
   dependencies: Map<number, IssueDeps> = new Map();
   /** PR liveness keyed by head branch, for the per-branch PR lookup (issues #48, #57). */
@@ -154,6 +159,20 @@ export class FakeGitHub implements GitHubApi {
 
   async createIssueComment(issueNumber: number, body: string): Promise<void> {
     this.comments.push({ issueNumber, body });
+  }
+
+  async getIssueTriageSignals(
+    numbers: readonly number[],
+  ): Promise<Map<number, IssueTriageSignals>> {
+    const result = new Map<number, IssueTriageSignals>();
+    for (const n of numbers) {
+      result.set(n, this.triageSignals.get(n) ?? { number: n });
+    }
+    return result;
+  }
+
+  async addLabels(issueNumber: number, labels: readonly string[]): Promise<void> {
+    this.labelsAdded.push({ issueNumber, labels: [...labels] });
   }
 
   async listRecentWorkflowRuns(): Promise<WorkflowRunLite[]> {

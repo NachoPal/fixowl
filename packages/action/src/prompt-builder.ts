@@ -67,6 +67,29 @@ export function buildFailureFeedback(failures: readonly CheckFailureFeedback[]):
   return lines.join("\n").trimEnd();
 }
 
+/**
+ * Layer B (verify-first). Prepended on the FIRST pass when `verify_before_fix` is
+ * on. The agent verifies against the current code before changing anything and
+ * prints a verdict to stdout (parsed by verdict.ts). It never touches GitHub -
+ * the host does the comment/label/PR (the token-boundary invariant). A no-diff
+ * run opens no PR. See docs/issue-triage.md.
+ */
+export const VERIFY_FIRST_INSTRUCTION = `First, before changing anything, check whether this issue is ALREADY handled by the current
+code you have checked out. Inspect the relevant code, then choose exactly one:
+- already-implemented: the requested behavior is fully present. Make NO code change.
+- partial: some of it exists. Implement ONLY the missing part.
+- not-implemented: implement the fix as usual.
+- not-applicable: the code the issue refers to is gone or has changed so the request is moot.
+  Make NO code change.
+
+When you are done, print your verdict as the final line of your output, exactly:
+FIXOWL_VERDICT: {"verdict":"already-implemented"|"partial"|"not-implemented"|"not-applicable","explanation":"<one to three sentences a human can read>"}
+
+Do NOT comment on the issue, push, or open a PR yourself - you have no network or GitHub
+access. fixowl reads your verdict and your file changes on the host and handles the issue
+comment, the label, and the PR. If you make no code change, fixowl opens no PR and leaves a
+comment explaining why.`;
+
 const STANDING_GUARDRAILS = `Ground rules:
 - You are running unattended. Do not ask questions; make the best call and finish.
 - Change only what this issue requires. No drive-by refactors, no dependency bumps.
@@ -84,14 +107,25 @@ export function buildFixPrompt(params: {
   repoConfig: RepoFileConfig;
   /** Failing checks from the previous attempt in the CI-gated loop; omitted on the first pass. */
   previousFailures?: readonly CheckFailureFeedback[];
+  /**
+   * Layer B: when true, prepend the verify-first instruction + verdict contract
+   * (first pass only). Default false keeps the prompt byte-for-byte as before.
+   */
+  verifyFirst?: boolean;
 }): string {
   const { issue, repoConfig, previousFailures } = params;
+  const isFirstPass = previousFailures === undefined || previousFailures.length === 0;
   const sections: string[] = [];
   sections.push(
     `You are fixing GitHub issue #${issue.number} in the repository mounted at the current directory.`,
   );
   sections.push(`Issue title: ${fenceUntrustedTitle(issue.title)}`);
   sections.push(fenceUntrustedBody(issue.body));
+  // Verify-first is a first-pass decision; on a CI retry the agent is actively
+  // fixing a pushed change, so re-deciding "already implemented" would be wrong.
+  if (params.verifyFirst === true && isFirstPass) {
+    sections.push(VERIFY_FIRST_INSTRUCTION);
+  }
   sections.push(STANDING_GUARDRAILS);
 
   if (previousFailures !== undefined && previousFailures.length > 0) {

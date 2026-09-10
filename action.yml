@@ -104,6 +104,31 @@ inputs:
       (Layer 1) is always-on regardless. Set "true" to enable.
     required: false
     default: "false"
+  skip-already-fixed:
+    description: >-
+      Pre-work triage (Layer A): skip an OPEN issue GitHub already records as
+      fixed by a closing-keyword-linked merged PR, before any agent run. Leaves a
+      comment + the fixowl:triaged label and opens no PR. On by default; set
+      "false" to disable. See docs/issue-triage.md.
+    required: false
+    default: "true"
+  skip-duplicates:
+    description: >-
+      Pre-work triage (Layer A): skip an OPEN issue GitHub records as a duplicate
+      (a marked-as-duplicate event) or that carries a "duplicate" label, before
+      any agent run. Leaves a comment + the fixowl:triaged label and opens no PR.
+      On by default; set "false" to disable.
+    required: false
+    default: "true"
+  verify-before-fix:
+    description: >-
+      Triage Layer B: have the agent verify against the CURRENT code before
+      fixing (already-implemented / partial / not-implemented / not-applicable).
+      A run that produces no diff opens NO PR and instead leaves a comment + the
+      fixowl:triaged label. On by default; set "false" for the pre-triage silent
+      no-changes behavior.
+    required: false
+    default: "true"
   source:
     description: >-
       Internal. Set to "scheduled-fallback" by fixowl's local fallback trigger so
