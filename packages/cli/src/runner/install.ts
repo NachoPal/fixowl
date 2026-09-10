@@ -22,6 +22,25 @@ export function runnerPlatform(
   throw new Error(`unsupported runner platform: ${platform}/${arch}`);
 }
 
+/**
+ * Whether this host has a self-hosted runner build fixowl pins (macOS, or
+ * linux-x64). `fixowl init` reads this BEFORE any provisioning side effect so an
+ * unsupported platform (e.g. Windows or arm64 Linux) is steered to the
+ * GitHub-hosted runner instead of half-provisioning and then throwing in
+ * `runnerPlatform` (issue #79).
+ */
+export function runnerPlatformSupported(
+  platform: NodeJS.Platform = process.platform,
+  arch: string = process.arch,
+): boolean {
+  try {
+    runnerPlatform(platform, arch);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function runnerTarballUrl(platform: string): string {
   return `https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-${platform}-${RUNNER_VERSION}.tar.gz`;
 }

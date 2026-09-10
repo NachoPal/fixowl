@@ -85827,6 +85827,7 @@ function resolveModelSelection(params) {
 // packages/core/src/config-schema.ts
 var cronSchema = external_exports.string().regex(/^\S+ \S+ \S+ \S+ \S+$/, "expected a 5-field cron expression");
 var scheduleTriggerSchema = external_exports.enum(["github-cron", "host-scheduler", "both"]);
+var runnerModeSchema = external_exports.enum(["self-hosted", "github-hosted"]);
 var envVarNameSchema = external_exports.string().regex(/^[A-Z][A-Z0-9_]*$/, "expected an ENV_VAR_NAME");
 var repoFullNameSchema = external_exports.string().regex(/^[\w.-]+\/[\w.-]+$/, "expected owner/repo");
 var agentSettingsSchema = external_exports.object({
@@ -85846,6 +85847,11 @@ var repoEntrySchema = external_exports.object({
    * keeps its cron; a launchd agent, if installed, runs as the fallback).
    */
   schedule_trigger: scheduleTriggerSchema.optional(),
+  /**
+   * Where this repo's night run executes (see runnerModeSchema). Unset resolves
+   * to `self-hosted`, which preserves the pre-choice behavior.
+   */
+  runner_mode: runnerModeSchema.optional(),
   labels: labelRuleSchema.optional(),
   agent: external_exports.string().optional(),
   /**
@@ -85935,6 +85941,8 @@ var globalConfigSchema = external_exports.object({
     schedule: cronSchema.optional(),
     /** Default scheduling trigger for every repo that does not set its own. */
     schedule_trigger: scheduleTriggerSchema.optional(),
+    /** Default runner mode for every repo that does not set its own (see runnerModeSchema). */
+    runner_mode: runnerModeSchema.optional(),
     labels: labelRuleSchema.optional(),
     agent: external_exports.string().optional(),
     max_issues_per_run: external_exports.number().int().positive().optional(),
@@ -85987,6 +85995,13 @@ var FIXOWL_DEFAULTS = {
    * `host-scheduler` for self-hosted runners and writes whatever the operator picks.
    */
   scheduleTrigger: "both",
+  /**
+   * Default runner mode. `self-hosted` is also the resolution fallback for an
+   * unset value, so a config written before this choice existed behaves exactly
+   * as it did (the workflow runs on the self-hosted runner). `fixowl init` offers
+   * `github-hosted` for a turn-key OS-agnostic cloud setup.
+   */
+  runnerMode: "self-hosted",
   labels: { any: ["overnight"] },
   agent: "claude",
   maxIssuesPerRun: 4,
@@ -86061,6 +86076,7 @@ function resolveRepoSettings(config2, repoName) {
     name: entry.name,
     schedule: entry.schedule ?? defaults2.schedule ?? FIXOWL_DEFAULTS.schedule,
     scheduleTrigger: entry.schedule_trigger ?? defaults2.schedule_trigger ?? FIXOWL_DEFAULTS.scheduleTrigger,
+    runnerMode: entry.runner_mode ?? defaults2.runner_mode ?? FIXOWL_DEFAULTS.runnerMode,
     labels: entry.labels ?? defaults2.labels ?? FIXOWL_DEFAULTS.labels,
     agent,
     maxIssuesPerRun: entry.max_issues_per_run ?? defaults2.max_issues_per_run ?? FIXOWL_DEFAULTS.maxIssuesPerRun,

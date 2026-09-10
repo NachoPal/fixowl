@@ -19,6 +19,7 @@ import {
   offerToCreateSelectorLabels,
   promptRepoSettings,
   renderActionsNeeded,
+  stepRunnerMode,
   stepTokens,
   type RepoSettingsPrefill,
 } from "./init.ts";
@@ -507,5 +508,84 @@ describe("promptRepoSettings billing-aware spend cap", () => {
     );
     expect(answers.usageBudgetPercent).toBeUndefined();
     expect(answers.totalTokenBudget).toBeUndefined();
+  });
+
+  it("skips the schedule-trigger prompt and forces github-cron for a github-hosted repo", async () => {
+    // A github-hosted runner has no host to dispatch from, so promptRepoSettings
+    // must NOT call promptScheduleTrigger and must return github-cron. The choose
+    // stub returns the first choice, which for the trigger prompt is host-scheduler
+    // - so a github-cron answer proves the prompt was skipped.
+    const { prompter } = scriptedRepoPrompter();
+    const cloudPrefill: RepoSettingsPrefill = {
+      ...prefill,
+      runnerMode: "github-hosted",
+      scheduleTrigger: "github-cron",
+    };
+    const answers = await promptRepoSettings(
+      prompter,
+      admin,
+      "claude",
+      "acme/widgets",
+      cloudPrefill,
+    );
+    expect(answers.scheduleTrigger).toBe("github-cron");
+  });
+});
+
+/** A prompter whose `choose` returns the value at `pick`, counting its calls. */
+function choosePrompter(pick: number): { prompter: Prompter; calls: () => number } {
+  let calls = 0;
+  const prompter = {
+    choose: async (_q: string, choices: ReadonlyArray<{ value: unknown }>) => {
+      calls += 1;
+      return choices[pick]?.value;
+    },
+  } as unknown as Prompter;
+  return { prompter, calls: () => calls };
+}
+
+describe("stepRunnerMode", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("returns the picked mode on a supported platform", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    // Supported: self-hosted is offered first, so pick 0 returns it.
+    expect(await stepRunnerMode(choosePrompter(0).prompter, true)).toBe("self-hosted");
+    // Pick 1 returns github-hosted.
+    expect(await stepRunnerMode(choosePrompter(1).prompter, true)).toBe("github-hosted");
+  });
+
+  it("lets a Windows/arm64 (unsupported) user complete init on the cloud path", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    // On an unsupported platform github-hosted is offered FIRST (pick 0), and the
+    // choice resolves in a single prompt - no throw, works on any OS.
+    const { prompter, calls } = choosePrompter(0);
+    expect(await stepRunnerMode(prompter, false)).toBe("github-hosted");
+    expect(calls()).toBe(1);
+  });
+
+  it("refuses self-hosted on an unsupported platform and re-prompts (fail-fast, no half-provision)", async () => {
+    const warnings: string[] = [];
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation((...args: unknown[]) => {
+      warnings.push(args.join(" "));
+    });
+    // Unsupported platform, choices reversed so index 1 is self-hosted. First pick
+    // self-hosted (refused, re-prompt), then github-hosted at index 0.
+    let call = 0;
+    const prompter = {
+      choose: async (_q: string, choices: ReadonlyArray<{ value: unknown }>) => {
+        call += 1;
+        // First call: pick self-hosted (last, since choices are reversed); second: github-hosted.
+        return call === 1 ? choices[choices.length - 1]?.value : choices[0]?.value;
+      },
+    } as unknown as Prompter;
+
+    expect(await stepRunnerMode(prompter, false)).toBe("github-hosted");
+    expect(call).toBe(2);
+    expect(warnings.some((w) => w.includes("Can't set up a self-hosted runner"))).toBe(true);
   });
 });

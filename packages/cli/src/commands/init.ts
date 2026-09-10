@@ -9,7 +9,9 @@ import {
   FIXOWL_DEFAULTS,
   getAgentAdapter,
   repoFullNameSchema,
+  resolveRepoSettings,
   type AgentCatalogEntry,
+  type RunnerMode,
   type ScheduleTrigger,
 } from "@fixowl/core";
 import { CONFIG_PATH, loadSecrets, SECRETS_PATH } from "../config-load.ts";
@@ -51,6 +53,7 @@ import {
 } from "../init/config-file.ts";
 import { log } from "../log.ts";
 import { createPrompter, maskSecret, type Prompter } from "../prompt.ts";
+import { runnerPlatformSupported } from "../runner/install.ts";
 import { fallbackInstallCommand } from "./fallback.ts";
 import { provisionCommand, type ProvisionResult } from "./provision.ts";
 import { startCommand } from "./start.ts";
@@ -213,15 +216,17 @@ every answer is stored in ${dirname(configPath)}.`);
   const secrets = loadSecrets(secretsPath);
   const { admin, app } = await stepTokens(prompter, secrets, secretsPath);
   const { agent, agentEnv } = await stepAgent(prompter, secrets);
-  const repos = await stepRepos(prompter, admin, agent, agentEnv);
+  const runnerMode = await stepRunnerMode(prompter);
+  const repos = await stepRepos(prompter, admin, agent, agentEnv, runnerMode);
   // Modes 2 (host-scheduler) and 3 (both) need the host launchd agent and its
-  // scoped dispatch token; mode 1 (github-cron) needs neither.
+  // scoped dispatch token; mode 1 (github-cron) needs neither. A GitHub-hosted
+  // runner forces github-cron for every repo, so this is always false there.
   const needsHostScheduler = repos.some((repo) => repo.scheduleTrigger !== "github-cron");
   const wantFallback = needsHostScheduler ? await stepHostSchedulerToken(prompter, secrets) : false;
 
   writeFileSync(
     configPath,
-    renderConfigYaml({ agent, agentEnv, repos, app, fallback: wantFallback }),
+    renderConfigYaml({ agent, agentEnv, repos, app, fallback: wantFallback, runnerMode }),
   );
   log.ok(`wrote ${configPath}`);
   writeFileSync(secretsPath, renderSecretsEnv(secrets), { mode: 0o600 });
@@ -273,6 +278,81 @@ Mint it at ${PAT_URL}`);
     })
   ).token;
   return true;
+}
+
+// ---------------------------------------------------------------------------
+// Runner location: self-hosted vs GitHub-hosted (cloud)
+// ---------------------------------------------------------------------------
+
+/** The two runner-location choices (see runnerModeSchema). */
+export const RUNNER_MODE_CHOICES: ReadonlyArray<{
+  value: RunnerMode;
+  label: string;
+  hint: string;
+}> = [
+  {
+    value: "self-hosted",
+    label: "Self-hosted runner (this machine)",
+    hint: "fixowl registers a runner here and runs each night on it; needs macOS or linux-x64",
+  },
+  {
+    value: "github-hosted",
+    label: "GitHub-hosted runner (cloud)",
+    hint: "the night runs on GitHub's ubuntu-latest; nothing runs on your machine; works on any OS",
+  },
+];
+
+/**
+ * Ask where the night run executes. A GitHub-hosted runner makes onboarding
+ * OS-agnostic: the workflow renders `runs-on: ubuntu-latest` (the one-line cloud
+ * move the template is built for), no self-hosted runner is registered, and the
+ * schedule is driven by GitHub cron - nothing runs on the operator's machine.
+ *
+ * `supported` reports whether this host has a self-hosted runner build fixowl
+ * ships (macOS or linux-x64). When it does NOT, GitHub-hosted is offered first
+ * (the highlighted default) and picking self-hosted is refused with a clear
+ * message that steers to the cloud path - BEFORE any provisioning side effect,
+ * so an unsupported platform never half-provisions and then throws (issue #79).
+ */
+export async function stepRunnerMode(
+  prompter: Prompter,
+  supported: boolean = runnerPlatformSupported(),
+): Promise<RunnerMode> {
+  log.info(`
+Runner
+------
+Where should the nightly run execute?
+  - Self-hosted: fixowl registers a runner on THIS machine (macOS or linux-x64)
+    and runs each night on it, keeping the containers and logs local.
+  - GitHub-hosted: the workflow runs on GitHub's cloud ubuntu-latest runner.
+    Nothing runs on your machine, so it works on any OS (Windows/arm64 too), and
+    the schedule is driven by GitHub cron.`);
+  if (!supported) {
+    log.warn(
+      `this host (${process.platform}/${process.arch}) has no self-hosted runner build fixowl ` +
+        "ships (only macOS and linux-x64 are supported), so the GitHub-hosted runner is the way\n" +
+        "  to go here.",
+    );
+  }
+  // On an unsupported platform, offer the workable option first so it is the
+  // highlighted default.
+  const choices = supported ? RUNNER_MODE_CHOICES : [...RUNNER_MODE_CHOICES].toReversed();
+  for (;;) {
+    const mode = await prompter.choose<RunnerMode>("How should the nightly run execute?", [
+      ...choices,
+    ]);
+    if (mode === "self-hosted" && !supported) {
+      // Fail fast BEFORE provisioning (issue #79): a self-hosted runner cannot be
+      // installed here, so steer back to the choice rather than half-provisioning
+      // (labels, secrets, workflow PR) and throwing in `runnerPlatform` later.
+      log.warn(
+        "Can't set up a self-hosted runner on this platform. Pick the GitHub-hosted runner, or\n" +
+          "  re-run fixowl on a macOS / linux-x64 host.",
+      );
+      continue;
+    }
+    return mode;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -873,6 +953,7 @@ async function stepRepos(
   admin: Octokit,
   agent: string,
   agentEnv: readonly string[],
+  runnerMode: RunnerMode,
 ): Promise<RepoAnswers[]> {
   log.info(`
 Step 3/4  Repositories
@@ -888,9 +969,13 @@ CI-gated fix loop budget, and which model the coding agent runs with.`);
   // built-in starter values, then each repo's answers prefill the next. Model
   // selection is intentionally NOT carried forward (it stays a fresh choice per
   // repo, as it always has - so the keep-or-change path only engages in `edit`).
+  // A GitHub-hosted runner has no host to dispatch from, so github-cron is the
+  // only coherent trigger; promptRepoSettings sees runnerMode and skips the
+  // schedule-trigger question entirely on that path.
   let prefill: RepoSettingsPrefill = {
     schedule: "02:37",
-    scheduleTrigger: "host-scheduler",
+    scheduleTrigger: runnerMode === "github-hosted" ? "github-cron" : "host-scheduler",
+    runnerMode,
     labels: "overnight",
     maxIssuesPerRun: FIXOWL_DEFAULTS.maxIssuesPerRun,
     usageBudgetPercent: FIXOWL_DEFAULTS.usageBudgetPercent,
@@ -912,6 +997,7 @@ CI-gated fix loop budget, and which model the coding agent runs with.`);
     prefill = {
       schedule: answers.schedule,
       scheduleTrigger: answers.scheduleTrigger,
+      runnerMode,
       labels: answers.labels.join(", "),
       maxIssuesPerRun: answers.maxIssuesPerRun,
       usageBudgetPercent: answers.usageBudgetPercent,
@@ -932,6 +1018,13 @@ export interface RepoSettingsPrefill {
   /** Answer form: a cron ("37 1 * * *") or a local "HH:MM". */
   schedule: string;
   scheduleTrigger: ScheduleTrigger;
+  /**
+   * Where the night run executes. `github-hosted` skips the schedule-trigger
+   * prompt and forces `github-cron` (nothing runs on the machine to dispatch
+   * from); undefined is treated as self-hosted. Not a prompted field itself -
+   * `fixowl init` asks it once, up front, via `stepRunnerMode`.
+   */
+  runnerMode?: RunnerMode;
   /** Comma-joined labels (parseLabels reverses it). */
   labels: string;
   maxIssuesPerRun: number;
@@ -985,7 +1078,12 @@ export async function promptRepoSettings(
     `    cron "${schedule.cron}" (UTC)${schedule.note !== undefined ? ` = ${schedule.note}` : ""}`,
   );
 
-  const scheduleTrigger = await promptScheduleTrigger(prompter, prefill.scheduleTrigger);
+  // A GitHub-hosted runner has no host to dispatch from, so github-cron is the
+  // only coherent trigger: force it and skip the prompt entirely.
+  const scheduleTrigger =
+    prefill.runnerMode === "github-hosted"
+      ? ("github-cron" as ScheduleTrigger)
+      : await promptScheduleTrigger(prompter, prefill.scheduleTrigger);
 
   const labelsAnswer = await prompter.ask(
     "  Labels that mark an issue for fixowl (comma-separated)",
@@ -1512,7 +1610,17 @@ Fix that and re-run:
     await prompter.pause("\nOnce those PR(s) are merged, press Enter to continue ");
   }
 
-  if (await prompter.confirm("\nStart the runner service now?", true)) {
+  // A GitHub-hosted (cloud) repo runs on GitHub's infra, so there is no runner to
+  // start on this machine. Only offer `fixowl start` when at least one repo uses
+  // a self-hosted runner.
+  const needsRunner = ctx.config.repos.some(
+    (repo) => resolveRepoSettings(ctx.config, repo.name).runnerMode === "self-hosted",
+  );
+  if (!needsRunner) {
+    log.info(
+      "\nEvery repo runs on a GitHub-hosted runner, so there's nothing to start on this machine.",
+    );
+  } else if (await prompter.confirm("\nStart the runner service now?", true)) {
     log.info("\n$ fixowl start");
     try {
       await startCommand(ctx, undefined);
@@ -1594,6 +1702,8 @@ defaults:
   schedule: "37 1 * * *"     # UTC; odd minute dodges GitHub's peak-time cron delays
   schedule_trigger: host-scheduler   # host launchd dispatches on schedule (recommended for self-hosted);
                                      #   alternatives: github-cron (cron only), both (cron + host fallback)
+  # runner_mode: github-hosted   # run the night on GitHub's ubuntu-latest cloud runner (nothing runs on
+                                #   this machine; pair with schedule_trigger: github-cron). Default: self-hosted.
   labels: { any: [overnight] }
   agent: claude
   # Layered run-budget (issue #21): the night stops on the first condition that

@@ -125,7 +125,11 @@ export async function provisionCommand(
     // cron: `host-scheduler` mode renders a dispatch-only workflow the host
     // launchd agent drives directly (issue #81), `github-cron`/`both` keep the cron.
     const includeSchedule = !options.noSchedule && workflowHasSchedule(settings.scheduleTrigger);
+    // The runner mode picks the workflow's `runs-on`: the self-hosted runner this
+    // host registers, or GitHub's cloud `ubuntu-latest` (the one-line cloud move).
+    const cloudRunner = settings.runnerMode === "github-hosted";
     const workflow = renderFixowlWorkflow({
+      runsOn: cloudRunner ? "ubuntu-latest" : undefined,
       schedule: includeSchedule ? settings.schedule : null,
       labels: settings.labels,
       agent: adapter.name,
@@ -230,7 +234,11 @@ export async function provisionCommand(
     // works. Skip with --no-register when provisioning from a different host
     // than the one that runs the runner (register there with
     // `fixowl start --register`).
-    if (options.noRegister === true) {
+    if (cloudRunner) {
+      log.info(
+        "skipping runner registration (github-hosted runner); the workflow runs on GitHub's ubuntu-latest cloud runner, so nothing runs on this machine",
+      );
+    } else if (options.noRegister === true) {
       log.info(
         "skipping runner registration (--no-register); register on the runner host with `fixowl start --register`",
       );

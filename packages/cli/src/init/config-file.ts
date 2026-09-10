@@ -1,4 +1,4 @@
-import { FIXOWL_DEFAULTS, type ScheduleTrigger } from "@fixowl/core";
+import { FIXOWL_DEFAULTS, type RunnerMode, type ScheduleTrigger } from "@fixowl/core";
 
 /**
  * Pure rendering for the files `fixowl init` writes. Kept free of I/O and of
@@ -55,6 +55,13 @@ export interface ConfigAnswers {
   app: AppCredentialAnswer;
   /** When true, wire the opt-in local fallback trigger's token into the config. */
   fallback?: boolean;
+  /**
+   * Where the night run executes. `github-hosted` writes a `defaults.runner_mode`
+   * line so provision renders `runs-on: ubuntu-latest`; `self-hosted` (the
+   * default) omits it and the built-in default applies, keeping a self-hosted
+   * config byte-for-byte as before.
+   */
+  runnerMode?: RunnerMode;
 }
 
 const YAML_PLAIN = /^[A-Za-z][\w.-]*$/;
@@ -248,6 +255,13 @@ export function renderConfigYaml(answers: ConfigAnswers): string {
         "\n  #   independent PRs review more robustly, and the classifier is a paid LLM guess." +
         "\n  #   Native blocked_by ordering (Layer 1) is always-on regardless.";
 
+  // Render runner_mode only for the cloud path, so a self-hosted config (the
+  // built-in default) is byte-for-byte unchanged.
+  const runnerModeBlock =
+    answers.runnerMode === "github-hosted"
+      ? "\n  runner_mode: github-hosted   # night runs on GitHub's ubuntu-latest cloud runner (nothing runs on your machine)"
+      : "";
+
   const fallbackTokenLine = answers.fallback
     ? `\n  fallback_token: \${FIXOWL_FALLBACK_TOKEN} # fine-grained PAT, Actions: write only; the host scheduler dispatches with it`
     : "";
@@ -275,7 +289,7 @@ ${appBlock}${fallbackTokenLine}
 # Defaults for every repo below; each repo may override any of them.
 defaults:
 ${cronLine("  ", base)}
-${scheduleTriggerLine("  ", base.scheduleTrigger)}
+${scheduleTriggerLine("  ", base.scheduleTrigger)}${runnerModeBlock}
   labels: ${labelRule(base.labels)}
   agent: ${answers.agent}
   # Layered run-budget (issue #21): the night stops on the first condition that
