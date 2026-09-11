@@ -53,3 +53,10 @@ jobs:
         run: |
           pnpm build
           git diff --exit-code -- dist
+
+      # In-process whole-night against a REAL Docker engine (real git, real image build, real
+      # hardened container runs, fake GitHub). Asserts the git-dir extraction, the planted-hook
+      # non-execution, the runtime-token non-leak, the evidence file layout, and that pnpm
+      # resolves offline as a non-root container user (T3-pnpm). Ubuntu runners ship Docker.
+      - name: Docker E2E (pnpm e2e:docker)
+        run: pnpm e2e:docker
