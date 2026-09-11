@@ -8,7 +8,6 @@ import {
 } from "./commands/fallback.ts";
 import { initCommand } from "./commands/init.ts";
 import { logsCommand } from "./commands/logs.ts";
-import { manualProvisionCommand } from "./commands/provision-manual.ts";
 import { provisionCommand } from "./commands/provision.ts";
 import { runCommand } from "./commands/run.ts";
 import { startCommand } from "./commands/start.ts";
@@ -63,27 +62,12 @@ export function createProgram(): Command {
       "--no-register",
       "skip runner registration (register on the runner host with `start --register`)",
     )
-    .option(
-      "--manual",
-      "emit artifacts and print copy-paste steps instead of calling the GitHub API - no admin token needed",
-    )
-    .action(
-      async (
-        repo: string | undefined,
-        options: { schedule: boolean; register: boolean; manual?: boolean },
-      ) => {
-        if (options.manual === true) {
-          await manualProvisionCommand(makeContext(configPath()), repo, {
-            noSchedule: !options.schedule,
-          });
-          return;
-        }
-        await provisionCommand(makeContext(configPath()), repo, {
-          noSchedule: !options.schedule,
-          noRegister: !options.register,
-        });
-      },
-    );
+    .action(async (repo: string | undefined, options: { schedule: boolean; register: boolean }) => {
+      await provisionCommand(makeContext(configPath()), repo, {
+        noSchedule: !options.schedule,
+        noRegister: !options.register,
+      });
+    });
 
   program
     .command("start [repo]")

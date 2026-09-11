@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # CLI smokes of the built `fixowl` binary, run in `verify` (no network writes, no secrets).
-# Covers T5-manual-provision, the runtime_token migration rejection, `init --non-interactive`,
-# and "aider is gone". Requires `pnpm build` to have produced packages/cli/dist/index.js.
+# Covers the runtime_token migration rejection, `init --non-interactive`, and "aider is gone".
+# Requires `pnpm build` to have produced packages/cli/dist/index.js.
 set -euo pipefail
 
 FIXOWL_DIR="$PWD"
@@ -9,32 +9,12 @@ CLI="$FIXOWL_DIR/packages/cli/dist/index.js"
 [ -f "$CLI" ] || { echo "built CLI not found: $CLI (run pnpm build)" >&2; exit 1; }
 
 TMP="$(mktemp -d)"
-cleanup() { rm -rf "$TMP" "$FIXOWL_DIR/fixowl-manual"; }
+cleanup() { rm -rf "$TMP"; }
 trap cleanup EXIT
 
 fail() { echo "CLI SMOKE FAILED: $1" >&2; exit 1; }
 
-# 1) `provision --manual` with NO admin token in the environment emits the artifacts under
-#    ./fixowl-manual/<owner>-<repo>/ and never touches the admin client.
-echo "--- smoke: provision --manual (no admin token) ---"
-cat > "$TMP/config.yaml" <<'YAML'
-version: 1
-github:
-  app:
-    app_id: 123456
-    installation_id: 7890123
-    private_key: "dummy-not-a-real-key"
-repos:
-  - name: NachoPal/fixowl-e2e-sandbox
-YAML
-env -u FIXOWL_ADMIN_TOKEN node "$CLI" provision NachoPal/fixowl-e2e-sandbox --manual -c "$TMP/config.yaml"
-manual_dir="$FIXOWL_DIR/fixowl-manual/NachoPal-fixowl-e2e-sandbox"
-for f in ".github/workflows/fixowl.yml" ".fixowl.yml" ".github/ISSUE_TEMPLATE/fixowl-overnight.yml"; do
-  [ -s "$manual_dir/$f" ] || fail "provision --manual did not write $f under ./fixowl-manual/"
-done
-echo "provision --manual wrote the expected artifacts."
-
-# 2) A config still carrying the removed `runtime_token` is rejected with the migration message.
+# 1) A config still carrying the removed `runtime_token` is rejected with the migration message.
 echo "--- smoke: runtime_token migration rejection ---"
 cat > "$TMP/bad.yaml" <<'YAML'
 version: 1
@@ -54,12 +34,12 @@ grep -q "runtime_token (the runtime PAT) was removed" "$TMP/rt.out" \
   || { cat "$TMP/rt.out" >&2; fail "the runtime_token migration message was not shown"; }
 echo "runtime_token config rejected with the migration message."
 
-# 3) `init --non-interactive` scaffolds without prompting.
+# 2) `init --non-interactive` scaffolds without prompting.
 echo "--- smoke: init --non-interactive ---"
 node "$CLI" init --non-interactive -c "$TMP/fresh/config.yaml"
 echo "init --non-interactive exited cleanly."
 
-# 4) aider is gone from the shipped surfaces.
+# 3) aider is gone from the shipped surfaces.
 echo "--- smoke: no aider references ---"
 if grep -rn aider packages templates docs README.md; then
   fail "aider references still present"

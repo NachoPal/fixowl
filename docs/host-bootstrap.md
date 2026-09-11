@@ -90,14 +90,6 @@ runner host.
 Colima socket and a PATH that covers Homebrew on Intel (`/usr/local/bin`) and
 Apple Silicon (`/opt/homebrew/bin`).
 
-**No admin PAT at all:** if you don't want to hand fixowl an admin token, run
-`fixowl provision --manual` instead. It makes no API calls against the target
-repo - it renders the workflow, `.fixowl.yml`, and issue template with the same
-renderers `fixowl provision` uses, writes them to `./fixowl-manual/<repo>/`, and
-prints the `gh label create` / `gh secret set` commands and PR steps to run
-yourself. This is the recommended setup for security-conscious maintainers; see
-[docs/security.md](security.md).
-
 ## 5. Verify end to end
 
 From the dev machine:

@@ -92,7 +92,7 @@ jobs:
       - name: Docker E2E (pnpm e2e:docker)
         run: pnpm e2e:docker
 
-      # CLI smokes of the built `fixowl` binary (no network writes; covers T5-manual-provision,
+      # CLI smokes of the built `fixowl` binary (no network writes; covers
       # the runtime_token migration, `init --non-interactive`, and "aider is gone").
       - name: CLI smokes
         run: bash scripts/e2e/cli-smokes.sh
