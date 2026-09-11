@@ -17,8 +17,12 @@
 #               never passed to the container/agent.
 
 # --- fixture tracking -------------------------------------------------------------------
-# Scenarios register the issues they create so cleanup can tear down exactly their own
-# fixtures and branches, leaving the shared sandbox at its clean baseline.
+# Scenarios MAY register the issues they create in this array, but note the array is only a
+# best-effort supplement: `e2e_cleanup_tracked` discovers a scenario's own issues from the
+# sandbox by their RUN_TAG title marker instead, because `e2e_create_issue` is always called
+# inside `$(...)` command substitution and any append it does runs in a subshell that never
+# reaches the caller. A direct `e2e_track_issue <n>` in a scenario body (not through a command
+# substitution) does reach here and is unioned into cleanup.
 E2E_TRACKED_ISSUES=()
 
 e2e_track_issue() {
@@ -128,22 +132,47 @@ e2e_wait_visible() {
 }
 
 # --- cleanup ----------------------------------------------------------------------------
-# Best-effort teardown of every tracked issue plus its issue/<n>-* PRs and branches, and
-# any extra branch names the scenario pushed directly. fixowl never merges, so closing PRs
-# and deleting topic branches restores the sandbox to its clean baseline.
+# Close one issue, then close every PR on an issue/<n>-* head branch and delete that branch.
+# fixowl never merges, so closing PRs and deleting topic branches restores the sandbox to its
+# clean baseline. Best-effort: a missing PR/branch is not an error.
+#   _e2e_teardown_issue <issue-number>
+_e2e_teardown_issue() {
+  local n="$1" pr branch
+  [ -n "$n" ] || return 0
+  gh issue close -R "$R" "$n" >/dev/null 2>&1
+  gh pr list -R "$R" --state all --limit 100 --json number,headRefName \
+    | jq -r --arg p "issue/$n-" '.[] | select(.headRefName | startswith($p)) | "\(.number)\t\(.headRefName)"' \
+    | while IFS=$'\t' read -r pr branch; do
+        [ -n "$pr" ] && gh pr close -R "$R" "$pr" >/dev/null 2>&1
+        [ -n "$branch" ] && gh api -X DELETE "repos/$R/git/refs/heads/$branch" >/dev/null 2>&1
+      done
+}
+
+# Best-effort teardown of THIS scenario's fixtures plus any extra branch names it pushed
+# directly. fixowl never merges, so closing PRs and deleting topic branches restores the
+# sandbox to its clean baseline.
+#
+# The scenario's own issues are discovered from the sandbox by their unique RUN_TAG title
+# marker ("[$RUN_TAG] ..."), NOT from an in-process array: `e2e_create_issue` is always
+# called inside `$(...)` command substitution, so any array it appended to in that subshell
+# is lost to the caller (this was the cause of the cross-scenario contamination in run
+# 34582938659 - cleanup ran but found nothing, and every scenario's fixtures leaked into the
+# shared `for: ci-e2e` selection of the next one). Discovery by RUN_TAG needs no cooperation
+# from the scenario and is scoped exactly to its own issues. E2E_TRACKED_ISSUES is still
+# unioned in for any issue a scenario tracked directly (e.g. baseline).
 #   e2e_cleanup_tracked [<extra-branch> ...]
 e2e_cleanup_tracked() {
   local extra_branches=("$@")
-  local n pr branch
-  for n in "${E2E_TRACKED_ISSUES[@]}"; do
+  local n pr branch discovered
+  # Issues whose title carries this scenario's RUN_TAG (open or closed). RUN_TAG is a fixed
+  # set of [a-z0-9-] chars, so interpolating it into the jq filter is safe.
+  discovered="$(gh api -X GET "repos/$R/issues" \
+    -f state=all -f "labels=for: ci-e2e" -f per_page=100 --paginate \
+    --jq ".[] | select(.pull_request == null) | select(.title | startswith(\"[$RUN_TAG]\")) | .number" \
+    2>/dev/null | tr '\n' ' ')"
+  for n in $discovered "${E2E_TRACKED_ISSUES[@]}"; do
     [ -n "$n" ] || continue
-    gh issue close -R "$R" "$n" >/dev/null 2>&1
-    gh pr list -R "$R" --state all --limit 100 --json number,headRefName \
-      | jq -r --arg p "issue/$n-" '.[] | select(.headRefName | startswith($p)) | "\(.number)\t\(.headRefName)"' \
-      | while IFS=$'\t' read -r pr branch; do
-          [ -n "$pr" ] && gh pr close -R "$R" "$pr" >/dev/null 2>&1
-          [ -n "$branch" ] && gh api -X DELETE "repos/$R/git/refs/heads/$branch" >/dev/null 2>&1
-        done
+    _e2e_teardown_issue "$n"
   done
   for branch in "${extra_branches[@]}"; do
     [ -n "$branch" ] || continue
@@ -152,6 +181,28 @@ e2e_cleanup_tracked() {
       | jq -r --arg b "$branch" '.[] | select(.headRefName == $b) | .number' \
       | while read -r pr; do [ -n "$pr" ] && gh pr close -R "$R" "$pr" >/dev/null 2>&1; done
     gh api -X DELETE "repos/$R/git/refs/heads/$branch" >/dev/null 2>&1
+  done
+}
+
+# Suite-start sweep: close any lingering OPEN free-suite fixture issue (title starts with
+# "[free-", the RUN_TAG prefix every scenario uses) and delete its issue/<n>-* branch + PR.
+# A scenario's own EXIT-trap cleanup normally leaves the sandbox clean, but a hard job
+# cancellation (or a historical run predating the cleanup fix) can strand fixtures that would
+# then contaminate the next run's shared `for: ci-e2e` selection. Running this once before the
+# scenario loop makes the suite self-healing and deterministic. Scoped to `for: ci-e2e` +
+# "[free-" so it never touches the persistent `for: ci-e2e-triage` Layer A fixtures or the
+# sandbox's own `for: agent` nightly issues.
+e2e_sweep_stale_fixtures() {
+  local n stale
+  stale="$(gh api -X GET "repos/$R/issues" \
+    -f state=open -f "labels=for: ci-e2e" -f per_page=100 --paginate \
+    --jq '.[] | select(.pull_request == null) | select(.title | startswith("[free-")) | .number' \
+    2>/dev/null | tr '\n' ' ')"
+  [ -n "${stale// /}" ] || { echo "sweep: no stale free-suite fixtures to clear"; return 0; }
+  echo "sweep: clearing stale free-suite fixtures: [$stale]"
+  for n in $stale; do
+    [ -n "$n" ] || continue
+    _e2e_teardown_issue "$n"
   done
 }
 

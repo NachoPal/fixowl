@@ -26,7 +26,15 @@ scenario_run_env() {
 scenario_run_bundle() {
   local summary_file="$1" run_log="$2"
   shift 2
-  default_run_bundle "$SCEN_DIR/second-run.first.summary.md" "$SCEN_DIR/second-run.first.run.log" "$@"
+  # The bundle writes the run summary through @actions/core, which requires the file named by
+  # GITHUB_STEP_SUMMARY to already EXIST (it only appends). The runner pre-creates the second
+  # run's summary/log, but the first run's are our own scratch files, so create them here or
+  # the first run dies with "Unable to access summary file" and exits 1 before the second runs.
+  local first_summary="$SCEN_DIR/second-run.first.summary.md"
+  local first_log="$SCEN_DIR/second-run.first.run.log"
+  : > "$first_summary"
+  : > "$first_log"
+  default_run_bundle "$first_summary" "$first_log" "$@"
   local rc1=$?
   echo "first run exit: $rc1"
   [ "$rc1" = "0" ] || return "$rc1"
