@@ -314,7 +314,7 @@ jobs:
       # is measurable toward the "10 consecutive green then block stable" promotion rule (report 4.5).
       - name: Upload paid E2E outcomes + usage
         if: always()
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: paid-e2e-outcomes
           path: ${{ github.workspace }}/paid-artifacts/
