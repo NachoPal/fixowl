@@ -78,9 +78,9 @@ CLI-driven config change, not just first setup: editing config means re-running
 (Contents/Workflows/Pull requests: write, plus Secrets/Issues: write when those
 change). So keep the admin PAT (you may strip only Administration: write after
 registration) if you plan to keep managing config through the CLI; revoke it
-entirely only once you are done with CLI config edits - after that, config
-changes go through the manual route below. See [docs/security.md](security.md)
-for the full breakdown.
+entirely once you are done with CLI config edits, and re-mint it later only when
+you want to re-provision. See [docs/security.md](security.md) for the full
+breakdown.
 
 If you provision from a different machine than the one that runs the runner,
 run `fixowl provision --no-register` there and `fixowl start --register` on the
