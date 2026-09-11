@@ -220,9 +220,12 @@ If your provider exposes a queryable model list (as OpenAI does via
 `getUsageReader` in `agent-usage.ts`: a pure parser plus the injected `fetchJson`
 I/O edge. `fixowl validate` then cross-checks each chosen id against the live
 list on top of the catalog (fail-open: an unreachable list warns and falls back
-to the catalog; a fetched list missing the model hard-fails). Agents with no
-queryable list (claude) return `undefined` from `getModelListSource` and
-keep relying on the catalog alone.
+to the catalog; a fetched list missing the model hard-fails), and `fixowl init`'s
+model picker offers the live list too - set a `familyFilter` on the source to
+narrow the provider's whole-account list to your agent's model family (as the
+OpenAI source does with `isCodexFamilyModel`), or leave it `undefined` to offer
+all served ids. Agents with no queryable list (claude) return `undefined` from
+`getModelListSource` and keep relying on the catalog alone.
 
 Also add an `AGENT_BILLING` entry (same file) so the run-budget wizard offers the
 right spend cap: `subscription` agents get `usage_budget_percent` (read

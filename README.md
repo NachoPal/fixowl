@@ -322,13 +322,15 @@ the run loudly instead of a silent 401). Models seed as the
 `gpt-5-codex` family (`gpt-5-codex`, `gpt-5.1-codex`, `gpt-5.1-codex-max`) and
 efforts are `minimal`/`low`/`medium`/`high`/`xhigh`; codex takes `-m <model>`
 and maps effort to `-c model_reasoning_effort=<level>`. The real model list is
-server-provided per account - extend the catalog
-(`packages/core/src/agent-catalog.ts`) with any model your key can reach, and
-note that not every model accepts every effort level. On top of the catalog,
-`fixowl validate` cross-checks each chosen codex model against your account's
-live OpenAI model list (a free `GET /v1/models` read), so a bogus or deprecated
-id fails validation instead of the night run; the check is fail-open (an
-unreachable list just warns and falls back to the catalog).
+server-provided per account, so for codex `fixowl init`'s model picker is live:
+it offers the codex-family models your key can actually reach (a free
+`GET /v1/models` read), falling back to the built-in catalog
+(`packages/core/src/agent-catalog.ts`) when the list is unreachable or the key
+is absent; efforts stay catalog-driven, and not every model accepts every effort
+level. `fixowl validate` likewise cross-checks each chosen codex model against
+that live list, so a bogus or deprecated id fails validation instead of the
+night run; both are fail-open (an unreachable list just warns and falls back to
+the catalog).
 
 > **API key only, for now.** This is the OpenAI **API-key** path (billed as API
 > usage). Authenticating codex with a **ChatGPT/Codex subscription** is a
