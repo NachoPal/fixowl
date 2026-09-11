@@ -13,6 +13,53 @@ with the evidence attached.
 
 In the morning you review. **fixowl never merges.**
 
+## Why fixowl?
+
+Fair question: you could just point a coding agent at your issues and let it
+churn overnight. That works - once. It is a script you babysit, that lives on
+one machine, that you trust blind. fixowl turns that one-off into a declarative,
+portable, budget-bounded, CI-gated, reviewable pipeline you can leave running
+and share with a team.
+
+- **Declarative, not nightly babysitting.** You label issues once as you file
+  them - a pickup label you designate marks which issues fixowl works, optional
+  priority labels order them, and optional selector labels choose the model and
+  reasoning effort each runs with - and fixowl decides what to work each run from
+  those rules. You curate the queue by labeling during the day, not by
+  hand-picking a batch every night.
+- **Runs anywhere, one-line switch.** The workflow's `runs-on` flips between your
+  own machine (self-hosted) and GitHub-hosted cloud runners with a single value
+  change, so a run is not chained to your laptop being awake. And `fixowl init`
+  offers the cloud runner as a turn-key choice.
+- **Scheduled and set-and-forget.** It runs on a schedule you set once; you do
+  not have to be present to kick off or manage a run. Scheduled runs have a local
+  fallback (the `both` trigger), so a missed or late GitHub cron slot does not
+  silently cost you a night.
+- **Safe to leave running unattended.** The coding agent never holds a GitHub
+  token (the night authenticates as a least-privilege GitHub App), fixowl never
+  merges, and every change lands on its own `issue/<n>-<slug>` branch - never a
+  push to your default branch. The agent container gets no token, no docker
+  socket, dropped capabilities, and resource limits. An unattended run cannot do
+  damage.
+- **CI-gated output you can trust.** A PR only flips from draft to ready when the
+  repo's own required CI checks pass. If fixowl cannot get them green within the
+  fix loop's budget, it leaves an honest annotated draft explaining why, rather
+  than shipping broken work. You wake up to reviewable, CI-passing changes, not a
+  mystery blob.
+- **One PR per issue.** Each issue becomes its own isolated, reviewable branch
+  and PR, with dependent work stacked in the right order. You review and merge
+  each in the morning instead of untangling one giant overnight diff.
+- **Bounded cost.** Run budgets - issue count, token budget, and wall-clock -
+  cap what a run can spend, so an unattended night cannot blow through your API
+  credits or usage window.
+- **No wasted spend re-solving done work.** A triage gate skips issues GitHub
+  already records as fixed (a closing-keyword-linked merged PR) or as duplicates
+  before spending an agent on them, and has the agent verify against the current
+  code before it writes a fix.
+- **Reproducible and team-shareable.** It is a versioned workflow committed in
+  your repo, set up with a single `fixowl init`, so the whole team gets identical
+  behavior - not a bespoke script living on one person's machine.
+
 ## How it works
 
 ![Setup, once: fixowl provision pushes labels, sealed secrets and the workflow file to your repo on GitHub, and fixowl start installs and runs the self-hosted runner service on the runner host. Every night: the workflow's cron dispatches a job to that runner while your machine is asleep, and the fixowl action selects issues labeled overnight and orders them by the repo's native blocked-by prerequisites (deferring any issue whose prerequisite isn't shipping tonight); issues are otherwise independent by default, with file-conflict grouping an optional, off-by-default step. For each issue it runs the agent in a Docker container with no GitHub token inside, runs a cheap local .fixowl.yml pre-check, then pushes the branch and opens the pull request as a draft. A bounded CI-gated fix loop waits for the base branch's required checks: when they pass the draft flips to ready for review; when they fail or time out the failures are fed back to the agent and it retries, up to ci_max_tries, leaving an annotated draft if the budget is exhausted. In the morning: you review the pull request, and fixowl never merges.](assets/how-it-works.svg)
