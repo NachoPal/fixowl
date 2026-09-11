@@ -11,13 +11,23 @@
 # release-gated real-call E2E (release.yml) validates the one thing this tier
 # cannot: a real agent, real auth, and the real --model/--effort flags.
 #
-# Cadence: on push to main and nightly (NOT every PR - the shared sandbox would
-# race concurrent runs). It shares the `fixowl-e2e-sandbox` concurrency group
-# with the release E2E so only one run ever touches the sandbox at a time.
+# Cadence: on push to main, nightly, AND on pull requests targeting main so the
+# suite gates a PR before it can merge (the gap that let run 34582938659's breakage
+# land - the suite ran only post-merge). The shared `fixowl-e2e-sandbox` concurrency
+# group (cancel-in-progress: false) still serializes every run, so a PR run queues
+# behind a main/nightly/release run rather than racing the sandbox. Adds ~20-30 min
+# to a same-repo PR (the captain's accepted cost).
+#
+# FORK PRs get no repository secrets (GitHub withholds them from untrusted forks), so
+# the App trio the suite needs is absent there; those runs skip cleanly (green) with a
+# clear note rather than failing red for a non-product reason. fixowl's own work lands
+# on same-repo branches, where the suite runs for real and gates.
 name: e2e-script
 
 on:
   push:
+    branches: [main]
+  pull_request:
     branches: [main]
   schedule:
     - cron: "17 4 * * *" # nightly, off-peak UTC
@@ -42,16 +52,23 @@ jobs:
       SANDBOX_REPO: NachoPal/fixowl-e2e-sandbox
       E2E_MODE: free
     steps:
-      # Until the captain provisions the sandbox repo + the App secrets
-      # (FIXOWL_E2E_APP_ID / FIXOWL_E2E_APP_PRIVATE_KEY), skip cleanly (green)
-      # instead of failing every main-push.
+      # Decide whether to run the suite. The JOB always runs and completes (so it reports a
+      # status context that branch protection can require on same-repo PRs); the steps below
+      # are guarded on `ready` so a skip is a clean green, not a red failure. Two skip cases:
+      #   - fork PR: the FIXOWL_E2E_APP_* secrets are withheld from forks, so the suite cannot
+      #     authenticate; skip with a clear note (re-run after merge or on a trusted branch).
+      #   - sandbox not provisioned yet: the App secrets are unset in this repo.
       - name: Check sandbox is provisioned
         id: guard
         env:
           APP_ID: ${{ secrets.FIXOWL_E2E_APP_ID }}
           APP_PRIVATE_KEY: ${{ secrets.FIXOWL_E2E_APP_PRIVATE_KEY }}
+          IS_FORK_PR: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
         run: |
-          if [ -z "${APP_ID}" ] || [ -z "${APP_PRIVATE_KEY}" ]; then
+          if [ "${IS_FORK_PR}" = "true" ]; then
+            echo "Skipped: fork PR - the FIXOWL_E2E_APP_* secrets are not exposed to fork pull requests, so the free E2E scenario suite cannot run here. It runs (and gates) once the change is on a trusted same-repo branch or after merge." >> "${GITHUB_STEP_SUMMARY}"
+            echo "ready=false" >> "${GITHUB_OUTPUT}"
+          elif [ -z "${APP_ID}" ] || [ -z "${APP_PRIVATE_KEY}" ]; then
             echo "FIXOWL_E2E_APP_ID / FIXOWL_E2E_APP_PRIVATE_KEY not set - sandbox not provisioned yet; skipping." >> "${GITHUB_STEP_SUMMARY}"
             echo "ready=false" >> "${GITHUB_OUTPUT}"
           else

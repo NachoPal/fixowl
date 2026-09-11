@@ -51,6 +51,11 @@ SCENARIO_DIR="$FIXOWL_DIR/scripts/e2e/scenarios"
 DEFAULT_ORDER="baseline red-green cap second-run orphan-and-foreign agent-error layer2-off priority triage-b uid-probe evidence-kill"
 SCENARIOS="${SCENARIOS:-$DEFAULT_ORDER}"
 
+# Self-heal before the loop: clear any stale free-suite fixtures left by a hard-cancelled
+# prior run so they cannot contaminate this run's shared `for: ci-e2e` selection. Best-effort;
+# a scenario's own EXIT-trap cleanup keeps the sandbox clean during the run.
+e2e_sweep_stale_fixtures
+
 PASSED=()
 FAILED=()
 
