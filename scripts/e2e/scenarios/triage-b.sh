@@ -4,8 +4,8 @@
 # the verdict + the (empty) diff, opens NO PR, comments once, labels the issue
 # `fixowl:triaged`, and reports it under `## Triaged out (not worked)`.
 #
-# (Layer A - the already-fixed/duplicate pre-gate - needs persistent hand-made fixtures and
-# a merged PR, so it is a Phase 1 scenario; this covers the free, per-run Layer B.)
+# (Layer A - the already-fixed/duplicate pre-gate - is covered by the sibling `triage-a`
+# scenario, which builds + merges + reopens its own fixtures per run; this covers Layer B.)
 
 TB_ISSUE=""
 

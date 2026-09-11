@@ -349,8 +349,7 @@ See [docs/releasing.md](docs/releasing.md).
   `.github/workflows/e2e-script.yml` runs the same free suite on main-push +
   nightly. All share the one `fixowl-e2e-sandbox` concurrency group so the shared
   sandbox is never raced (`e2e-paid` `needs: e2e-free` so the two never contend
-  within one release run). Deferred (Phase 1 follow-up): `triage-a` (T5-triage
-  Layer A) needs persistent hand-made sandbox fixtures that do not exist yet.
+  within one release run).
 - The bundle is retargeted at the sandbox by a repo-local **JS wrapper action**,
   `.github/actions/e2e-run` (`using: node24`, `run.cjs`), NOT the old shell
   `export GITHUB_*` trick. As a `uses:` step it receives `ACTIONS_RUNTIME_TOKEN`,
@@ -373,7 +372,13 @@ See [docs/releasing.md](docs/releasing.md).
   byte** so the paid tier never drifts), `red-green` (T1-gate; depends on a
   sandbox `ci.yml` marker check), `cap` (T1-budget), `second-run` (T1-standdown),
   `orphan-and-foreign` (T2-orphan + T3-ownership), `agent-error` (T3-error),
-  `layer2-off` (T2-layer2), `priority` (T5-priority), `triage-b` (T5-triage Layer
+  `layer2-off` (T2-layer2), `priority` (T5-priority), `triage-a` (T5-triage Layer
+  A - the deterministic pre-gate; the harness builds + **merges** + reopens a
+  closing-keyword PR and duplicate-labels a second issue per run, all RUN_TAG
+  scoped, superseding the report's manual persistent fixtures; the merge is a
+  clearly-commented HARNESS-ONLY sandbox-fixture merge confined to `scripts/e2e/`,
+  never a product merge - `no-merge.test.ts` scans only `packages/*/src`),
+  `triage-b` (T5-triage Layer
   B), `uid-probe` (T3-pnpm uid half), `evidence-kill` (T1-evidence). Loose
   delivery assertions only (the agent is nondeterministic): PRs on `issue/<n>-*`,
   blocked_by stacking, `isDraft==false` == CI green, plus per-scenario summary/log
