@@ -22,9 +22,11 @@ portable, budget-bounded, CI-gated, reviewable pipeline you can leave running
 and share with a team.
 
 - **Declarative, not nightly babysitting.** You label issues once as you file
-  them - which are `for: agent`, their `priority`, their `effort` - and fixowl
-  decides what to work each run from those rules. You curate the queue by
-  labeling during the day, not by hand-picking a batch every night.
+  them - a pickup label you designate marks which issues fixowl works, optional
+  priority labels order them, and optional selector labels choose the model and
+  reasoning effort each runs with - and fixowl decides what to work each run from
+  those rules. You curate the queue by labeling during the day, not by
+  hand-picking a batch every night.
 - **Runs anywhere, one-line switch.** The workflow's `runs-on` flips between your
   own machine (self-hosted) and GitHub-hosted cloud runners with a single value
   change, so a run is not chained to your laptop being awake. And `fixowl init`
