@@ -97,4 +97,34 @@ describe("validateModelEffort", () => {
     expect(validateModelEffort("script", { model: "opus" })).toHaveLength(1);
     expect(validateModelEffort("script", {})).toEqual([]);
   });
+
+  it("defers a non-catalog model id to the live source but still checks effort", () => {
+    // A live-only codex id (not in the 3-item catalog) is accepted when the
+    // caller signals the agent has a live provider list.
+    expect(
+      validateModelEffort(
+        "codex",
+        { model: "gpt-5.9-codex-max" },
+        { deferModelToLiveSource: true },
+      ),
+    ).toEqual([]);
+    // Effort is always catalog-checked, even when the model is deferred.
+    const errors = validateModelEffort(
+      "codex",
+      { model: "gpt-5.9-codex-max", effort: "max" },
+      { deferModelToLiveSource: true },
+    );
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatch(/effort "max" is not available for agent "codex"/);
+  });
+
+  it("still rejects a non-catalog model when the agent has no live source to defer to", () => {
+    const errors = validateModelEffort(
+      "claude",
+      { model: "made-up-model" },
+      { deferModelToLiveSource: false },
+    );
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatch(/model "made-up-model" is not available for agent "claude"/);
+  });
 });
