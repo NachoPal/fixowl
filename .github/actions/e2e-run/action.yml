@@ -1,0 +1,32 @@
+name: fixowl e2e run
+description: >-
+  Retarget and run the freshly-built fixowl action bundle against the E2E sandbox from
+  inside a JavaScript action step, so ACTIONS_RUNTIME_TOKEN is present and the bundle's
+  progressive evidence upload lands in THIS workflow run. This is the harness wrapper that
+  replaces the old shell `export GITHUB_*` trick; it is a DIFFERENT action (retargeting
+  only), so the "never `uses: ./` the product action" rule still holds - the bundle under
+  test is still dist/action/index.js, reached by path, never as the repo's own action.
+inputs:
+  repository:
+    description: "Direct mode: value to set GITHUB_REPOSITORY to (the sandbox owner/repo)."
+    required: false
+    default: ""
+  workspace:
+    description: "Direct mode: value to set GITHUB_WORKSPACE to (the sandbox checkout path)."
+    required: false
+    default: ""
+  event-name:
+    description: "Value to set GITHUB_EVENT_NAME to (default keeps the scheduled-slot guard inert)."
+    required: false
+    default: "workflow_dispatch"
+  command:
+    description: >-
+      Suite mode: a shell command to run as a child (e.g. the scenario runner). When set,
+      the bundle is NOT required here; the child inherits ACTIONS_RUNTIME_TOKEN and is
+      responsible for its own retargeting and bundle invocation. When empty, direct mode
+      runs dist/action/index.js in this process.
+    required: false
+    default: ""
+runs:
+  using: node24
+  main: run.cjs

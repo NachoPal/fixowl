@@ -328,22 +328,48 @@ See [docs/releasing.md](docs/releasing.md).
   freeze may lose its evidence (its container was frozen).
 
 - Real-call end-to-end tests run the *whole* action against a dedicated,
-  persistent sandbox repo (`NachoPal/fixowl-e2e-sandbox`), not fakes. Two tiers:
-  the paid `e2e` job in `.github/workflows/release.yml` (release dispatch only,
-  `continue-on-error` report-only, real `claude` sonnet call) and the free
-  `.github/workflows/e2e-script.yml` (main-push + nightly, `script` adapter, zero
-  LLM spend). Both share fixtures in `scripts/e2e/{seed,assert,cleanup}.sh` and
-  the one `fixowl-e2e-sandbox` concurrency group so the shared sandbox is never
-  raced. Load-bearing trick: the action reads `GITHUB_REPOSITORY`/`GITHUB_WORKSPACE`
-  from `process.env` and the runner *ignores* `env:` overrides of `GITHUB_*`, so
-  the job runs `node dist/action/index.js` with those set via shell `export` -
-  never `uses: ./` (which would hit the real repo). Loose assertions only (agent
-  is nondeterministic): PRs on `issue/<n>-*`, blocked_by stacking, `isDraft==false`
-  == CI green.
-  Coverage gap (stated in each job summary): NOT self-hosted runner registration,
-  the launchd fallback, or the scheduled-slot budget guard. This is distinct from
-  `scripts/local-docker-e2e.ts` (`pnpm e2e:docker`), an in-process real-docker /
-  fake-GitHub run with no network writes.
+  persistent sandbox repo (`NachoPal/fixowl-e2e-sandbox`), not fakes. Two tiers,
+  both gated into the release in `.github/workflows/release.yml` after the
+  deterministic `verify` job (lint/test/build+bundle-guard/`pnpm e2e:docker`/CLI
+  smokes): `e2e-free` (**BLOCKING**) runs the zero-spend scenario suite with the
+  `script` adapter; `e2e-paid` (`continue-on-error` report-only) runs one real
+  `claude` sonnet call reusing the `baseline` scenario scripts. `publish`
+  `needs: [verify, e2e-free, e2e-paid]`; a `skip_e2e` dispatch input skips both
+  gates (loudly noted in the summary) for a hotfix. `.github/workflows/e2e-script.yml`
+  runs the same free suite on main-push + nightly. All three share the one
+  `fixowl-e2e-sandbox` concurrency group so the shared sandbox is never raced
+  (`e2e-paid` `needs: e2e-free` so the two never contend within one release run).
+- The bundle is retargeted at the sandbox by a repo-local **JS wrapper action**,
+  `.github/actions/e2e-run` (`using: node24`, `run.cjs`), NOT the old shell
+  `export GITHUB_*` trick. As a `uses:` step it receives `ACTIONS_RUNTIME_TOKEN`,
+  so the bundle's progressive evidence upload lands in the fixowl run (what the
+  `evidence-kill` scenario asserts). Two modes: direct (set `GITHUB_*` from
+  inputs, then `import()` the bundle - `e2e-paid`) and suite (spawn a `command`
+  child that inherits the token - the scenario runner). This is a DIFFERENT
+  action whose only job is retargeting, so the "never `uses: ./` the product
+  action" rule still holds (the bundle under test is still `dist/action/index.js`
+  by path).
+- The free suite is `scripts/e2e/run-scenarios.sh`, one sequential loop (NOT a
+  matrix - matrix legs would cancel each other on the shared concurrency group)
+  over `scripts/e2e/scenarios/*.sh`. Each scenario defines `scenario_seed` /
+  `scenario_run_env` / `scenario_assert` / `scenario_cleanup` (shared helpers in
+  `scripts/e2e/lib.sh`), uses a scenario-suffixed `RUN_TAG`, points
+  `GITHUB_STEP_SUMMARY` at a per-scenario file (so it can grep the exact
+  `renderSummary` headings), and captures the run log for negative assertions.
+  Scenarios: `baseline` (reuses `seed.sh`/`assert.sh`/`cleanup.sh` **byte for
+  byte** so the paid tier never drifts), `red-green` (T1-gate; depends on a
+  sandbox `ci.yml` marker check), `cap` (T1-budget), `second-run` (T1-standdown),
+  `orphan-and-foreign` (T2-orphan + T3-ownership), `agent-error` (T3-error),
+  `layer2-off` (T2-layer2), `priority` (T5-priority), `triage-b` (T5-triage Layer
+  B), `uid-probe` (T3-pnpm uid half), `evidence-kill` (T1-evidence). Loose
+  delivery assertions only (the agent is nondeterministic): PRs on `issue/<n>-*`,
+  blocked_by stacking, `isDraft==false` == CI green, plus per-scenario summary/log
+  greps. Coverage gap (stated in each job summary): NOT self-hosted runner
+  registration, the launchd fallback, or the scheduled-slot budget guard.
+- `scripts/local-docker-e2e.ts` (`pnpm e2e:docker`, run in `ci.yml` + `verify`)
+  is the in-process real-docker / fake-GitHub night with no network writes; it
+  asserts git-dir extraction, the token non-leak, the evidence layout, and that
+  pnpm resolves offline as a non-root container user (T3-pnpm pnpm half).
 
 ## Maintaining this file
 

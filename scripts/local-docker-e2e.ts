@@ -5,7 +5,14 @@
  * writes. Run with: pnpm e2e:docker (requires a running Docker engine).
  */
 import { strict as assert } from "node:assert";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import {
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+  existsSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DockerEngine } from "../packages/action/src/container-exec.ts";
@@ -218,3 +225,60 @@ assert.ok(
 console.log(
   "\n✓ local docker e2e passed: real image build, hardened container run, verify, push, PR",
 );
+
+// ---------------------------------------------------------------------------------------
+// T3-pnpm (offline-pnpm half): the fixowl root Dockerfile installs pnpm globally so it
+// resolves with NO network and NO writable HOME at run time (a root-owned corepack cache
+// would be invisible under the non-root `--user` + HOME=/tmp the engine uses, forcing a
+// re-download that fails on `--network none`). Build the root image and run `pnpm --version`
+// in a hardened container (`--network none`, host uid/gid, HOME=/tmp) to prove it offline.
+console.log("\n--- T3-pnpm: offline pnpm in the fixowl root image ---");
+const repoRoot = process.cwd();
+const rootDockerfile = join(repoRoot, "Dockerfile");
+assert.ok(existsSync(rootDockerfile), "fixowl root Dockerfile not found at repo root");
+const pnpmCtx = mkdtempSync(join(tmpdir(), "fixowl-offline-pnpm-"));
+copyFileSync(rootDockerfile, join(pnpmCtx, "Dockerfile"));
+const pnpmImage = "fixowl-offline-pnpm-e2e:local";
+
+const dockerBuild = await realExec.run(
+  ["docker", "build", "-f", join(pnpmCtx, "Dockerfile"), "-t", pnpmImage, pnpmCtx],
+  { cwd: pnpmCtx },
+);
+if (dockerBuild.code !== 0) {
+  throw new Error(`docker build of the root Dockerfile failed: ${dockerBuild.stderr}`);
+}
+
+// Match how DockerEngine runs agents: non-root (host uid/gid) with an explicit writable
+// HOME, and cut the network so a corepack re-download would fail hard.
+const uid = typeof process.getuid === "function" ? process.getuid() : 0;
+const gid = typeof process.getgid === "function" ? process.getgid() : 0;
+const offlinePnpm = await realExec.run(
+  [
+    "docker",
+    "run",
+    "--rm",
+    "--network",
+    "none",
+    "--user",
+    `${uid}:${gid}`,
+    "-e",
+    "HOME=/tmp",
+    pnpmImage,
+    "pnpm",
+    "--version",
+  ],
+  { cwd: pnpmCtx },
+);
+assert.equal(
+  offlinePnpm.code,
+  0,
+  `pnpm --version failed offline (exit ${offlinePnpm.code}): ${offlinePnpm.stderr}`,
+);
+assert.match(
+  offlinePnpm.stdout.trim(),
+  /^\d+\.\d+\.\d+/,
+  `pnpm did not report a version offline: "${offlinePnpm.stdout.trim()}"`,
+);
+console.log(`✓ pnpm resolved offline as a non-root container user: ${offlinePnpm.stdout.trim()}`);
+
+console.log("\n✓ local docker e2e + offline-pnpm checks passed");

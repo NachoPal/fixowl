@@ -8,6 +8,11 @@ name: release
 # pushes, then dispatches this. The `version_suffix` input is appended
 # verbatim to that base version and applied only ephemerally in-CI for the
 # publish; `release_type` picks the channel. See docs/releasing.md.
+#
+# Gating: `publish` runs only after `verify` (deterministic) AND the E2E gates
+# `e2e-free` (BLOCKING, zero-spend scenario suite) and `e2e-paid` (report-only, a
+# real agent call). `dry_run` runs everything except the publish side effects;
+# `skip_e2e` lets a hotfix skip the E2E gates (loudly noted in the summary).
 
 on:
   workflow_dispatch:
@@ -28,9 +33,13 @@ on:
         description: "Run everything except npm publish, tag push, and Release creation"
         type: boolean
         default: false
+      skip_e2e:
+        description: "Skip the E2E gates (e2e-free + e2e-paid). For a hotfix when the sandbox is unavailable."
+        type: boolean
+        default: false
 
 permissions:
-  contents: write # push git tags and create the GitHub Release
+  contents: write # push git tags and create the GitHub Release (in publish)
   id-token: write # npm OIDC trusted publishing (auth + provenance), no token
 
 concurrency:
@@ -38,22 +47,17 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  release:
+  # Deterministic gate: lint, test, build + bundle-freshness guard, the in-process real-docker
+  # night (pnpm e2e:docker), and the CLI smokes. No side effects, so contents: read only.
+  verify:
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    # A job-level permissions block REPLACES the workflow-level one for this job,
-    # so it must re-declare contents: write (tag push + GitHub Release) alongside
-    # id-token: write. This is the canonical OIDC form, belt-and-suspenders with
-    # the workflow-level block above.
     permissions:
-      contents: write # push git tags and create the GitHub Release
-      id-token: write # npm OIDC trusted publishing
+      contents: read
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          # Credentials are persisted so the release can push tags; unlike CI,
-          # this job legitimately writes to the repo (contents: write above).
-          persist-credentials: true
+          persist-credentials: false
 
       - uses: pnpm/action-setup@d9184bf108216479bc5a137cc391f4d7b14c870b # v6.1.0
 
@@ -75,6 +79,258 @@ jobs:
         run: |
           pnpm build
           git diff --exit-code -- dist
+
+      # Whole-night against a REAL Docker engine (fake GitHub): git-dir extraction, the
+      # planted-hook non-execution, the token non-leak, the evidence layout, and offline
+      # pnpm as a non-root container user (T3-pnpm). Ubuntu runners ship Docker.
+      - name: Docker E2E (pnpm e2e:docker)
+        run: pnpm e2e:docker
+
+      # CLI smokes of the built `fixowl` binary (no network writes; covers T5-manual-provision,
+      # the runtime_token migration, `init --non-interactive`, and "aider is gone").
+      - name: CLI smokes
+        run: bash scripts/e2e/cli-smokes.sh
+
+  # Free, zero-spend scenario suite (the `script` adapter) against the shared sandbox - the
+  # BLOCKING E2E gate. Runs under the e2e-run wrapper action so ACTIONS_RUNTIME_TOKEN is
+  # present and the evidence-kill scenario's progressive upload lands in THIS run.
+  e2e-free:
+    name: E2E free (scenario suite)
+    needs: [verify]
+    if: ${{ inputs.skip_e2e == false }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read # checkout only; the sandbox is reached with its own App token
+      actions: read # list this run's evidence artifacts (evidence-kill assertion)
+    concurrency:
+      group: fixowl-e2e-sandbox # serialize every workflow that touches the one shared sandbox
+      cancel-in-progress: false
+    env:
+      SANDBOX_REPO: NachoPal/fixowl-e2e-sandbox
+      E2E_MODE: free
+    steps:
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        id: app-token
+        with:
+          app-id: ${{ secrets.FIXOWL_E2E_APP_ID }}
+          private-key: ${{ secrets.FIXOWL_E2E_APP_PRIVATE_KEY }}
+          owner: NachoPal
+          repositories: fixowl-e2e-sandbox
+
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@d9184bf108216479bc5a137cc391f4d7b14c870b # v6.1.0
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build the action bundle under test
+        run: pnpm build
+
+      - name: Checkout the sandbox repo
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: NachoPal/fixowl-e2e-sandbox
+          token: ${{ steps.app-token.outputs.token }}
+          path: sandbox
+          fetch-depth: 0
+          persist-credentials: false # the action pushes with its own App token
+
+      - name: Run the free scenario suite
+        uses: ./.github/actions/e2e-run
+        with:
+          # Suite mode: the wrapper spawns the runner as a child so it (and every `node`
+          # it runs) inherits ACTIONS_RUNTIME_TOKEN - the one thing a `run:` step cannot get.
+          command: bash scripts/e2e/run-scenarios.sh
+        env:
+          SANDBOX_REPO: NachoPal/fixowl-e2e-sandbox
+          GH_TOKEN: ${{ steps.app-token.outputs.token }} # fixture gh calls only; never the agent's
+          FIXOWL_APP_ID: ${{ secrets.FIXOWL_E2E_APP_ID }}
+          FIXOWL_APP_INSTALLATION_ID: ${{ steps.app-token.outputs.installation-id }}
+          FIXOWL_APP_PRIVATE_KEY: ${{ secrets.FIXOWL_E2E_APP_PRIVATE_KEY }}
+          # Optional evidence-kill cross-check against this run's own artifacts.
+          FIXOWL_SELF_TOKEN: ${{ github.token }}
+          FIXOWL_SELF_REPO: ${{ github.repository }}
+          FIXOWL_RUN_ID: ${{ github.run_id }}
+
+  # Real-call E2E: one real claude (sonnet/medium) night against the sandbox via the wrapper
+  # action (direct mode), reusing the baseline seed/assert/cleanup scripts. REPORT-ONLY: a
+  # paid, nondeterministic agent must not veto a release on its first flake. Runs after
+  # e2e-free so the two never contend for the shared sandbox concurrency group in one run.
+  e2e-paid:
+    name: E2E paid (real sonnet call)
+    needs: [verify, e2e-free]
+    if: ${{ inputs.skip_e2e == false }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    continue-on-error: true # report-only to start; promote once the flake rate is known
+    permissions:
+      contents: read
+    concurrency:
+      group: fixowl-e2e-sandbox
+      cancel-in-progress: false
+    env:
+      SANDBOX_REPO: NachoPal/fixowl-e2e-sandbox
+      E2E_MODE: paid
+      RUN_TAG: paid-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        id: app-token
+        with:
+          app-id: ${{ secrets.FIXOWL_E2E_APP_ID }}
+          private-key: ${{ secrets.FIXOWL_E2E_APP_PRIVATE_KEY }}
+          owner: NachoPal
+          repositories: fixowl-e2e-sandbox
+
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@d9184bf108216479bc5a137cc391f4d7b14c870b # v6.1.0
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build the action bundle under test
+        run: pnpm build
+
+      - name: Checkout the sandbox repo
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: NachoPal/fixowl-e2e-sandbox
+          token: ${{ steps.app-token.outputs.token }}
+          path: sandbox
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Seed sandbox fixtures
+        id: seed
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }} # for the fixture gh calls
+        run: bash scripts/e2e/seed.sh
+
+      - name: Run fixowl against the sandbox (real sonnet call)
+        id: run
+        uses: ./.github/actions/e2e-run
+        with:
+          # Direct mode: the wrapper retargets GITHUB_* at the sandbox and runs the bundle in
+          # its own process (so evidence uploads into this run), no shell export trick.
+          repository: NachoPal/fixowl-e2e-sandbox
+          workspace: ${{ github.workspace }}/sandbox
+          event-name: workflow_dispatch # keep the scheduled-slot budget guard inert
+        env:
+          FIXOWL_APP_ID: ${{ secrets.FIXOWL_E2E_APP_ID }}
+          FIXOWL_APP_INSTALLATION_ID: ${{ steps.app-token.outputs.installation-id }}
+          FIXOWL_APP_PRIVATE_KEY: ${{ secrets.FIXOWL_E2E_APP_PRIVATE_KEY }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          INPUT_LABELS-ANY: "for: ci-e2e"
+          INPUT_AGENT: claude
+          INPUT_AGENT-ENV: CLAUDE_CODE_OAUTH_TOKEN
+          INPUT_DEFAULT-MODEL: sonnet
+          INPUT_DEFAULT-EFFORT: medium
+          INPUT_LABEL-MODELS: "" # empty => every issue falls back to sonnet/medium
+          INPUT_MAX-ISSUES-PER-RUN: "3"
+          INPUT_ISSUE-TIMEOUT-MINUTES: "15"
+          INPUT_MAX-CI-TRIES: "2"
+          INPUT_CI-TIMEOUT-MINUTES: "15"
+          INPUT_HEURISTIC-CONFLICT-ORDERING: "false"
+
+      - name: Assert delivery (loose)
+        id: assert
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }} # for the fixture gh calls
+          A: ${{ steps.seed.outputs.A }}
+          B: ${{ steps.seed.outputs.B }}
+        run: bash scripts/e2e/assert.sh
+
+      - name: Tear down sandbox fixtures
+        if: always()
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }} # for the fixture gh calls
+          A: ${{ steps.seed.outputs.A }}
+          B: ${{ steps.seed.outputs.B }}
+        run: bash scripts/e2e/cleanup.sh
+
+      - name: E2E summary
+        if: always()
+        env:
+          RUN_OUTCOME: ${{ steps.run.outcome }}
+          ASSERT_OUTCOME: ${{ steps.assert.outcome }}
+        run: |
+          {
+            echo "## fixowl real-call E2E (report-only)"
+            echo ""
+            echo "- Sandbox: \`${SANDBOX_REPO}\` (run tag \`${RUN_TAG}\`)"
+            echo "- Action run step: **${RUN_OUTCOME}**"
+            echo "- Loose assertions: **${ASSERT_OUTCOME}**"
+            echo ""
+            if [ "${ASSERT_OUTCOME}" = "success" ]; then
+              echo "PASS: real agent -> docker -> push -> PR -> CI-gate -> ready, with blocked_by stacking."
+            else
+              echo "NOT PASSING (report-only, does not block the release). Investigate above."
+            fi
+            echo ""
+            echo "### Coverage honesty"
+            echo "This validates only the **GitHub-hosted** action->docker->agent->push->PR->CI-gate path."
+            echo "It does **NOT** cover: self-hosted runner registration (\`fixowl provision\`/\`registerRunner\`),"
+            echo "the launchd local fallback trigger, or the once-a-day scheduled-slot budget guard"
+            echo "(inert on manual dispatch). Those remain covered only by unit tests."
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+  # Plan, preflight, and the publish side effects. Runs only after verify and both E2E gates.
+  # e2e-free is BLOCKING (a failure blocks publish); e2e-paid is continue-on-error (never
+  # blocks); either is skipped when skip_e2e is set (a skipped need never blocks publish).
+  publish:
+    needs: [verify, e2e-free, e2e-paid]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # A job-level permissions block REPLACES the workflow-level one, so re-declare both.
+    permissions:
+      contents: write # push git tags and create the GitHub Release
+      id-token: write # npm OIDC trusted publishing
+    steps:
+      - name: Note skipped E2E gates
+        if: ${{ inputs.skip_e2e == true }}
+        run: |
+          {
+            echo "## ⚠️ E2E GATES SKIPPED"
+            echo ""
+            echo "This release was dispatched with \`skip_e2e: true\`: the BLOCKING free scenario suite"
+            echo "and the report-only paid E2E did **not** run. Only \`verify\` (lint/test/build/docker/CLI)"
+            echo "gated this release. Use this only for a hotfix when the sandbox is unavailable."
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          # Credentials are persisted so the release can push tags; unlike CI,
+          # this job legitimately writes to the repo (contents: write above).
+          persist-credentials: true
+
+      - uses: pnpm/action-setup@d9184bf108216479bc5a137cc391f4d7b14c870b # v6.1.0
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
 
       - name: Compute release plan
         id: plan
@@ -202,158 +458,4 @@ jobs:
             echo "Would publish to npm: ${PUBLISH_NPM} (dist-tag '${NPM_TAG}')."
             echo "Would create git tag ${GIT_TAG} (push: ${PUSH_GIT_TAG}; move ${MAJOR_TAG}: ${MOVE_MAJOR})."
             echo "GitHub Release draft: ${IS_DRAFT}, prerelease: ${IS_PRERELEASE}."
-          } >> "${GITHUB_STEP_SUMMARY}"
-
-  # Real-call end-to-end smoke test of the just-built action against a dedicated,
-  # persistent sandbox repo (NachoPal/fixowl-e2e-sandbox). It seeds throwaway
-  # `for: ci-e2e` issues with one native blocked_by edge, runs the freshly-built
-  # dist/action/index.js retargeted at the sandbox with a forced-cheap model
-  # (sonnet/medium for EVERY issue), asserts loosely that PRs landed on the
-  # expected issue/<n>-* branches with the dependency order respected and CI
-  # green, and tears everything down.
-  #
-  # REPORT-ONLY (continue-on-error): a paid, nondeterministic agent test must not
-  # veto a release on its first flake. Promote to a hard gate once the flake rate
-  # is known. This validates the GitHub-hosted action->docker->agent->push->PR->
-  # CI-gate path; it does NOT cover self-hosted runner registration, the launchd
-  # fallback, or the scheduled-slot budget guard (all inert on manual dispatch).
-  e2e:
-    name: E2E (real sonnet call against the sandbox)
-    needs: [release]
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    continue-on-error: true # report-only to start: a paid, flaky agent test must not veto a release
-    permissions:
-      contents: read # checkout only; the sandbox is reached with its own App token
-    # Serialize every workflow that touches the one shared sandbox (this job and
-    # the free script-adapter E2E) so runs never race on branches/issues.
-    concurrency:
-      group: fixowl-e2e-sandbox
-      cancel-in-progress: false
-    env:
-      SANDBOX_REPO: NachoPal/fixowl-e2e-sandbox
-      E2E_MODE: paid
-      RUN_TAG: paid-${{ github.run_id }}-${{ github.run_attempt }}
-    steps:
-      # Mint a GitHub App installation token scoped to the sandbox only, for the
-      # fixture gh calls and the sandbox checkout (job-scoped, ~1h expiry, which
-      # comfortably outlasts this short job). The action itself gets the App
-      # trio below and mints its own auto-refreshing token, exactly as a
-      # provisioned repo does; this step also resolves the installation id the
-      # trio needs.
-      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
-        id: app-token
-        with:
-          app-id: ${{ secrets.FIXOWL_E2E_APP_ID }}
-          private-key: ${{ secrets.FIXOWL_E2E_APP_PRIVATE_KEY }}
-          owner: NachoPal
-          repositories: fixowl-e2e-sandbox
-
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          persist-credentials: false
-
-      - uses: pnpm/action-setup@d9184bf108216479bc5a137cc391f4d7b14c870b # v6.1.0
-
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
-        with:
-          node-version: 24
-          cache: pnpm
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Build the action bundle under test
-        run: pnpm build
-
-      # The action operates on whatever GITHUB_WORKSPACE points at, so check the
-      # sandbox out beside the fixowl tree and retarget the action at it below.
-      - name: Checkout the sandbox repo
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          repository: NachoPal/fixowl-e2e-sandbox
-          token: ${{ steps.app-token.outputs.token }}
-          path: sandbox
-          fetch-depth: 0
-          persist-credentials: false # the action pushes with its own App token
-
-      - name: Seed sandbox fixtures
-        id: seed
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }} # for the fixture gh calls
-        run: bash scripts/e2e/seed.sh
-
-      - name: Run fixowl against the sandbox (real sonnet call)
-        id: run
-        env:
-          # The App runtime credential, as `fixowl provision` seals it. The key
-          # is GitHub's PKCS#1 download; the action's auth converts it on Node.
-          FIXOWL_APP_ID: ${{ secrets.FIXOWL_E2E_APP_ID }}
-          FIXOWL_APP_INSTALLATION_ID: ${{ steps.app-token.outputs.installation-id }}
-          FIXOWL_APP_PRIVATE_KEY: ${{ secrets.FIXOWL_E2E_APP_PRIVATE_KEY }}
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          # Action inputs (read by @actions/core.getInput as INPUT_<NAME
-          # upper-cased, spaces->_, hyphens kept>).
-          INPUT_LABELS-ANY: "for: ci-e2e"
-          INPUT_AGENT: claude
-          INPUT_AGENT-ENV: CLAUDE_CODE_OAUTH_TOKEN
-          INPUT_DEFAULT-MODEL: sonnet
-          INPUT_DEFAULT-EFFORT: medium
-          INPUT_LABEL-MODELS: "" # empty => every issue falls back to sonnet/medium
-          INPUT_MAX-ISSUES-PER-RUN: "3"
-          INPUT_ISSUE-TIMEOUT-MINUTES: "15"
-          INPUT_MAX-CI-TRIES: "2"
-          INPUT_CI-TIMEOUT-MINUTES: "15"
-          INPUT_HEURISTIC-CONFLICT-ORDERING: "false"
-        run: |
-          set -euo pipefail
-          DIST="$PWD/dist/action/index.js"
-          # The runner ignores env: overrides of GITHUB_*/RUNNER_* vars, so a
-          # `uses: ./` step would run against the real fixowl repo. Set them with
-          # a shell export (not policed) and run the built binary directly.
-          export GITHUB_REPOSITORY="$SANDBOX_REPO"
-          export GITHUB_WORKSPACE="$GITHUB_WORKSPACE/sandbox"
-          export GITHUB_EVENT_NAME=workflow_dispatch # keep the budget guard inert
-          node "$DIST"
-
-      - name: Assert delivery (loose)
-        id: assert
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }} # for the fixture gh calls
-          A: ${{ steps.seed.outputs.A }}
-          B: ${{ steps.seed.outputs.B }}
-        run: bash scripts/e2e/assert.sh
-
-      - name: Tear down sandbox fixtures
-        if: always()
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }} # for the fixture gh calls
-          A: ${{ steps.seed.outputs.A }}
-          B: ${{ steps.seed.outputs.B }}
-        run: bash scripts/e2e/cleanup.sh
-
-      - name: E2E summary
-        if: always()
-        env:
-          RUN_OUTCOME: ${{ steps.run.outcome }}
-          ASSERT_OUTCOME: ${{ steps.assert.outcome }}
-        run: |
-          {
-            echo "## fixowl real-call E2E (report-only)"
-            echo ""
-            echo "- Sandbox: \`${SANDBOX_REPO}\` (run tag \`${RUN_TAG}\`)"
-            echo "- Action run step: **${RUN_OUTCOME}**"
-            echo "- Loose assertions: **${ASSERT_OUTCOME}**"
-            echo ""
-            if [ "${ASSERT_OUTCOME}" = "success" ]; then
-              echo "PASS: real agent -> docker -> push -> PR -> CI-gate -> ready, with blocked_by stacking."
-            else
-              echo "NOT PASSING (report-only, does not block the release). Investigate above."
-            fi
-            echo ""
-            echo "### Coverage honesty"
-            echo "This validates only the **GitHub-hosted** action->docker->agent->push->PR->CI-gate path."
-            echo "It does **NOT** cover: self-hosted runner registration (\`fixowl provision\`/\`registerRunner\`),"
-            echo "the launchd local fallback trigger, or the once-a-day scheduled-slot budget guard"
-            echo "(inert on manual dispatch). Those remain covered only by unit tests."
           } >> "${GITHUB_STEP_SUMMARY}"
