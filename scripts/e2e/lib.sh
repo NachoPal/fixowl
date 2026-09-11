@@ -190,8 +190,7 @@ e2e_cleanup_tracked() {
 # cancellation (or a historical run predating the cleanup fix) can strand fixtures that would
 # then contaminate the next run's shared `for: ci-e2e` selection. Running this once before the
 # scenario loop makes the suite self-healing and deterministic. Scoped to `for: ci-e2e` +
-# "[free-" so it only ever clears this suite's own stranded fixtures (every scenario, triage-a
-# included, builds its fixtures per run under a "[free-...]" title) and never touches the
+# "[free-" so it never touches the persistent `for: ci-e2e-triage` Layer A fixtures or the
 # sandbox's own `for: agent` nightly issues.
 e2e_sweep_stale_fixtures() {
   local n stale

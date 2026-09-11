@@ -48,7 +48,7 @@ SCEN_DIR="$(mktemp -d)"
 SCENARIO_DIR="$FIXOWL_DIR/scripts/e2e/scenarios"
 # Default order: baseline first (warms the docker image cache), evidence-kill last (it runs
 # the bundle in the background and kills it).
-DEFAULT_ORDER="baseline red-green cap second-run orphan-and-foreign agent-error layer2-off priority triage-a triage-b uid-probe evidence-kill"
+DEFAULT_ORDER="baseline red-green cap second-run orphan-and-foreign agent-error layer2-off priority triage-b uid-probe evidence-kill"
 SCENARIOS="${SCENARIOS:-$DEFAULT_ORDER}"
 
 # Self-heal before the loop: clear any stale free-suite fixtures left by a hard-cancelled
