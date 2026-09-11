@@ -63,7 +63,10 @@ run_one_scenario() {
     # Each scenario defines scenario_seed / scenario_run_env / scenario_assert / scenario_cleanup.
     # shellcheck source=/dev/null
     source "$file"
-    export RUN_TAG="free-${GH_RUN_ID}-${GH_RUN_ATTEMPT}-${name}"
+    # RUN_TAG_PREFIX defaults to "free" so the zero-spend suite is byte-for-byte unchanged; the
+    # paid tier sets RUN_TAG_PREFIX=paid so its sandbox fixtures are not mislabeled "free-".
+    # (Additive, default-preserving - kept trivial for the concurrent harness-repair rebase.)
+    export RUN_TAG="${RUN_TAG_PREFIX:-free}-${GH_RUN_ID}-${GH_RUN_ATTEMPT}-${name}"
     local summary_file="$SCEN_DIR/$name.summary.md"
     local run_log="$SCEN_DIR/$name.run.log"
     : > "$summary_file"
