@@ -104,6 +104,21 @@ export function agentCatalogEntry(agent: string): AgentCatalogEntry | undefined 
   return AGENT_MODEL_CATALOG[agent];
 }
 
+/**
+ * Whether a raw provider model id belongs to the codex family. OpenAI's
+ * `/v1/models` returns the WHOLE account catalog (gpt-4*, embeddings, whisper,
+ * tts, dall-e, ...); only the codex-family ids are meaningful to the codex
+ * adapter. Every codex model id carries the `codex` token (`gpt-5-codex`,
+ * `gpt-5.1-codex`, `gpt-5.1-codex-max`, `codex-mini-latest`, ...), which the
+ * non-codex OpenAI ids never do, so a substring match cleanly excludes them.
+ * Kept here, next to the catalog, so the live init picker (`model-list.ts`) and
+ * any future consumer share one owner for the family shape rather than
+ * re-deriving it.
+ */
+export function isCodexFamilyModel(id: string): boolean {
+  return id.includes("codex");
+}
+
 export function agentModelIds(agent: string): string[] {
   return (agentCatalogEntry(agent)?.models ?? []).map((model) => model.id);
 }

@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
+import { isCodexFamilyModel, type CatalogModel } from "./agent-catalog.ts";
 import {
   getModelListSource,
   liveModelCheck,
+  livePickerModels,
   OPENAI_MODELS_URL,
   parseOpenAiModels,
   type ModelListProbe,
+  type ModelListSource,
 } from "./model-list.ts";
 
 describe("parseOpenAiModels", () => {
@@ -94,6 +97,79 @@ describe("openai (codex) model list source", () => {
     );
     expect(result?.ids).toBeUndefined();
     expect(result?.skippedReason).toContain("unexpected shape");
+  });
+});
+
+describe("isCodexFamilyModel", () => {
+  it("accepts codex-family ids and rejects the rest of the OpenAI catalog", () => {
+    for (const id of ["gpt-5-codex", "gpt-5.1-codex", "gpt-5.1-codex-max", "codex-mini-latest"]) {
+      expect(isCodexFamilyModel(id)).toBe(true);
+    }
+    for (const id of [
+      "gpt-4o",
+      "gpt-4.1-mini",
+      "text-embedding-3-small",
+      "whisper-1",
+      "tts-1",
+      "dall-e-3",
+      "o3-mini",
+    ]) {
+      expect(isCodexFamilyModel(id)).toBe(false);
+    }
+  });
+});
+
+describe("livePickerModels", () => {
+  const source = getModelListSource("codex");
+  if (source === undefined) throw new Error("codex source must exist");
+
+  const catalog: readonly CatalogModel[] = [
+    { id: "gpt-5-codex", description: "Codex-optimized GPT-5; a good default." },
+    { id: "gpt-5.1-codex", description: "Newer codex model." },
+  ];
+
+  it("offers only codex-family ids from the whole OpenAI list, in served order", () => {
+    const models = livePickerModels(
+      source,
+      { ids: ["gpt-4o", "gpt-5.1-codex", "text-embedding-3-small", "gpt-5-codex", "whisper-1"] },
+      catalog,
+    );
+    expect(models?.map((model) => model.id)).toEqual(["gpt-5.1-codex", "gpt-5-codex"]);
+  });
+
+  it("reuses the catalog description for a known id and a generic hint for a new one", () => {
+    const models = livePickerModels(source, { ids: ["gpt-5-codex", "gpt-5.2-codex-max"] }, catalog);
+    const byId = new Map(models?.map((model) => [model.id, model.description]));
+    expect(byId.get("gpt-5-codex")).toBe("Codex-optimized GPT-5; a good default.");
+    expect(byId.get("gpt-5.2-codex-max")).toContain("not in fixowl's built-in catalog");
+    expect(byId.get("gpt-5.2-codex-max")).toContain("OpenAI /v1/models");
+  });
+
+  it("dedupes repeated served ids", () => {
+    const models = livePickerModels(
+      source,
+      { ids: ["gpt-5-codex", "gpt-5-codex", "gpt-5.1-codex"] },
+      catalog,
+    );
+    expect(models?.map((model) => model.id)).toEqual(["gpt-5-codex", "gpt-5.1-codex"]);
+  });
+
+  it("returns undefined (fall back to catalog) when the list is unreachable", () => {
+    expect(
+      livePickerModels(source, { ids: undefined, skippedReason: "offline" }, catalog),
+    ).toBeUndefined();
+  });
+
+  it("returns undefined when the list contains no codex-family id", () => {
+    expect(
+      livePickerModels(source, { ids: ["gpt-4o", "text-embedding-3-small"] }, catalog),
+    ).toBeUndefined();
+  });
+
+  it("keeps the whole list when the source has no family filter", () => {
+    const noFilter: ModelListSource = { label: "x", tokenEnv: "X", list: source.list };
+    const models = livePickerModels(noFilter, { ids: ["a", "b"] }, catalog);
+    expect(models?.map((model) => model.id)).toEqual(["a", "b"]);
   });
 });
 

@@ -162,8 +162,16 @@ See [docs/releasing.md](docs/releasing.md).
   `GET /v1/models` read and returns undefined for claude so it keeps the
   catalog alone). Fail-open by contract (`liveModelCheck`): an unreachable list
   warns and defers to the catalog, only a fetched-but-missing model hard-fails
-  validate. Add a new provider's source there. `init` still picks from the
-  catalog (live enrichment is a follow-up); the night RUN does no live check.
+  validate. Add a new provider's source there. `fixowl init`'s model picker is
+  live for codex too: it fetches the account's reachable ids via the SAME
+  `getModelListSource` path (bounded + fail-open in `resolvePickerModels`,
+  `packages/cli/src/commands/init.ts`, sharing validate's `fetchJson` edge),
+  narrows the whole-OpenAI-catalog list to the codex family
+  (`isCodexFamilyModel`, one owner in `agent-catalog.ts`), and reconciles ids
+  with catalog descriptions via the pure `livePickerModels` (`model-list.ts`);
+  an unreachable list / absent key / odd shape falls back to the exact catalog
+  with a warning. claude stays catalog-only (no live source) and effort stays
+  catalog-driven. The night RUN does no live check.
 - The scheduling trigger is a first-class per-repo choice
   (`schedule_trigger` in `config-schema.ts`, a `fixowl init` prompt), resolving
   to one of three modes via `resolveRepoSettings` (unset -> `both`, which

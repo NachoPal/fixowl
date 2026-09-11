@@ -22,6 +22,8 @@
  * definitely missing the configured model is a hard failure.
  */
 
+import { isCodexFamilyModel, type CatalogModel } from "./agent-catalog.ts";
+
 /**
  * How the host reaches one agent's provider model list. `fetchJson` is the
  * single injected I/O edge; it must reject on a non-2xx or transport error.
@@ -50,6 +52,14 @@ export interface ModelListSource {
   label: string;
   /** Env var whose value authorizes the read (e.g. "OPENAI_API_KEY"). */
   tokenEnv: string;
+  /**
+   * Narrows the provider's served ids to this agent's model family for the
+   * `fixowl init` picker. A provider list is the whole account catalog (OpenAI
+   * serves gpt-4*, embeddings, whisper, ... alongside codex), so the picker
+   * offers only the ids this returns true for. `undefined` keeps them all. Not
+   * used by `validate`, which checks exact configured ids against the full list.
+   */
+  familyFilter?: (id: string) => boolean;
   list(probe: ModelListProbe): Promise<ModelListResult>;
 }
 
@@ -82,6 +92,7 @@ export function parseOpenAiModels(raw: unknown): string[] | undefined {
 const openAiModelListSource: ModelListSource = {
   label: "OpenAI /v1/models",
   tokenEnv: OPENAI_TOKEN_ENV,
+  familyFilter: isCodexFamilyModel,
   async list(probe: ModelListProbe): Promise<ModelListResult> {
     const token = probe.env[OPENAI_TOKEN_ENV];
     if (token === undefined || token === "") {
@@ -116,6 +127,42 @@ const MODEL_LIST_SOURCES: Record<string, ModelListSource> = { codex: openAiModel
  */
 export function getModelListSource(agentName: string): ModelListSource | undefined {
   return MODEL_LIST_SOURCES[agentName];
+}
+
+/**
+ * Reconcile a live provider model list into `fixowl init` picker choices for one
+ * agent. Pure: the caller does the fetch (via `source.list`) and passes the
+ * result and the agent's catalog models. Steps:
+ * - narrow the served ids to the agent's family via `source.familyFilter` (the
+ *   OpenAI list is the whole account catalog, not just codex), deduping;
+ * - pair each surviving id with the catalog's description when the catalog knows
+ *   it, or a generic hint when the id is newer than the catalog.
+ *
+ * Returns `undefined` to mean "fall back to the static catalog" - the live list
+ * was unreachable (`result.ids === undefined`) or narrowing left nothing
+ * recognizable - so the picker keeps its exact pre-live behavior. This mirrors
+ * `liveModelCheck`'s fail-open discipline: an unusable live list is never fatal.
+ */
+export function livePickerModels(
+  source: ModelListSource,
+  result: ModelListResult,
+  catalogModels: readonly CatalogModel[],
+): CatalogModel[] | undefined {
+  if (result.ids === undefined) return undefined;
+  const inFamily = source.familyFilter ?? (() => true);
+  const descriptionById = new Map(catalogModels.map((model) => [model.id, model.description]));
+  const seen = new Set<string>();
+  const models: CatalogModel[] = [];
+  for (const id of result.ids) {
+    if (!inFamily(id) || seen.has(id)) continue;
+    seen.add(id);
+    models.push({
+      id,
+      description:
+        descriptionById.get(id) ?? `Live ${source.label} model (not in fixowl's built-in catalog).`,
+    });
+  }
+  return models.length > 0 ? models : undefined;
 }
 
 /** Categorized messages from checking chosen models against a live list. */

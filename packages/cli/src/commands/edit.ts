@@ -17,6 +17,7 @@ import { renderSecretsEnv } from "../init/config-file.ts";
 import { log } from "../log.ts";
 import { createPrompter, type Prompter } from "../prompt.ts";
 import {
+  modelListProbe,
   promptRepoSettings,
   renderActionsNeeded,
   stepAgent,
@@ -132,7 +133,15 @@ Nothing is written until you're done, and the file's comments are preserved.`);
     // switched agent uses its freshly-picked env, otherwise the repo's current
     // resolved env (so claude-on-API-key keeps offering the token budget).
     const agentEnv = agentSwitch?.env ?? current.agentEnv;
-    const answers = await promptRepoSettings(prompter, ctx.admin, agent, repo, prefill, agentEnv);
+    const answers = await promptRepoSettings(
+      prompter,
+      ctx.admin,
+      agent,
+      repo,
+      prefill,
+      agentEnv,
+      modelListProbe(secrets),
+    );
     const result = applyRepoEditToText(text, ctx.config, repo, answers, agentSwitch);
     text = result.text;
     editedAny = editedAny || result.changed;
