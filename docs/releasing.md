@@ -37,6 +37,13 @@ Trigger from Actions -> **release** -> **Run workflow** (or
   `-alpha.3`, ...). The composed `base + suffix` must be valid SemVer 2.0.0.
 - **`dry_run`** (boolean, default false): run everything except the actual npm
   publish, tag push, and Release creation (a validation-only pass).
+- **`skip_e2e`** (boolean, default false): skip the E2E gates (`e2e-free` +
+  `e2e-paid`). For a hotfix when the shared sandbox is unavailable; loudly noted
+  in the run summary.
+- **`allow_paid_failure`** (boolean, default false): publish even if the paid
+  E2E job (`e2e-paid`) fails. Default (unchecked) is **blocking** - a paid E2E
+  failure fails that job and, through `publish`'s `needs`, skips the release.
+  Check it to tolerate a paid failure (report-only) and let `publish` proceed.
 
 Every run first lints, tests, and builds (failing if the committed `dist/action`
 bundle is stale), then computes the plan.

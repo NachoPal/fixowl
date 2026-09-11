@@ -10,8 +10,10 @@ name: release
 # publish; `release_type` picks the channel. See docs/releasing.md.
 #
 # Gating: `publish` runs only after `verify` (deterministic) AND the E2E gates
-# `e2e-free` (BLOCKING, zero-spend scenario suite) and `e2e-paid` (report-only, a
-# real agent call). `dry_run` runs everything except the publish side effects;
+# `e2e-free` (BLOCKING, zero-spend scenario suite) and `e2e-paid` (a real agent
+# call, BLOCKING by default). A paid failure blocks the release unless the
+# dispatcher checks `allow_paid_failure` (then the paid job is report-only and
+# publish proceeds). `dry_run` runs everything except the publish side effects;
 # `skip_e2e` lets a hotfix skip the E2E gates (loudly noted in the summary).
 
 on:
@@ -35,6 +37,10 @@ on:
         default: false
       skip_e2e:
         description: "Skip the E2E gates (e2e-free + e2e-paid). For a hotfix when the sandbox is unavailable."
+        type: boolean
+        default: false
+      allow_paid_failure:
+        description: "Publish even if the paid E2E job fails. Default (unchecked): a paid E2E failure blocks the release."
         type: boolean
         default: false
 
@@ -164,10 +170,12 @@ jobs:
   # Real-call E2E (Phase 1 paid tier): a scenario suite of four real-agent nights against the
   # sandbox via the wrapper action (suite mode) - claude-oauth (sonnet, subscription),
   # paid-claude-api-key (haiku, ANTHROPIC_API_KEY), paid-codex (gpt-5.4-mini, OPENAI_API_KEY),
-  # and paid-codex-tokens (the total-token budget stop). REPORT-ONLY: paid, nondeterministic
-  # agents must not veto a release on their first flake; per-scenario outcomes + measured token
-  # usage go to the summary and an artifact so the flake rate is measurable toward promotion
-  # (report 4.5). Runs after e2e-free so the two never contend for the shared sandbox
+  # and paid-codex-tokens (the total-token budget stop). BLOCKING by default: a paid-scenario
+  # failure fails this job and (via publish's `needs`) skips the release. The dispatcher can
+  # opt out per run with `allow_paid_failure` (renders continue-on-error true, so the job goes
+  # green even on a scenario failure and publish proceeds - the old report-only behavior). Per
+  # scenario outcomes + measured token usage go to the summary and an artifact so the flake
+  # rate stays measurable. Runs after e2e-free so the two never contend for the shared sandbox
   # concurrency group in one run.
   e2e-paid:
     name: E2E paid (real claude + codex scenario suite)
@@ -175,7 +183,10 @@ jobs:
     if: ${{ inputs.skip_e2e == false }}
     runs-on: ubuntu-latest
     timeout-minutes: 60 # four real-agent scenarios sequentially (shared sandbox, no matrix)
-    continue-on-error: true # report-only to start; promote once the flake rate is known
+    # BLOCKING by default (false): a scenario failure fails the job and skips publish. Checking
+    # `allow_paid_failure` at dispatch makes this true, so the job tolerates the failure and
+    # publish proceeds (report-only). See docs/releasing.md.
+    continue-on-error: ${{ inputs.allow_paid_failure }}
     permissions:
       contents: read
     concurrency:
@@ -268,7 +279,7 @@ jobs:
           RESULTS="${GITHUB_WORKSPACE}/paid-artifacts/results.tsv"
           USAGE="${GITHUB_WORKSPACE}/paid-artifacts/usage.tsv"
           {
-            echo "## fixowl paid E2E (report-only)"
+            echo "## fixowl paid E2E"
             echo ""
             echo "- Sandbox: \`${SANDBOX_REPO}\` (run tag prefix \`paid-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}\`)"
             echo "- Scenario suite step: **${RUN_OUTCOME}**"
@@ -350,9 +361,11 @@ jobs:
         run: node scripts/e2e/validate-models.mjs
 
   # Plan, preflight, and the publish side effects. Runs only after verify and both E2E gates.
-  # e2e-free is BLOCKING (a failure blocks publish); e2e-paid is continue-on-error (never
-  # blocks); either is skipped when skip_e2e is set (a skipped need never blocks publish).
-  # model-validate is report-only and deliberately NOT a publish dependency.
+  # e2e-free is BLOCKING (a failure blocks publish); e2e-paid is BLOCKING by default and a
+  # failure blocks publish, unless the dispatcher checks `allow_paid_failure` (then e2e-paid is
+  # continue-on-error and does not block). Either E2E gate is skipped when skip_e2e is set (a
+  # skipped need never blocks publish). model-validate is report-only and deliberately NOT a
+  # publish dependency.
   publish:
     needs: [verify, e2e-free, e2e-paid]
     runs-on: ubuntu-latest
@@ -369,7 +382,7 @@ jobs:
             echo "## ⚠️ E2E GATES SKIPPED"
             echo ""
             echo "This release was dispatched with \`skip_e2e: true\`: the BLOCKING free scenario suite"
-            echo "and the report-only paid E2E did **not** run. Only \`verify\` (lint/test/build/docker/CLI)"
+            echo "and the paid E2E did **not** run. Only \`verify\` (lint/test/build/docker/CLI)"
             echo "gated this release. Use this only for a hotfix when the sandbox is unavailable."
           } >> "${GITHUB_STEP_SUMMARY}"
 
