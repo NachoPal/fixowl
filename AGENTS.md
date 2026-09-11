@@ -332,20 +332,33 @@ See [docs/releasing.md](docs/releasing.md).
   both gated into the release in `.github/workflows/release.yml` after the
   deterministic `verify` job (lint/test/build+bundle-guard/`pnpm e2e:docker`/CLI
   smokes): `e2e-free` (**BLOCKING**) runs the zero-spend scenario suite with the
-  `script` adapter; `e2e-paid` (`continue-on-error` report-only) runs one real
-  `claude` sonnet call reusing the `baseline` scenario scripts. `publish`
-  `needs: [verify, e2e-free, e2e-paid]`; a `skip_e2e` dispatch input skips both
-  gates (loudly noted in the summary) for a hotfix. `.github/workflows/e2e-script.yml`
-  runs the same free suite on main-push + nightly. All three share the one
-  `fixowl-e2e-sandbox` concurrency group so the shared sandbox is never raced
-  (`e2e-paid` `needs: e2e-free` so the two never contend within one release run).
+  `script` adapter; `e2e-paid` (`continue-on-error` report-only) runs a
+  FOUR-scenario suite of real agent calls through the SAME `run-scenarios.sh`
+  (`SCENARIOS=`): `claude-oauth` (sonnet, subscription OAuth), `paid-claude-api-key`
+  (haiku, `ANTHROPIC_API_KEY`), `paid-codex` (`gpt-5.4-mini`, `OPENAI_API_KEY`),
+  `paid-codex-tokens` (the total-token budget stop). It writes per-scenario
+  outcomes + measured token usage (codex via the product's own
+  `parseCodexUsage` over the evidence agent logs; claude not measured in-band,
+  #143) to the job summary AND a `paid-e2e-outcomes` artifact, so the flake rate
+  is measurable toward the "10 consecutive green then block stable" promotion
+  rule (design report 4.5). A separate report-only `model-validate` job checks the
+  codex CI model against OpenAI's live `/v1/models` (`scripts/e2e/validate-models.mjs`,
+  the live half of T5-modelvalidate); it is deliberately NOT a `publish`
+  dependency. `publish` `needs: [verify, e2e-free, e2e-paid]`; a `skip_e2e`
+  dispatch input skips the E2E gates (loudly noted in the summary) for a hotfix.
+  `.github/workflows/e2e-script.yml` runs the same free suite on main-push +
+  nightly. All share the one `fixowl-e2e-sandbox` concurrency group so the shared
+  sandbox is never raced (`e2e-paid` `needs: e2e-free` so the two never contend
+  within one release run). Deferred (Phase 1 follow-up): `triage-a` (T5-triage
+  Layer A) needs persistent hand-made sandbox fixtures that do not exist yet.
 - The bundle is retargeted at the sandbox by a repo-local **JS wrapper action**,
   `.github/actions/e2e-run` (`using: node24`, `run.cjs`), NOT the old shell
   `export GITHUB_*` trick. As a `uses:` step it receives `ACTIONS_RUNTIME_TOKEN`,
   so the bundle's progressive evidence upload lands in the fixowl run (what the
   `evidence-kill` scenario asserts). Two modes: direct (set `GITHUB_*` from
-  inputs, then `import()` the bundle - `e2e-paid`) and suite (spawn a `command`
-  child that inherits the token - the scenario runner). This is a DIFFERENT
+  inputs, then `import()` the bundle) and suite (spawn a `command` child that
+  inherits the token - the scenario runner, used by BOTH `e2e-free` and
+  `e2e-paid`). This is a DIFFERENT
   action whose only job is retargeting, so the "never `uses: ./` the product
   action" rule still holds (the bundle under test is still `dist/action/index.js`
   by path).
@@ -366,6 +379,22 @@ See [docs/releasing.md](docs/releasing.md).
   blocked_by stacking, `isDraft==false` == CI green, plus per-scenario summary/log
   greps. Coverage gap (stated in each job summary): NOT self-hosted runner
   registration, the launchd fallback, or the scheduled-slot budget guard.
+- The PAID tier reuses the SAME `run-scenarios.sh` and scenario contract - the
+  only difference is the agent, chosen per scenario via `INPUT_AGENT` /
+  `INPUT_AGENT-ENV` (each picks exactly one credential as the EXCLUSIVE container
+  allowlist, so only the credential under test enters a container). Paid scenarios
+  (`scripts/e2e/scenarios/{claude-oauth,paid-claude-api-key,paid-codex,paid-codex-tokens}.sh`)
+  source `scripts/e2e/paid-lib.sh` (paid-only helpers, kept OUT of the shared
+  `lib.sh` so the paid tier adds no churn to the harness the free suite depends
+  on): bounding caps (`paid_bounding_env`: max-issues = fixture count,
+  issue-timeout 10m, ci-tries 2, run-budget 15m, always `for: ci-e2e` - NEVER a
+  real `for: agent` label), NL single-issue seeding, outcome/usage recording, and
+  a codex auth-failure log check. The paid tier sets `RUN_TAG_PREFIX=paid` (the
+  runner defaults it to `free`) and the `PAID_RESULTS_FILE` / `PAID_USAGE_FILE`
+  env paths the recorders append to. Because a paid scenario captures its issue
+  number in a command substitution, it MUST `e2e_track_issue` in its own shell
+  (a subshell's tracking is lost) so cleanup always tears the real sandbox
+  fixture down.
 - `scripts/local-docker-e2e.ts` (`pnpm e2e:docker`, run in `ci.yml` + `verify`)
   is the in-process real-docker / fake-GitHub night with no network writes; it
   asserts git-dir extraction, the token non-leak, the evidence layout, and that
