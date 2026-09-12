@@ -424,6 +424,40 @@ describe("globalConfigSchemaChecked (agent-aware model/effort)", () => {
       }),
     ).toThrow(/effort .*max.* is not available for agent .*codex/);
   });
+
+  it("accepts a live-only codex model id (defers model membership to the live check)", () => {
+    // A real codex model newer than the static catalog: not a hard schema error
+    // for codex, because codex has a live provider source and validate's live
+    // /v1/models check decides the id.
+    expect(() =>
+      globalConfigSchemaChecked.parse({
+        ...minimalConfig,
+        defaults: { agent: "codex" },
+        agents: { codex: { env: ["OPENAI_API_KEY"] } },
+        repos: [{ name: "NachoPal/storyengine", model: "gpt-5.9-codex-max", effort: "high" }],
+      }),
+    ).not.toThrow();
+  });
+
+  it("still rejects a non-catalog model for claude, which has no live source", () => {
+    expect(() =>
+      globalConfigSchemaChecked.parse({
+        ...minimalConfig,
+        repos: [{ name: "NachoPal/storyengine", model: "made-up-model" }],
+      }),
+    ).toThrow(/made-up-model.* is not available for agent .*claude/);
+  });
+
+  it("still rejects a bad effort for a live-only codex model", () => {
+    expect(() =>
+      globalConfigSchemaChecked.parse({
+        ...minimalConfig,
+        defaults: { agent: "codex" },
+        agents: { codex: { env: ["OPENAI_API_KEY"] } },
+        repos: [{ name: "NachoPal/storyengine", model: "gpt-5.9-codex-max", effort: "max" }],
+      }),
+    ).toThrow(/effort .*max.* is not available for agent .*codex/);
+  });
 });
 
 describe("repoFileConfigSchema (.fixowl.yml)", () => {

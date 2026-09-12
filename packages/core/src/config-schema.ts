@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { validateModelEffort } from "./agent-catalog.ts";
 import { labelRuleSchema, type LabelRule } from "./labels.ts";
+import { getModelListSource } from "./model-list.ts";
 import type { LabelModelMap } from "./model-selection.ts";
 import { prioritySchema, type PriorityConfig, type PrioritySettings } from "./priority.ts";
 
@@ -499,12 +500,18 @@ function resolvePriority(priority: PriorityConfig | undefined): PrioritySettings
  * validated against the agent that repo runs. Returns one message per problem.
  */
 export function resolvedModelSelectionErrors(settings: ResolvedRepoSettings): string[] {
-  const errors = validateModelEffort(settings.agent, {
-    model: settings.defaultModel,
-    effort: settings.defaultEffort,
-  });
+  // Agents with a live provider model list (codex) defer model-id validation to
+  // the live `/v1/models` check in `fixowl validate`; this pure/sync check would
+  // otherwise hard-reject a valid live-only id newer than the static catalog.
+  // Effort is still validated against the catalog for every agent.
+  const options = { deferModelToLiveSource: getModelListSource(settings.agent) !== undefined };
+  const errors = validateModelEffort(
+    settings.agent,
+    { model: settings.defaultModel, effort: settings.defaultEffort },
+    options,
+  );
   for (const [label, choice] of Object.entries(settings.labelModels)) {
-    for (const message of validateModelEffort(settings.agent, choice)) {
+    for (const message of validateModelEffort(settings.agent, choice, options)) {
       errors.push(`selector label "${label}": ${message}`);
     }
   }

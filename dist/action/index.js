@@ -85775,10 +85775,13 @@ function agentBilling(agent, env) {
 function agentCatalogEntry(agent) {
   return AGENT_MODEL_CATALOG[agent];
 }
+function isCodexFamilyModel(id) {
+  return id.includes("codex");
+}
 function agentModelIds(agent) {
   return (agentCatalogEntry(agent)?.models ?? []).map((model) => model.id);
 }
-function validateModelEffort(agent, choice) {
+function validateModelEffort(agent, choice, options) {
   const errors = [];
   const entry = agentCatalogEntry(agent);
   if (entry === void 0) {
@@ -85789,7 +85792,7 @@ function validateModelEffort(agent, choice) {
     }
     return errors;
   }
-  if (choice.model !== void 0 && !entry.models.some((model) => model.id === choice.model)) {
+  if (choice.model !== void 0 && options?.deferModelToLiveSource !== true && !entry.models.some((model) => model.id === choice.model)) {
     errors.push(
       `model "${choice.model}" is not available for agent "${agent}" (available: ${agentModelIds(agent).join(", ")})`
     );
@@ -85833,6 +85836,54 @@ function resolveModelSelection(params) {
     };
   }
   return { ok: true, selection: {}, source: "agent-default" };
+}
+
+// packages/core/src/model-list.ts
+var OPENAI_MODELS_URL = "https://api.openai.com/v1/models";
+var OPENAI_TOKEN_ENV = "OPENAI_API_KEY";
+function parseOpenAiModels(raw) {
+  if (raw === null || typeof raw !== "object") return void 0;
+  const data = raw.data;
+  if (!Array.isArray(data)) return void 0;
+  const ids = [];
+  for (const item of data) {
+    if (item !== null && typeof item === "object") {
+      const id = item.id;
+      if (typeof id === "string" && id.length > 0) ids.push(id);
+    }
+  }
+  return ids;
+}
+var openAiModelListSource = {
+  label: "OpenAI /v1/models",
+  tokenEnv: OPENAI_TOKEN_ENV,
+  familyFilter: isCodexFamilyModel,
+  async list(probe) {
+    const token = probe.env[OPENAI_TOKEN_ENV];
+    if (token === void 0 || token === "") {
+      return {
+        ids: void 0,
+        skippedReason: `no ${OPENAI_TOKEN_ENV} available to query the OpenAI model list`
+      };
+    }
+    try {
+      const raw = await probe.fetchJson(OPENAI_MODELS_URL, {
+        Authorization: `Bearer ${token}`
+      });
+      const ids = parseOpenAiModels(raw);
+      if (ids === void 0) {
+        return { ids: void 0, skippedReason: "OpenAI /v1/models returned an unexpected shape" };
+      }
+      return { ids };
+    } catch (error62) {
+      const detail = error62 instanceof Error ? error62.message : String(error62);
+      return { ids: void 0, skippedReason: `could not reach OpenAI /v1/models (${detail})` };
+    }
+  }
+};
+var MODEL_LIST_SOURCES = { codex: openAiModelListSource };
+function getModelListSource(agentName) {
+  return MODEL_LIST_SOURCES[agentName];
 }
 
 // packages/core/src/config-schema.ts
@@ -86133,12 +86184,14 @@ function resolvePriority(priority) {
   return { labels: [...priority.labels], includeUnlabeled: priority.include_unlabeled ?? true };
 }
 function resolvedModelSelectionErrors(settings) {
-  const errors = validateModelEffort(settings.agent, {
-    model: settings.defaultModel,
-    effort: settings.defaultEffort
-  });
+  const options = { deferModelToLiveSource: getModelListSource(settings.agent) !== void 0 };
+  const errors = validateModelEffort(
+    settings.agent,
+    { model: settings.defaultModel, effort: settings.defaultEffort },
+    options
+  );
   for (const [label, choice] of Object.entries(settings.labelModels)) {
-    for (const message of validateModelEffort(settings.agent, choice)) {
+    for (const message of validateModelEffort(settings.agent, choice, options)) {
       errors.push(`selector label "${label}": ${message}`);
     }
   }

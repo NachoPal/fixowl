@@ -8,9 +8,14 @@ import {
   agentCatalogEntry,
   FIXOWL_DEFAULTS,
   getAgentAdapter,
+  getModelListSource,
+  livePickerModels,
   repoFullNameSchema,
   resolveRepoSettings,
   type AgentCatalogEntry,
+  type CatalogModel,
+  type ModelListProbe,
+  type ModelListResult,
   type RunnerMode,
   type ScheduleTrigger,
 } from "@fixowl/core";
@@ -57,7 +62,7 @@ import { runnerPlatformSupported } from "../runner/install.ts";
 import { fallbackInstallCommand } from "./fallback.ts";
 import { provisionCommand, type ProvisionResult } from "./provision.ts";
 import { startCommand } from "./start.ts";
-import { validateCommand } from "./validate.ts";
+import { fetchJson, validateCommand } from "./validate.ts";
 
 const PAT_URL = "https://github.com/settings/personal-access-tokens/new";
 
@@ -208,7 +213,18 @@ every answer is stored in ${dirname(configPath)}.`);
   const { admin, app } = await stepTokens(prompter, secrets, secretsPath);
   const { agent, agentEnv } = await stepAgent(prompter, secrets);
   const runnerMode = await stepRunnerMode(prompter);
-  const repos = await stepRepos(prompter, admin, agent, agentEnv, runnerMode);
+  // The credential just collected in Step 2 (e.g. OPENAI_API_KEY) is now in the
+  // in-memory secrets map, so the model picker can read the account's live model
+  // list. Fail-open lives in the picker, so a missing key / offline host just
+  // falls back to the catalog.
+  const repos = await stepRepos(
+    prompter,
+    admin,
+    agent,
+    agentEnv,
+    runnerMode,
+    modelListProbe(secrets),
+  );
   // Modes 2 (host-scheduler) and 3 (both) need the host launchd agent and its
   // scoped dispatch token; mode 1 (github-cron) needs neither. A GitHub-hosted
   // runner forces github-cron for every repo, so this is always false there.
@@ -943,6 +959,7 @@ async function stepRepos(
   agent: string,
   agentEnv: readonly string[],
   runnerMode: RunnerMode,
+  probe?: ModelListProbe,
 ): Promise<RepoAnswers[]> {
   log.info(`
 Step 3/4  Repositories
@@ -979,7 +996,15 @@ CI-gated fix loop budget, and which model the coding agent runs with.`);
   for (;;) {
     log.info(`\nRepo ${repos.length + 1}`);
     const name = await askRepoName(prompter, admin, repos);
-    const answers = await promptRepoSettings(prompter, admin, agent, name, prefill, agentEnv);
+    const answers = await promptRepoSettings(
+      prompter,
+      admin,
+      agent,
+      name,
+      prefill,
+      agentEnv,
+      probe,
+    );
     repos.push({ name, ...answers });
 
     // Carry this repo's non-model answers forward as the next repo's prefill.
@@ -1054,6 +1079,12 @@ export async function promptRepoSettings(
    * some tests do) falls back to the name-keyed default.
    */
   agentEnv?: readonly string[],
+  /**
+   * Reads the coding agent's live provider model list for the picker (codex ->
+   * OpenAI `/v1/models`). Omitted (as some tests, and older callers, do) makes
+   * the picker catalog-only, exactly as before live model lists.
+   */
+  probe?: ModelListProbe,
 ): Promise<RepoSettingsAnswers> {
   const scheduleAnswer = await prompter.ask(
     "  Nightly run time (local HH:MM, or a 5-field UTC cron)",
@@ -1178,6 +1209,7 @@ export async function promptRepoSettings(
     agent,
     await fetchLabelCandidates(admin, repoName, labels),
     current,
+    probe,
   );
 
   return {
@@ -1286,9 +1318,19 @@ async function stepModelSelection(
   agent: string,
   labelCandidates: readonly string[],
   current?: ModelSelectionAnswers,
+  probe?: ModelListProbe,
 ): Promise<ModelSelectionAnswers> {
-  const catalog = agentCatalogEntry(agent);
-  if (catalog === undefined) return {}; // agent has no model/effort axis; nothing to ask
+  const entry = agentCatalogEntry(agent);
+  if (entry === undefined) return {}; // agent has no model/effort axis; nothing to ask
+
+  // The model list becomes live for agents whose provider serves one (codex);
+  // efforts stay catalog-driven. Fail-open resolution falls back to the exact
+  // catalog list when the live list is unreachable, so `catalog` below is the
+  // catalog with only its `models` possibly swapped for the account's live set.
+  const catalog: AgentCatalogEntry = {
+    models: await resolvePickerModels(agent, entry, probe),
+    efforts: entry.efforts,
+  };
 
   log.info(`
   Model selection for "${agent}" (${catalog.models.length} models, efforts: ${catalog.efforts.join(", ")})`);
@@ -1448,6 +1490,72 @@ async function fetchLabelCandidates(
   } catch {
     return [];
   }
+}
+
+/**
+ * Bound on the live model-list fetch. `init` is interactive, so a slow or
+ * hanging OpenAI read must never stall the wizard: it loses the race, the picker
+ * warns, and falls back to the catalog.
+ */
+const MODEL_LIST_FETCH_TIMEOUT_MS = 8000;
+
+/** Build the picker's live-model-list probe from an in-memory secrets map. */
+export function modelListProbe(secrets: Record<string, string>): ModelListProbe {
+  return { env: { ...process.env, ...secrets }, fetchJson };
+}
+
+/** Reject if `promise` has not settled within `ms`; the timer never keeps node alive. */
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_resolve, reject) => {
+      setTimeout(() => reject(new Error(`timed out after ${ms}ms`)), ms).unref();
+    }),
+  ]);
+}
+
+/**
+ * The model list the picker offers for `agent`. For an agent whose provider
+ * serves a live model list (codex -> OpenAI `/v1/models`), fetch the account's
+ * reachable ids and reconcile them with the catalog for descriptions
+ * (`livePickerModels`); agents with no live source (claude) always get the
+ * catalog unchanged.
+ *
+ * Fail-open, mirroring `fixowl validate`: an unreachable list, a missing/absent
+ * OpenAI key, an unexpected shape, or a slow/erroring fetch all fall back to the
+ * exact static catalog with a short warning - `init` never hangs or crashes on
+ * this. `probe` omitted (older callers, some tests) => catalog only.
+ */
+async function resolvePickerModels(
+  agent: string,
+  catalog: AgentCatalogEntry,
+  probe: ModelListProbe | undefined,
+): Promise<readonly CatalogModel[]> {
+  if (probe === undefined) return catalog.models;
+  const source = getModelListSource(agent);
+  if (source === undefined) return catalog.models; // no live list (claude); catalog is authoritative
+
+  let result: ModelListResult;
+  try {
+    result = await withTimeout(source.list(probe), MODEL_LIST_FETCH_TIMEOUT_MS);
+  } catch (error) {
+    log.warn(
+      `couldn't read the live ${source.label} model list (${describeError(error)}); ` +
+        "using the built-in catalog",
+    );
+    return catalog.models;
+  }
+
+  const live = livePickerModels(source, result, catalog.models);
+  if (live === undefined) {
+    log.warn(
+      `live ${source.label} model list unavailable` +
+        (result.skippedReason !== undefined ? ` (${result.skippedReason})` : "") +
+        "; using the built-in catalog",
+    );
+    return catalog.models;
+  }
+  return live;
 }
 
 async function chooseModel(

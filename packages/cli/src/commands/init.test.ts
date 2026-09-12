@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Octokit } from "@octokit/rest";
-import { getAgentAdapter, globalConfigSchema } from "@fixowl/core";
+import { getAgentAdapter, globalConfigSchema, type ModelListProbe } from "@fixowl/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { parse as parseYaml } from "yaml";
 import { parseSecretsEnv } from "../config-load.ts";
@@ -481,6 +481,138 @@ describe("promptRepoSettings billing-aware spend cap", () => {
       cloudPrefill,
     );
     expect(answers.scheduleTrigger).toBe("github-cron");
+  });
+});
+
+/**
+ * A prompter that drives the model picker to the default-model chooser and
+ * records the model choices it was offered. `confirm` says yes only to "Set a
+ * default model", so no label mapping runs; `choose` records the values shown
+ * for the "Default model" question and picks the first.
+ */
+function modelPickerPrompter(): { prompter: Prompter; modelChoices: () => string[] } {
+  let modelChoices: string[] = [];
+  const prompter = {
+    ask: async (q: string) => repoPromptAnswer(q),
+    confirm: async (q: string) => q.includes("Set a default model"),
+    choose: async (q: string, choices: ReadonlyArray<{ value: unknown }>) => {
+      if (q.includes("Default model")) modelChoices = choices.map((c) => String(c.value));
+      return choices[0]?.value;
+    },
+    multiChoose: async () => [],
+    secret: async () => "",
+    pause: async () => {},
+    say: () => {},
+    close: () => {},
+  } as unknown as Prompter;
+  return { prompter, modelChoices: () => modelChoices };
+}
+
+/** A probe serving a fixed OpenAI-shaped `/v1/models` payload; never touches the network. */
+function fixedProbe(ids: string[]): ModelListProbe {
+  return {
+    env: { OPENAI_API_KEY: "sk-test" },
+    fetchJson: async () => ({ data: ids.map((id) => ({ id })) }),
+  };
+}
+
+describe("promptRepoSettings live model picker", () => {
+  const admin = {} as unknown as Octokit;
+  const prefill: RepoSettingsPrefill = {
+    schedule: "02:37",
+    scheduleTrigger: "host-scheduler",
+    labels: "overnight",
+    maxIssuesPerRun: 4,
+    usageBudgetPercent: 85,
+    totalTokenBudget: 3_000_000,
+    runBudgetMinutes: 240,
+    issueTimeoutMinutes: 45,
+    ciMaxTries: 3,
+    ciTimeoutMinutes: 60,
+    heuristicConflictOrdering: false,
+  };
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("offers codex-family ids from the live list, excluding non-codex OpenAI ids", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const { prompter, modelChoices } = modelPickerPrompter();
+    const probe = fixedProbe(["gpt-4o", "gpt-5.1-codex", "text-embedding-3-small", "gpt-5-codex"]);
+    const answers = await promptRepoSettings(
+      prompter,
+      admin,
+      "codex",
+      "acme/widgets",
+      prefill,
+      ["OPENAI_API_KEY"],
+      probe,
+    );
+    expect(modelChoices()).toEqual(["gpt-5.1-codex", "gpt-5-codex"]);
+    expect(modelChoices()).not.toContain("gpt-4o");
+    expect(modelChoices()).not.toContain("text-embedding-3-small");
+    expect(answers.defaultModel).toBe("gpt-5.1-codex");
+  });
+
+  it("falls back to the catalog with a warning when the live list is unreachable", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const warnings: string[] = [];
+    vi.spyOn(console, "warn").mockImplementation((...args: unknown[]) => {
+      warnings.push(args.join(" "));
+    });
+    const { prompter, modelChoices } = modelPickerPrompter();
+    const probe: ModelListProbe = {
+      env: { OPENAI_API_KEY: "sk-test" },
+      fetchJson: async () => {
+        throw new Error("HTTP 503");
+      },
+    };
+    await promptRepoSettings(prompter, admin, "codex", "acme/widgets", prefill, [], probe);
+    // The exact codex catalog ids, unchanged.
+    expect(modelChoices()).toEqual(["gpt-5-codex", "gpt-5.1-codex", "gpt-5.1-codex-max"]);
+    expect(warnings.some((w) => w.includes("built-in catalog"))).toBe(true);
+  });
+
+  it("falls back to the catalog when the OpenAI key is absent (no fetch)", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { prompter, modelChoices } = modelPickerPrompter();
+    let fetched = false;
+    const probe: ModelListProbe = {
+      env: {},
+      fetchJson: async () => {
+        fetched = true;
+        return {};
+      },
+    };
+    await promptRepoSettings(prompter, admin, "codex", "acme/widgets", prefill, [], probe);
+    expect(fetched).toBe(false);
+    expect(modelChoices()).toEqual(["gpt-5-codex", "gpt-5.1-codex", "gpt-5.1-codex-max"]);
+  });
+
+  it("leaves the claude picker catalog-only even with a probe present", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const { prompter, modelChoices } = modelPickerPrompter();
+    let fetched = false;
+    const probe: ModelListProbe = {
+      env: { OPENAI_API_KEY: "sk-test" },
+      fetchJson: async () => {
+        fetched = true;
+        return { data: [{ id: "gpt-5-codex" }] };
+      },
+    };
+    await promptRepoSettings(
+      prompter,
+      admin,
+      "claude",
+      "acme/widgets",
+      prefill,
+      ["CLAUDE_CODE_OAUTH_TOKEN"],
+      probe,
+    );
+    expect(fetched).toBe(false); // claude has no live model-list source
+    expect(modelChoices()).toEqual(["opus", "sonnet", "haiku", "fable"]);
   });
 });
 

@@ -90,10 +90,11 @@ export async function validateCommand(ctx: CliContext): Promise<boolean> {
       if (budgetWarning !== undefined) log.warn(`repo ${repoEntry.name}: ${budgetWarning}`);
 
       // Live provider check: for agents whose provider serves a queryable model
-      // list, confirm each chosen id is actually reachable. Only when the
-      // catalog check passed (a catalog miss already fails above). Fail-open: an
-      // unreachable list warns and falls back to the catalog; a fetched list
-      // missing the model is a hard failure.
+      // list, confirm each chosen id is actually reachable. For those agents the
+      // catalog check above defers model-id membership to here (only an invalid
+      // effort still fails above), so a live-only codex id reaches this check
+      // instead of being short-circuited. Fail-open: an unreachable list warns
+      // and falls back to the catalog; a fetched list missing the model fails.
       if (modelErrors.length === 0) {
         await validateModelsAgainstLiveList({
           repoName: repoEntry.name,
@@ -154,12 +155,13 @@ export function usageBudgetBillingMismatch(
 }
 
 /**
- * The single network edge for the live model-list check. Rejects on a non-2xx
- * so the source treats the list as unobservable and validate falls back to the
+ * The single network edge for the live model-list read. Rejects on a non-2xx
+ * so the source treats the list as unobservable and the caller falls back to the
  * catalog. This is a free model-listing read (no inference); the pure source in
- * @fixowl/core does no I/O of its own.
+ * @fixowl/core does no I/O of its own. Shared with the `fixowl init` picker
+ * (init.ts) so the two never drift onto separate fetch paths.
  */
-async function fetchJson(url: string, headers: Record<string, string>): Promise<unknown> {
+export async function fetchJson(url: string, headers: Record<string, string>): Promise<unknown> {
   const response = await fetch(url, { headers });
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}`);

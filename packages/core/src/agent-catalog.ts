@@ -104,6 +104,21 @@ export function agentCatalogEntry(agent: string): AgentCatalogEntry | undefined 
   return AGENT_MODEL_CATALOG[agent];
 }
 
+/**
+ * Whether a raw provider model id belongs to the codex family. OpenAI's
+ * `/v1/models` returns the WHOLE account catalog (gpt-4*, embeddings, whisper,
+ * tts, dall-e, ...); only the codex-family ids are meaningful to the codex
+ * adapter. Every codex model id carries the `codex` token (`gpt-5-codex`,
+ * `gpt-5.1-codex`, `gpt-5.1-codex-max`, `codex-mini-latest`, ...), which the
+ * non-codex OpenAI ids never do, so a substring match cleanly excludes them.
+ * Kept here, next to the catalog, so the live init picker (`model-list.ts`) and
+ * any future consumer share one owner for the family shape rather than
+ * re-deriving it.
+ */
+export function isCodexFamilyModel(id: string): boolean {
+  return id.includes("codex");
+}
+
 export function agentModelIds(agent: string): string[] {
   return (agentCatalogEntry(agent)?.models ?? []).map((model) => model.id);
 }
@@ -122,8 +137,21 @@ export interface ModelEffortChoice {
  * one human-readable message per problem (empty when everything is valid, or
  * when nothing was chosen). Agent-aware: the same model id may be valid for one
  * agent and unknown to another.
+ *
+ * `deferModelToLiveSource` skips only the model-catalog-membership check (effort
+ * is always checked against the catalog). Callers set it when the agent has a
+ * live provider model list (`getModelListSource`), because this pure/sync check
+ * cannot query the provider and the hand-maintained catalog lags the account's
+ * real model list: hard-failing here would reject a valid live-only id (e.g. a
+ * codex model newer than the catalog) that the live `/v1/models` check in
+ * `fixowl validate` would accept. The live check then decides the model id;
+ * agents with no live source (claude) stay strictly catalog-gated.
  */
-export function validateModelEffort(agent: string, choice: ModelEffortChoice): string[] {
+export function validateModelEffort(
+  agent: string,
+  choice: ModelEffortChoice,
+  options?: { deferModelToLiveSource?: boolean },
+): string[] {
   const errors: string[] = [];
   const entry = agentCatalogEntry(agent);
   if (entry === undefined) {
@@ -134,7 +162,11 @@ export function validateModelEffort(agent: string, choice: ModelEffortChoice): s
     }
     return errors;
   }
-  if (choice.model !== undefined && !entry.models.some((model) => model.id === choice.model)) {
+  if (
+    choice.model !== undefined &&
+    options?.deferModelToLiveSource !== true &&
+    !entry.models.some((model) => model.id === choice.model)
+  ) {
     errors.push(
       `model "${choice.model}" is not available for agent "${agent}" ` +
         `(available: ${agentModelIds(agent).join(", ")})`,
