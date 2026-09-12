@@ -6,6 +6,13 @@ describe("classifyMergeability", () => {
     expect(classifyMergeability(false, "dirty")).toBe("rebase");
   });
 
+  it("rebases a conflicted draft PR whose dirty state is shadowed by draft", () => {
+    // A fixowl PR is a draft while the gate runs, and GitHub can report
+    // mergeable_state "draft" instead of "dirty"; mergeable === false is then
+    // the reliable conflict signal.
+    expect(classifyMergeability(false, "draft")).toBe("rebase");
+  });
+
   it("proceeds on a clean PR", () => {
     expect(classifyMergeability(true, "clean")).toBe("proceed");
   });

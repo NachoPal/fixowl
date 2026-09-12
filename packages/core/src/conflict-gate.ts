@@ -31,15 +31,21 @@ export type ConflictAction = "proceed" | "rebase" | "unknown";
  * Decide from a PR's mergeability whether the gate may proceed, a rebase is
  * needed, or GitHub has not computed it yet.
  *
- * Only `dirty` (real merge conflicts) triggers a rebase. `behind` (the base
- * moved but there is no conflict, common under a strict required-checks policy)
- * is deliberately NOT a rebase: GitHub's own "out of date" required check
- * handles it, and rebasing for it would be needless churn. `null` mergeability
- * is `unknown` (GitHub still computing) regardless of the `mergeable_state`
- * string, which is often `"unknown"`/`"checking"` in that window.
+ * Only real merge conflicts trigger a rebase. `dirty` is the direct signal, but
+ * a fixowl PR is always a draft while the gate runs and GitHub's
+ * `mergeable_state` can report `"draft"` (shadowing `"dirty"`) for a conflicted
+ * draft PR; in that case the `mergeable === false` boolean is the reliable
+ * conflict signal, so a `false`/`draft` pair also rebases. `behind` (the base
+ * moved but there is no conflict, common under a strict required-checks policy),
+ * `blocked`, and `unstable` are deliberately NOT a rebase: they are not
+ * conflicts (`mergeable` stays `true`), GitHub's own required checks handle
+ * them, and rebasing would be needless churn. `null` mergeability is `unknown`
+ * (GitHub still computing) regardless of the `mergeable_state` string, which is
+ * often `"unknown"`/`"checking"` in that window.
  */
 export function classifyMergeability(mergeable: boolean | null, state: string): ConflictAction {
   if (mergeable === null) return "unknown";
   if (state === "dirty") return "rebase";
+  if (mergeable === false && state === "draft") return "rebase";
   return "proceed";
 }
