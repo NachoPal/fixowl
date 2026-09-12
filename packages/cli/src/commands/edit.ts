@@ -452,7 +452,7 @@ async function offerProvision(prompter: Prompter, configPath: string): Promise<v
   }
   log.info("\n$ fixowl provision");
   const ctx = makeContext(configPath === CONFIG_PATH ? undefined : configPath);
-  const result = await provisionCommand(ctx, undefined, { noRegister: true });
+  const result = await provisionCommand(ctx, undefined, { noRegister: true, prompter });
   log.info(renderActionsNeeded(result).block);
 }
 

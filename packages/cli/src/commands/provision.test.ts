@@ -341,4 +341,32 @@ describe("fixowl provision", () => {
     expect(workflow?.content).toContain("runs-on: [self-hosted, fixowl]");
     expect(registerRunner).toHaveBeenCalledTimes(1);
   });
+
+  it("default (no flag, no prompter): pins the CLI's own release tag SHA", async () => {
+    // The fake getCommit resolves any ref to "actionsha", so the CLI-version tag
+    // resolves; the comment names the version (`v<cli-version>`), not `main @`.
+    const { fileWrites } = await runProvision();
+    const workflow = fileWrites.find((w) => w.path === WORKFLOW_PATH);
+    expect(workflow?.content).toContain("uses: NachoPal/fixowl@actionsha");
+    expect(workflow?.content).toMatch(/uses: NachoPal\/fixowl@actionsha # v\d/);
+    expect(workflow?.content).not.toContain("# main @");
+  });
+
+  it("--action-version main: pins the moving @main ref for every repo", async () => {
+    const { fileWrites } = await runProvision({ actionVersion: { kind: "main" } });
+    const workflow = fileWrites.find((w) => w.path === WORKFLOW_PATH);
+    expect(workflow?.content).toContain("uses: NachoPal/fixowl@main # main (tracks latest)");
+  });
+
+  it("asks the action-version question once when given a prompter and no flag", async () => {
+    const choose = vi.fn(async () => "main");
+    const prompter = { choose, ask: vi.fn(async () => "") } as unknown as Parameters<
+      typeof provisionCommand
+    >[2]["prompter"];
+    const { fileWrites } = await runProvision({ prompter });
+    // One provision run -> the question is asked exactly once, not per repo.
+    expect(choose).toHaveBeenCalledTimes(1);
+    const workflow = fileWrites.find((w) => w.path === WORKFLOW_PATH);
+    expect(workflow?.content).toContain("uses: NachoPal/fixowl@main");
+  });
 });

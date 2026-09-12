@@ -17,8 +17,10 @@ import {
   WORKFLOW_PATH,
 } from "@fixowl/core";
 import { ACTION_REPO, requireAdmin, targetRepos, type CliContext } from "../context.ts";
+import { promptActionVersion } from "../github/action-version.ts";
 import { resolvePrivateKey, toPkcs8Pem } from "../github/app-key.ts";
 import {
+  type ActionVersionChoice,
   branchExists,
   createBranch,
   ensureLabels,
@@ -32,8 +34,10 @@ import {
   upsertFile,
 } from "../github/repo-provisioning.ts";
 import { log } from "../log.ts";
+import type { Prompter } from "../prompt.ts";
 import { runnerDirFor } from "../runner/install.ts";
 import { registerRunner, type RegisterRunnerParams } from "../runner/register.ts";
+import { version as cliVersion } from "../version.ts";
 
 export interface ProvisionOptions {
   noSchedule?: boolean;
@@ -45,6 +49,15 @@ export interface ProvisionOptions {
   noRegister?: boolean;
   /** Override for tests; defaults to the real registration flow. */
   registerRunner?: (params: RegisterRunnerParams) => Promise<"configured" | "already">;
+  /**
+   * How to pin the workflow's fixowl action ref, a single per-provision-run
+   * choice for every repo in the run. Comes from the `--action-version` flag.
+   * When omitted, `prompter` (if given) asks the question interactively;
+   * otherwise it defaults to this CLI's own release.
+   */
+  actionVersion?: ActionVersionChoice;
+  /** Interactive prompter for the one-time action-version question. */
+  prompter?: Prompter;
 }
 
 /**
@@ -76,7 +89,16 @@ export async function provisionCommand(
   // setup-only admin token was never set (or was already revoked).
   requireAdmin(ctx);
   const prs: ProvisionedPr[] = [];
-  const actionRef = await resolveActionRef(ctx.admin, ACTION_REPO);
+  // Which fixowl action version every repo in this run pins - a single
+  // per-provision-run choice: the explicit flag, else the interactive prompt,
+  // else this CLI's own release (so the action matches the CLI by default).
+  const actionVersion: ActionVersionChoice =
+    options.actionVersion ??
+    (options.prompter !== undefined
+      ? await promptActionVersion(options.prompter, cliVersion)
+      : { kind: "cli-release", cliVersion });
+  const actionRef = await resolveActionRef(ctx.admin, ACTION_REPO, actionVersion);
+  log.ok(`pinning fixowl action to ${actionRef.ref} (${actionRef.comment})`);
   for (const repoFullName of targetRepos(ctx.config, repoArg)) {
     log.info(`\nprovisioning ${repoFullName}`);
     const ref = splitRepoFullName(repoFullName);

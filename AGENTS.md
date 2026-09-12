@@ -138,6 +138,21 @@ See [docs/releasing.md](docs/releasing.md).
   re-derive the slug shape anywhere else.
 - Actions in workflows are SHA-pinned with a `# vN` comment. Workflows get minimal
   `permissions:`. actionlint runs in CI over both our workflows and rendered templates.
+- The fixowl action ref the **rendered target-repo** workflow pins is chosen once
+  per provision run (all repos get the same one) via `resolveActionRef`
+  (`packages/cli/src/github/repo-provisioning.ts`), driven by an
+  `ActionVersionChoice`: `cli-release` (DEFAULT - the `v<cli-version>` tag
+  resolved online to its immutable SHA, so the action matches the CLI; degrades
+  to main HEAD only when that version has no published tag, i.e. a dev/source
+  build), `tag` (an operator-typed release/RC tag resolved online - a missing
+  tag hard-fails, never a silent fallback), or `main` (the deliberate moving-ref
+  exception `NachoPal/fixowl@main`, for latest-main tracking such as fixowl's own
+  self-run repo). The choice comes from `fixowl provision --action-version
+  <tag|main>` or, without the flag, the interactive `promptActionVersion`
+  (`action-version.ts`); `parseActionVersionFlag` is the pure flag parser. Keep
+  the tag/HEAD resolution injected (the octokit `repos.getCommit` public read) so
+  it stays testable. Do NOT reintroduce the old always-main-HEAD pin. See
+  [docs/security.md](docs/security.md) "Workflow action pinning".
 - Spawn processes with argv arrays, never shell string interpolation.
 - Keep modules pure where possible; push I/O to the edges behind `deps.ts` interfaces.
 - The native `claude` adapter authenticates two mutually exclusive ways -

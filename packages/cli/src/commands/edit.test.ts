@@ -319,6 +319,11 @@ describe("editCommand", () => {
 
     expect(provisionAsked()).toBe(true);
     expect(provisionCommand).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(provisionCommand).mock.calls[0]?.[2]).toEqual({ noRegister: true });
+    // edit passes its prompter through so provision can ask the one-time
+    // action-version question during the re-provision.
+    expect(vi.mocked(provisionCommand).mock.calls[0]?.[2]).toEqual({
+      noRegister: true,
+      prompter,
+    });
   });
 });
