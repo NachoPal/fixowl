@@ -52,6 +52,15 @@ pnpm test             # vitest, including an in-process e2e of a whole night
 pnpm build            # bundles the action (dist/, checked in) and the CLI
 ```
 
+`pnpm install` also wires up a Husky **pre-commit hook** (via the `prepare`
+script - no manual `git config` needed). When a commit stages changes under
+`packages/core` or `packages/action` it runs `pnpm build` and re-stages the
+regenerated `dist/action/index.js`, so you never commit a stale bundle;
+commits that touch only docs, the CLI, or tests take a fast path and skip the
+build. It is a convenience only: it is bypassable with `git commit --no-verify`,
+and the CI [Bundle freshness](#bundle-freshness) check remains the authoritative
+gate.
+
 `pnpm lint` and `pnpm test` are the two commands CI gates on; run both before
 opening a PR. `pnpm build` matters because the action bundle is committed - see
 [Bundle freshness](#bundle-freshness) below.
@@ -95,6 +104,10 @@ git add dist
 CI runs `pnpm build` then `git diff --exit-code -- dist`, so a stale bundle
 fails the run. If your PR only touches docs, `.github/`, or the CLI, the bundle
 will not change and this step is a no-op.
+
+The Husky pre-commit hook (see [Local setup](#local-setup)) rebuilds and
+re-stages the bundle for you when you stage bundle inputs, so `git add dist`
+above is usually automatic - but CI is still the real gate.
 
 ### SHA-pinned actions
 

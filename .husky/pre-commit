@@ -1,0 +1,31 @@
+#!/usr/bin/env sh
+# Keep the committed action bundle (dist/action/index.js) fresh.
+#
+# The bundle is built from packages/core + packages/action. If a commit stages
+# changes under either, rebuild and re-stage the bundle so it can never be
+# committed stale. Ordinary commits (docs, CLI-only, tests) take the fast path
+# and skip the build entirely.
+#
+# This is a local safety net only. CI's "Bundle freshness" step
+# (pnpm build && git diff --exit-code -- dist) is the authoritative gate, and
+# this hook is bypassable with `git commit --no-verify`.
+
+staged=$(git diff --cached --name-only --diff-filter=ACMR)
+case "$staged" in
+  *packages/core/* | *packages/action/*) ;;
+  *)
+    # No bundle inputs staged - nothing to do.
+    exit 0
+    ;;
+esac
+
+echo "fixowl pre-commit: bundle inputs staged, rebuilding dist/action/index.js..."
+if ! pnpm build; then
+  echo "fixowl pre-commit: pnpm build failed - aborting commit (fix the build)." >&2
+  exit 1
+fi
+
+if ! git diff --quiet -- dist/action/index.js; then
+  git add dist/action/index.js
+  echo "fixowl pre-commit: rebuilt and re-staged dist/action/index.js."
+fi
