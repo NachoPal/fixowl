@@ -198,6 +198,7 @@ async function run(): Promise<void> {
       issueTimeoutMinutes: positiveIntInput("issue-timeout-minutes", 45),
       ciMaxTries: positiveIntInput("max-ci-tries", 3),
       ciTimeoutMinutes: positiveIntInput("ci-timeout-minutes", 60),
+      conflictMaxTries: positiveIntInput("conflict-max-tries", 2),
       defaultModel: core.getInput("default-model") || undefined,
       defaultEffort: core.getInput("default-effort") || undefined,
       labelModels: parseLabelModelsInput(core.getInput("label-models")),

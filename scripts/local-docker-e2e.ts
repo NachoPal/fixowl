@@ -144,6 +144,9 @@ const github: GitHubApi = {
   async getPullRequestForBranch() {
     return undefined;
   },
+  async getPullRequestMergeState() {
+    return { mergeable: true, state: "clean" };
+  },
   async listRecentWorkflowRuns() {
     return [];
   },

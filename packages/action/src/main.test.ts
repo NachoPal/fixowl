@@ -1851,3 +1851,131 @@ describe("runNight priority selection", () => {
     expect(summary.results.map((r) => r.issue.number)).toEqual([4, 3]);
   });
 });
+
+/**
+ * Regression for the conflict-blind CI gate (see report.md / conflict-gate.ts).
+ * The reproduced bug: main advanced under a fixowl branch with a conflicting
+ * change, so the PR went `dirty`, its required checks could never register, and
+ * the loop waited out the whole CI timeout and re-ran the agent on an unchanged
+ * head. These tests exercise the fix end to end against real git.
+ */
+describe("runNight - dirty-PR conflict handling", () => {
+  /** Advance origin/main with a change to app.txt that conflicts with the agent's. */
+  async function advanceMainConflicting(originDir: string): Promise<void> {
+    const parent = mkdtempSync(join(tmpdir(), "fixowl-advance-"));
+    const dir = join(parent, "clone");
+    await git(parent, "clone", originDir, dir);
+    writeFileSync(join(dir, "app.txt"), "main change\n");
+    await git(dir, "add", "-A");
+    await git(dir, "commit", "-m", "advance main (conflict)");
+    await git(dir, "push", "origin", "main");
+  }
+
+  /**
+   * Engine whose issue-1 agent, on the first pass, writes a conflicting app.txt
+   * AND advances origin/main (so the pushed PR goes dirty); on a later pass it
+   * sees git conflict markers and either resolves them (`resolveConflicts`) or
+   * leaves them (to exercise the give-up path).
+   */
+  function conflictEngine(opts: {
+    workspaceDir: string;
+    originDir: string;
+    resolveConflicts: boolean;
+  }): FakeEngine {
+    let advanced = false;
+    return new FakeEngine(async (spec): Promise<ExecResult | undefined> => {
+      if (issueNumberOfAgentRun(spec) === 1) {
+        const appPath = join(opts.workspaceDir, "app.txt");
+        const current = readFileSync(appPath, "utf8");
+        if (current.includes("<<<<<<<")) {
+          // Conflict-resolution pass: resolve the markers, or leave them to give up.
+          if (opts.resolveConflicts) writeFileSync(appPath, "resolved\n");
+          return ok("resolved");
+        }
+        // First pass: make a conflicting edit and advance main under the branch.
+        writeFileSync(appPath, "agent change\n");
+        if (!advanced) {
+          advanced = true;
+          await advanceMainConflicting(opts.originDir);
+        }
+        return ok("done");
+      }
+      return ok(); // verification checks
+    });
+  }
+
+  const conflictIssue: IssueLite[] = [issue(1, "resolve conflict", "the file conflicts")];
+
+  it("rebases a dirty PR, re-runs the agent to resolve, and flips it to ready", async () => {
+    const { originDir, workspaceDir, inputs } = await setup();
+    const github = new FakeGitHub(structuredClone(conflictIssue));
+    // A readable required "ci" context that is green once the rebased head is tested.
+    github.requiredChecks = { readable: true, contexts: ["ci"] };
+    github.checksForRef = () => [{ name: "ci", status: "completed", conclusion: "success" }];
+    // The PR is dirty on the first (only) mergeability read; the rebase clears it.
+    let mergeCall = 0;
+    github.mergeStateFor = () =>
+      mergeCall++ === 0
+        ? { mergeable: false, state: "dirty" }
+        : { mergeable: true, state: "clean" };
+    const engine = conflictEngine({ workspaceDir, originDir, resolveConflicts: true });
+
+    const summary = await runNight(
+      { github, engine, exec: realExec, log: silentLog, clock: instantClock() },
+      { ...inputs, maxIssues: 1, heuristicConflictOrdering: false },
+    );
+
+    // The dirty PR was detected, resolved, and reported green - not left as a
+    // timed-out draft (the pre-fix behavior).
+    expect(summary.results.map((r) => [r.status, r.draft])).toEqual([["pr-opened", false]]);
+    expect(github.mergeStateLookups.length).toBeGreaterThan(0);
+    expect(github.readyForReview.length).toBe(1);
+    // The agent ran twice: the initial fix, then the conflict-resolution pass.
+    const agentRuns = engine.runs.filter((run) => run.name.endsWith("-1-agent")).length;
+    expect(agentRuns).toBe(2);
+
+    // The branch on origin is really rebased onto the advanced main (its history
+    // contains the main-advance commit) and carries the resolved file.
+    const [branch] = (await remoteBranches(originDir)).filter((b) => b.startsWith("issue/1-"));
+    if (branch === undefined) throw new Error("expected an issue/1 branch on origin");
+    const app = await git(originDir, "show", `${branch}:app.txt`);
+    expect(app).toBe("resolved\n");
+    const log = await git(originDir, "log", "--format=%s", branch);
+    expect(log).toContain("advance main (conflict)");
+  });
+
+  it("leaves a distinct needs-rebase draft (no CI-timeout burn) when it can't resolve", async () => {
+    const { originDir, workspaceDir, inputs } = await setup();
+    const github = new FakeGitHub(structuredClone(conflictIssue));
+    github.requiredChecks = { readable: true, contexts: ["ci"] };
+    // If the CI gate were ever entered, this would count; the fix must NOT enter it.
+    let checksCalls = 0;
+    github.checksForRef = () => {
+      checksCalls++;
+      return [{ name: "ci", status: "completed", conclusion: "success" }];
+    };
+    github.mergeStateFor = () => ({ mergeable: false, state: "dirty" });
+    const engine = conflictEngine({ workspaceDir, originDir, resolveConflicts: false });
+
+    const summary = await runNight(
+      { github, engine, exec: realExec, log: silentLog, clock: instantClock() },
+      { ...inputs, maxIssues: 1, heuristicConflictOrdering: false, conflictMaxTries: 1 },
+    );
+
+    // Distinct terminal state: a draft flagged for a manual rebase, never green.
+    expect(summary.results.map((r) => [r.status, r.draft])).toEqual([["needs-rebase", true]]);
+    expect(github.readyForReview.length).toBe(0);
+    // The whole point: it stopped early instead of waiting on CI a dirty PR can
+    // never complete - the checks were never consulted.
+    expect(checksCalls).toBe(0);
+    // A distinct, actionable comment and summary section (not a CI message).
+    expect(github.comments.some((c) => c.issueNumber === 1 && /rebase/i.test(c.body))).toBe(true);
+    expect(renderSummary("test/repo", summary)).toContain("Needs rebase");
+    // The rebase was aborted and never force-pushed: origin still has the agent's
+    // pre-rebase commit, not a rebased history.
+    const [branch] = (await remoteBranches(originDir)).filter((b) => b.startsWith("issue/1-"));
+    if (branch === undefined) throw new Error("expected an issue/1 branch on origin");
+    const log = await git(originDir, "log", "--format=%s", branch);
+    expect(log).not.toContain("advance main (conflict)");
+  });
+});

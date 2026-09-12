@@ -66,17 +66,57 @@ appears the normal fallback decision applies at once. A repo with no branch
 protection and no CI therefore still opens ready-for-review PRs after the settle
 window (there is nothing to gate on).
 
+## Conflict handling (dirty PRs)
+
+fixowl branches each issue from the `origin/<default-branch>` tip it has fetched,
+and the base can advance under a long (or long-queued) night. When it advances
+with a **conflicting** change the PR goes `mergeable_state: dirty`, and GitHub
+cannot build the pull-request merge ref - so the `pull_request`-triggered
+required checks **never register or complete**. Without conflict awareness the
+loop would wait out the whole `ci_timeout_minutes`, re-run the agent, and re-wait
+on an unchanged head, burning `ci_max_tries x ci_timeout` on checks that can
+never go green.
+
+So before each CI wait the loop reads the PR's mergeability
+(`getPullRequestMergeState`, polling while GitHub computes it) and maps it with
+the pure `packages/core/src/conflict-gate.ts::classifyMergeability`:
+
+- **clean / behind / blocked / unstable ->** proceed to the CI wait as usual
+  (a non-conflict "out of date" state is GitHub's own required check to handle).
+- **`mergeable: null` (still computing) ->** poll briefly, then fall open to the
+  CI wait so an unknowable state never blocks the night.
+- **`dirty` ->** fetch the current base and **rebase the branch onto it**
+  (`git-ops.ts::rebaseOnto`, fetch-first). A clean rebase is force-pushed with
+  `--force-with-lease` (which refuses to clobber a concurrent push - the
+  ownership guard for a rewritten history); a conflicting rebase re-runs the
+  agent to resolve the markers (up to `conflict_max_tries` passes), stages and
+  continues the rebase, then force-pushes and resumes the CI gate on the rebased
+  head. All git runs host-side; the agent container still holds no token and
+  never sees `.git`, and the branch is still exactly one PR (the idempotency
+  marker).
+
+When the bounded rebase-and-re-run cannot resolve the conflicts, fixowl aborts
+the rebase and leaves the draft flagged **`needs-rebase`** - a distinct PR-body
+section, issue comment, and run-summary section ("Needs rebase") - and **stops
+early** rather than entering a CI wait it can never satisfy. A `needs-rebase`
+draft is not a hard failure (a PR was opened and the conflict surfaced), so it
+never counts toward the all-failed wipeout. To shrink the born-dirty window the
+night also re-fetches the default branch once at processing start (best-effort),
+so branches are cut from the current tip rather than the one fetched at job start.
+
 ## Configuration
 
 Set in `~/.fixowl/config.yaml` (the `fixowl init` config), in `defaults:` with
 an optional per-repo override in `repos[]`, and propagated into the generated
 workflow at `fixowl provision` time (`action.yml` inputs `max-ci-tries` /
-`ci-timeout-minutes`).
+`ci-timeout-minutes` / `conflict-max-tries`; the conflict input is rendered only
+on a non-default value).
 
 | key | default | meaning |
 | --- | --- | --- |
 | `ci_max_tries` | `3` | Max agent passes before a draft PR is left. |
 | `ci_timeout_minutes` | `60` | How long each pass waits for the required checks. |
+| `conflict_max_tries` | `2` | Max agent passes to resolve a dirty PR's conflicts before leaving a `needs-rebase` draft. |
 
 ## Security
 

@@ -119,6 +119,7 @@ describe("resolveRepoSettings", () => {
       issueTimeoutMinutes: 45,
       ciMaxTries: 3,
       ciTimeoutMinutes: 60,
+      conflictMaxTries: 2,
       agentEnv: undefined,
       defaultModel: undefined,
       defaultEffort: undefined,

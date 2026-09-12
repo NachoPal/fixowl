@@ -38,6 +38,12 @@ export interface WorkflowTemplateOptions {
   ciMaxTries: number;
   /** Minutes each pass waits for the pushed head's required checks. */
   ciTimeoutMinutes: number;
+  /**
+   * Conflict rebase-and-re-run budget. The action defaults it, so the input is
+   * rendered only when set (a repo that keeps the default gets a byte-for-byte
+   * workflow and the action's own default applies).
+   */
+  conflictMaxTries?: number;
   /** Default model for issues carrying no selector label; omitted when unset. */
   defaultModel?: string;
   /** Default reasoning effort for issues carrying no selector label; omitted when unset. */
@@ -130,6 +136,11 @@ ${dispatchBlock}`;
   }
   if (options.runBudgetMinutes !== undefined) {
     withLines.push(`          run-budget-minutes: "${options.runBudgetMinutes}"`);
+  }
+  // The conflict budget defaults in the action; render it only when a repo sets a
+  // non-default value, so today's workflows stay byte-for-byte unchanged.
+  if (options.conflictMaxTries !== undefined) {
+    withLines.push(`          conflict-max-tries: "${options.conflictMaxTries}"`);
   }
   if (options.defaultModel !== undefined) {
     withLines.push(`          default-model: "${options.defaultModel}"`);

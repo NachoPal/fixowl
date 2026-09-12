@@ -2,6 +2,7 @@ import {
   APP_ID_SECRET,
   APP_INSTALLATION_ID_SECRET,
   APP_PRIVATE_KEY_SECRET,
+  FIXOWL_DEFAULTS,
   getAgentAdapter,
   labelsInRule,
   priorityLabelsToEnsure,
@@ -144,6 +145,12 @@ export async function provisionCommand(
       issueTimeoutMinutes: settings.issueTimeoutMinutes,
       ciMaxTries: settings.ciMaxTries,
       ciTimeoutMinutes: settings.ciTimeoutMinutes,
+      // Rendered only on a non-default value, so a repo keeping the default gets a
+      // byte-for-byte workflow and the action's own default applies.
+      conflictMaxTries:
+        settings.conflictMaxTries === FIXOWL_DEFAULTS.conflictMaxTries
+          ? undefined
+          : settings.conflictMaxTries,
       defaultModel: settings.defaultModel,
       defaultEffort: settings.defaultEffort,
       labelModels: settings.labelModels,

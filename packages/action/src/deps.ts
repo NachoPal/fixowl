@@ -49,6 +49,19 @@ export interface TriageRef {
 }
 
 /**
+ * A pull request's mergeability, as GitHub reports it. `mergeable` is `null`
+ * while GitHub is still computing it (the first read after a push kicks off the
+ * computation), so callers poll until it is known. `state` is the
+ * `mergeable_state` string (`clean`/`dirty`/`behind`/`blocked`/`unstable`/...);
+ * `dirty` means real merge conflicts. Read-only; the pure `classifyMergeability`
+ * turns this into a gate action.
+ */
+export interface PullRequestMergeState {
+  mergeable: boolean | null;
+  state: string;
+}
+
+/**
  * The pre-work triage signals GitHub exposes for one OPEN issue (Layer A), read
  * read-only in one aliased GraphQL round-trip. All fields are high-precision:
  * they mean GitHub itself recorded the relationship. A bare merged-PR
@@ -118,6 +131,15 @@ export interface GitHubApi {
    * Never writes (see the no-merge invariant).
    */
   getPullRequestForBranch(branch: string): Promise<PullRequestLite | undefined>;
+  /**
+   * Read-only mergeability of a pull request (Pull requests: read, already held),
+   * used by the CI-gated loop to detect a conflicted (`dirty`) PR before waiting
+   * on required checks that a dirty PR's uncomputable merge ref can never
+   * complete. `mergeable` is `null` while GitHub computes it (poll until known).
+   * Never writes; fail-open (returns `{ mergeable: null, state: "unknown" }` on a
+   * read error) so an unreadable state never aborts the night. See conflict-gate.ts.
+   */
+  getPullRequestMergeState(prNumber: number): Promise<PullRequestMergeState>;
   /**
    * Recent runs of this workflow, newest first, for the scheduled-slot budget
    * guard. Backed by a token with Actions: read (the ephemeral `GITHUB_TOKEN`,

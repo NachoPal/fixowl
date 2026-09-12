@@ -81,6 +81,8 @@ export interface NightInputs {
   ciMaxTries?: number;
   /** Minutes each pass waits for the pushed head's required checks; undefined uses the built-in default. */
   ciTimeoutMinutes?: number;
+  /** Max agent passes to resolve a dirty PR's conflicts; undefined uses the built-in default. */
+  conflictMaxTries?: number;
   /** Default model when an issue carries no selector label; undefined uses the CLI default. */
   defaultModel?: string;
   /** Default reasoning effort when an issue carries no selector label. */
@@ -593,6 +595,19 @@ async function runNightWithGit(
   // started is recorded as not-started with the tripping reason.
   const notStarted: IssueLite[] = [];
   let budgetStop: { condition: BudgetConditionName; reason: string } | undefined;
+  // Cut branches from the CURRENT default-branch tip, not the one fetched at job
+  // start: a long-queued or multi-hour night can begin well after the checkout,
+  // and main may have advanced meanwhile, which would otherwise open born-dirty
+  // PRs. Best-effort - a fetch failure just falls back to the checkout's tip, and
+  // the conflict gate (issue-pipeline) still handles any residual drift.
+  try {
+    await git.fetchRemoteBranch(inputs.defaultBranch);
+  } catch (error) {
+    log.warn(
+      `could not refresh origin/${inputs.defaultBranch} before cutting branches (${String(error)}); ` +
+        `using the tip from the initial checkout`,
+    );
+  }
   for (const chain of chains) {
     let baseRef = `origin/${inputs.defaultBranch}`;
     let prBase = inputs.defaultBranch;
@@ -695,6 +710,7 @@ async function runNightWithGit(
             timeoutMs: inputs.issueTimeoutMinutes * 60 * 1000,
             ciMaxTries: inputs.ciMaxTries ?? FIXOWL_DEFAULTS.ciMaxTries,
             ciTimeoutMs: (inputs.ciTimeoutMinutes ?? FIXOWL_DEFAULTS.ciTimeoutMinutes) * 60 * 1000,
+            conflictMaxTries: inputs.conflictMaxTries ?? FIXOWL_DEFAULTS.conflictMaxTries,
             verifyBeforeFix,
             runUrl: inputs.runUrl,
           },
@@ -728,7 +744,8 @@ async function runNightWithGit(
         !tokensWarned &&
         (result.status === "pr-opened" ||
           result.status === "no-changes" ||
-          result.status === "agent-failed")
+          result.status === "agent-failed" ||
+          result.status === "needs-rebase")
       ) {
         tokensWarned = true;
         const warning =
@@ -1110,6 +1127,17 @@ export function renderSummary(repoFullName: string, summary: NightSummary): stri
     for (const item of summary.deferred) {
       lines.push(
         `- #${item.issue.number} ${markdownCell(item.issue.title)}: ${markdownCell(item.reason)}`,
+      );
+    }
+    lines.push("");
+  }
+  const needsRebase = summary.results.filter((result) => result.status === "needs-rebase");
+  if (needsRebase.length > 0) {
+    lines.push(`## Needs rebase (conflicts with the base branch)`, "");
+    for (const result of needsRebase) {
+      const pr = result.prUrl !== undefined ? `[#${result.prNumber}](${result.prUrl})` : "-";
+      lines.push(
+        `- #${result.issue.number} ${markdownCell(result.issue.title)}: ${pr} - rebase and resolve conflicts, then re-run fixowl`,
       );
     }
     lines.push("");

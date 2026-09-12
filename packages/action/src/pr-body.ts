@@ -31,7 +31,11 @@ export type CiGateSummary =
       reason: "red" | "timeout" | "stalled";
       failures: CiCheckFailure[];
       usedFallback?: boolean;
-    };
+    }
+  // The PR conflicts with its base branch (`mergeable_state: dirty`) and fixowl's
+  // bounded rebase-and-re-run could not resolve it, so CI can never run; the draft
+  // is left flagged for a manual rebase rather than masquerading as a CI wait.
+  | { state: "needs-rebase"; base: string };
 
 /**
  * CI check names and summaries are untrusted (a job can echo attacker-controlled
@@ -78,6 +82,15 @@ function renderCiSection(ci: CiGateSummary): string[] {
     lines.push(
       `⚠️ CI could not be verified: the runtime credential cannot read this branch's ` +
         `check runs, so fixowl consulted **no** checks. Review CI on this PR before merging.`,
+    );
+    lines.push(``);
+    return lines;
+  }
+  if (ci.state === "needs-rebase") {
+    lines.push(
+      `❌ This PR conflicts with \`${ciCell(ci.base)}\` (\`mergeable_state: dirty\`), so its ` +
+        `required checks cannot run. fixowl's automated rebase-and-re-run could not resolve the ` +
+        `conflicts. Rebase this branch onto \`${ciCell(ci.base)}\` and resolve them, or re-run fixowl.`,
     );
     lines.push(``);
     return lines;

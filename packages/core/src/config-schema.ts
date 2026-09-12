@@ -127,6 +127,13 @@ const repoEntrySchema = z.object({
   ci_max_tries: z.number().int().positive().optional(),
   /** Minutes to wait for the required checks on a pushed head before counting the attempt as a CI timeout. */
   ci_timeout_minutes: z.number().int().positive().optional(),
+  /**
+   * Max agent passes fixowl spends rebasing-and-re-running to resolve a PR that
+   * went `mergeable_state: dirty` (the base advanced under it with a conflict).
+   * When exhausted the PR is left as a draft flagged "needs rebase". See
+   * docs/ci-fix-loop.md and conflict-gate.ts.
+   */
+  conflict_max_tries: z.number().int().positive().optional(),
   /** Default model for this repo when an issue carries no selector label. */
   model: z.string().min(1).optional(),
   /** Default reasoning effort for this repo when an issue carries no selector label. */
@@ -248,6 +255,8 @@ export const globalConfigSchema = z.object({
       ci_max_tries: z.number().int().positive().optional(),
       /** Default CI-gated-loop per-attempt timeout (minutes) for any repo that does not set its own. */
       ci_timeout_minutes: z.number().int().positive().optional(),
+      /** Default conflict rebase-and-re-run budget for any repo that does not set its own. */
+      conflict_max_tries: z.number().int().positive().optional(),
       /** Fallback model used by any repo that does not set its own. */
       model: z.string().min(1).optional(),
       /** Fallback reasoning effort used by any repo that does not set its own. */
@@ -361,6 +370,14 @@ export const FIXOWL_DEFAULTS = {
    */
   ciMaxTries: 3,
   ciTimeoutMinutes: 60,
+  /**
+   * Conflict rebase-and-re-run budget: at most this many agent passes are spent
+   * resolving a dirty PR's conflicts before it is left as a "needs rebase" draft.
+   * Small on purpose - a fixowl branch is one (or few) commits, so a well-behaved
+   * agent resolves the markers in a pass or two; the point is to bound the work,
+   * never to burn the CI timeout on an unmergeable PR. See docs/ci-fix-loop.md.
+   */
+  conflictMaxTries: 2,
   runnerDir: "~/.fixowl/runners",
   /**
    * Minutes after the cron the local fallback fires. Generous on purpose:
@@ -406,6 +423,8 @@ export interface ResolvedRepoSettings {
   ciMaxTries: number;
   /** Minutes each pass waits for the pushed head's required checks. */
   ciTimeoutMinutes: number;
+  /** Max agent passes spent rebasing-and-re-running to resolve a dirty PR's conflicts. */
+  conflictMaxTries: number;
   /** Env allowlist for the agent; undefined means use the adapter's built-in default. */
   agentEnv: string[] | undefined;
   /** Default model when an issue carries no selector label; undefined uses the agent CLI default. */
@@ -465,6 +484,8 @@ export function resolveRepoSettings(config: GlobalConfig, repoName: string): Res
     ciMaxTries: entry.ci_max_tries ?? defaults.ci_max_tries ?? FIXOWL_DEFAULTS.ciMaxTries,
     ciTimeoutMinutes:
       entry.ci_timeout_minutes ?? defaults.ci_timeout_minutes ?? FIXOWL_DEFAULTS.ciTimeoutMinutes,
+    conflictMaxTries:
+      entry.conflict_max_tries ?? defaults.conflict_max_tries ?? FIXOWL_DEFAULTS.conflictMaxTries,
     agentEnv: config.agents?.[agent]?.env,
     defaultModel: entry.model ?? defaults.model,
     defaultEffort: entry.effort ?? defaults.effort,
