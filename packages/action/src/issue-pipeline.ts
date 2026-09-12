@@ -465,8 +465,13 @@ async function runAgent(
   params: {
     attempt: number;
     previousFailures?: readonly CheckFailureFeedback[] | undefined;
-    /** When set, this is a conflict-resolution pass: resolve the listed files' markers. */
-    conflict?: { files: readonly string[] };
+    /**
+     * When set, this is a conflict-resolution pass: resolve the listed files'
+     * markers. `pass` is the 1-based resolution-pass number, used only to give
+     * each pass a distinct evidence log so it never overwrites the fix-pass log
+     * or an earlier resolution pass.
+     */
+    conflict?: { files: readonly string[]; pass: number };
   },
 ): Promise<{
   stdout: string;
@@ -516,8 +521,12 @@ async function runAgent(
     stdin,
     timeoutMs: ctx.timeoutMs,
   });
+  const logName =
+    params.conflict !== undefined
+      ? `agent-attempt-${params.attempt}-conflict-${params.conflict.pass}.log`
+      : `agent-attempt-${params.attempt}.log`;
   writeFileSync(
-    join(ctx.evidenceDir, `agent-attempt-${params.attempt}.log`),
+    join(ctx.evidenceDir, logName),
     `${result.stdout}\n${result.stderr}\n(exit ${result.code}${result.timedOut ? ", timed out" : ""})\n`,
   );
   // Measure this pass's token spend in-band from the agent's own captured output
@@ -591,7 +600,7 @@ async function rebaseAndResolveConflict(
     passes += 1;
     const agentResult = await runAgent(deps, ctx, {
       attempt: params.attempt,
-      conflict: { files: conflicted },
+      conflict: { files: conflicted, pass: passes },
     });
     if (agentResult.usage !== undefined) {
       usage = usage === undefined ? agentResult.usage : addSamples(usage, agentResult.usage);
