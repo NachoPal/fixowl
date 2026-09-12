@@ -87,6 +87,7 @@ export async function manualProvisionCommand(
       skipDuplicates: settings.skipDuplicates,
       verifyBeforeFix: settings.verifyBeforeFix,
       priority: settings.priority,
+      maxParallel: settings.maxParallel,
       actionRef: actionRef.ref,
       actionRefComment: actionRef.comment,
     });

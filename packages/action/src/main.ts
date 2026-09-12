@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { totalmem } from "node:os";
 import { join } from "node:path";
 import {
   FIXOWL_DEFAULTS,
@@ -45,7 +46,15 @@ import type {
   Logger,
 } from "./deps.ts";
 import { issueEvidenceArtifactName, issueEvidenceDir } from "./evidence.ts";
-import { extractGitDir, GitWorkspace, restoreGitDir } from "./git-ops.ts";
+import {
+  createLaneWorkspaces,
+  extractGitDir,
+  GitWorkspace,
+  laneWorkDir,
+  resolveLaneCount,
+  restoreGitDir,
+  teardownLanes,
+} from "./git-ops.ts";
 import { filterAlreadyAttempted } from "./idempotency.ts";
 import { selectIssues } from "./issue-selection.ts";
 import { selectIssuesByPriority } from "./priority-selection.ts";
@@ -111,6 +120,14 @@ export interface NightInputs {
    * docs/priority-selection.md.
    */
   priority?: PrioritySettings;
+  /**
+   * Opt-in bounded concurrency (issue #36): run this many independent chains at
+   * once, each internally sequential, using a `git worktree` lane per chain.
+   * Undefined resolves to 1 (FIXOWL_DEFAULTS.maxParallel) - byte-for-byte the
+   * pre-#36 sequential night (see the N===1 special case in runNightWithGit).
+   * Effective concurrency is further clamped by resolveLaneCount (git-ops.ts).
+   */
+  maxParallel?: number;
   workspaceDir: string;
   tempDir: string;
   runUrl?: string;
@@ -584,16 +601,44 @@ async function runNightWithGit(
 
   // A prerequisite that fails to ship at runtime defers its dependents (contrast
   // a conflict chain, whose downstream simply rebases onto the default branch).
+  // Shared across chains (including concurrent lanes, issue #36): a native
+  // prerequisite and its dependent always land in the SAME chain (mergeGraphs'
+  // "prerequisites always win" union), so a single JS-thread Set is enough -
+  // no cross-lane read of `shipped` ever races a same-chain write.
   const shipped = new Set<number>();
 
   const results: IssueResult[] = [];
   // Between-issues gate: before starting each issue, re-evaluate the budget with
   // the running shipped count, elapsed wall-clock, and a refreshed usage read.
-  // The first trip stops the whole run (across all chains); every issue not yet
+  // The first trip stops the whole run (across all chains, including concurrent
+  // lanes - `budgetStop` is one shared closure variable); every issue not yet
   // started is recorded as not-started with the tripping reason.
   const notStarted: IssueLite[] = [];
   let budgetStop: { condition: BudgetConditionName; reason: string } | undefined;
-  for (const chain of chains) {
+
+  /**
+   * Runs one chain, strictly sequentially, in the given lane (its own
+   * `GitWorkspace` + working directory). Only the OUTER chain loop is ever
+   * parallelized (issue #36); everything below is unchanged from the pre-#36
+   * single-chain body, just returning its slice of results instead of pushing
+   * into a shared array, so results/deferred/triaged/notStarted can be
+   * concatenated back in the original chain order after the pool completes
+   * (concurrent lanes finish in whatever order they finish in).
+   */
+  async function runChain(
+    chain: IssueLite[],
+    laneGit: GitWorkspace,
+    laneWorkspaceDir: string,
+  ): Promise<{
+    results: IssueResult[];
+    deferred: DeferredIssue[];
+    notStarted: IssueLite[];
+    triaged: TriagedIssue[];
+  }> {
+    const chainResults: IssueResult[] = [];
+    const chainDeferred: DeferredIssue[] = [];
+    const chainNotStarted: IssueLite[] = [];
+    const chainTriaged: TriagedIssue[] = [];
     let baseRef = `origin/${inputs.defaultBranch}`;
     let prBase = inputs.defaultBranch;
     let stackedOn: { prNumber: number; branch: string } | undefined;
@@ -606,7 +651,7 @@ async function runNightWithGit(
         }
       }
       if (budgetStop !== undefined) {
-        notStarted.push(issue);
+        chainNotStarted.push(issue);
         continue;
       }
       const unshipped = (prereqPlan.prereqs.get(issue.number) ?? []).filter(
@@ -614,16 +659,18 @@ async function runNightWithGit(
       );
       if (unshipped.length > 0) {
         // Name why each prerequisite is unshipped: a red/timed-out draft (issue
-        // #76) reads differently from one that never opened a PR at all.
+        // #76) reads differently from one that never opened a PR at all. The
+        // prerequisite is always in THIS chain (see the Set comment above), so
+        // searching the chain-local results is equivalent to the old global scan.
         const reasonParts = unshipped.map((n) => {
-          const prereqResult = results.find((res) => res.issue.number === n);
+          const prereqResult = chainResults.find((res) => res.issue.number === n);
           return prereqResult?.status === "pr-opened" && prereqResult.draft === true
             ? `#${n} (left as a draft, CI not green)`
             : `#${n}`;
         });
         const reason = `prerequisite ${reasonParts.join(", ")} did not ship tonight`;
         log.info(`issue #${issue.number}: deferred - ${reason}`);
-        deferred.push({ issue, reason });
+        chainDeferred.push({ issue, reason });
         continue;
       }
       const branch = issueBranchName(issue.number, issue.title);
@@ -639,11 +686,11 @@ async function runNightWithGit(
       let issueStackedOn = stackedOn;
       if (stackBase !== undefined) {
         try {
-          await git.fetchRemoteBranch(stackBase.branch);
+          await laneGit.fetchRemoteBranch(stackBase.branch);
         } catch (error) {
           const reason = `could not fetch in-flight prerequisite branch ${stackBase.branch}: ${String(error)}`;
           log.info(`issue #${issue.number}: deferred - ${reason}`);
-          deferred.push({ issue, reason });
+          chainDeferred.push({ issue, reason });
           continue;
         }
         issueBaseRef = `origin/${stackBase.branch}`;
@@ -663,7 +710,13 @@ async function runNightWithGit(
       });
       if (!resolution.ok) {
         log.error(`issue #${issue.number}: ${resolution.error}`);
-        results.push({ issue, branch, status: "error", verification: [], error: resolution.error });
+        chainResults.push({
+          issue,
+          branch,
+          status: "error",
+          verification: [],
+          error: resolution.error,
+        });
         continue;
       }
       if (resolution.source === "label") {
@@ -676,7 +729,7 @@ async function runNightWithGit(
       let result: IssueResult;
       try {
         result = await processIssue(
-          { git, engine, github, log, clock: deps.clock },
+          { git: laneGit, engine, github, log, clock: deps.clock },
           {
             issue,
             branch,
@@ -689,7 +742,7 @@ async function runNightWithGit(
             adapter,
             agentEnv,
             selection: resolution.selection,
-            workspaceDir: inputs.workspaceDir,
+            workspaceDir: laneWorkspaceDir,
             promptDir: join(inputs.tempDir, "fixowl-prompts"),
             evidenceDir,
             timeoutMs: inputs.issueTimeoutMinutes * 60 * 1000,
@@ -702,7 +755,7 @@ async function runNightWithGit(
       } catch (error) {
         log.error(`issue #${issue.number}: ${String(error)}`);
         try {
-          await git.discardAllChanges();
+          await laneGit.discardAllChanges();
         } catch {
           // best effort; the next checkout -B will complain if the tree is truly wedged
         }
@@ -714,7 +767,7 @@ async function runNightWithGit(
           error: error instanceof Error ? error.message : String(error),
         };
       }
-      results.push(result);
+      chainResults.push(result);
       // Fold this issue's in-band token spend into the run accumulator for the
       // token budget. When a budget is set but a completed agent pass reported no
       // measurable usage, warn once and fall through (mirrors the usage abstain);
@@ -740,7 +793,7 @@ async function runNightWithGit(
       // Layer B skip: the agent produced no diff, so processIssue left a comment
       // + `fixowl:triaged` label and opened no PR. Fold it into the summary's
       // Triaged-out section alongside the Layer A gate skips.
-      if (result.triaged !== undefined) triaged.push(result.triaged);
+      if (result.triaged !== undefined) chainTriaged.push(result.triaged);
       // Progressive upload: this issue has finished, so its evidence is complete.
       // Uploading it now - while the job is still genuinely running - is what
       // makes it survive a later cancellation; the single end-of-job step never
@@ -763,6 +816,105 @@ async function runNightWithGit(
         shipped.add(issue.number);
       }
     }
+    return {
+      results: chainResults,
+      deferred: chainDeferred,
+      notStarted: chainNotStarted,
+      triaged: chainTriaged,
+    };
+  }
+
+  // Bounded concurrency (issue #36): resolve how many chains run at once from
+  // the configured max_parallel, a RAM-based guard (each container is capped
+  // at 6g), and tonight's chain count. laneCount<=1 is a special case that
+  // skips worktree creation entirely and runs every chain directly against the
+  // main workspace/git, in chain order - byte-for-byte the pre-#36 sequential
+  // night (the pool below still degenerates to that exact order/timing with
+  // one lane, but skipping worktrees avoids paying git-worktree cost when
+  // nobody asked for concurrency).
+  const configuredMaxParallel = inputs.maxParallel ?? FIXOWL_DEFAULTS.maxParallel;
+  const { laneCount, clampedByMemory } = resolveLaneCount({
+    maxParallel: configuredMaxParallel,
+    chainCount: chains.length,
+    totalMemBytes: totalmem(),
+  });
+  if (clampedByMemory) {
+    const warning =
+      `max_parallel (${configuredMaxParallel}) was clamped to ${laneCount} lane(s) by the host's ` +
+      `available memory (each container is capped at 6g)`;
+    warnings.push(warning);
+    log.warn(warning);
+  }
+
+  let laneGits: GitWorkspace[];
+  let laneWorkspaceDirs: string[];
+  if (laneCount <= 1) {
+    laneGits = [git];
+    laneWorkspaceDirs = [inputs.workspaceDir];
+  } else {
+    log.info(
+      `running up to ${laneCount} chain(s) concurrently (${chains.length} chain(s) tonight)`,
+    );
+    laneGits = await createLaneWorkspaces({
+      exec: deps.exec,
+      mainGitDir: git.gitDirPath,
+      mainWorkDir: inputs.workspaceDir,
+      laneCount,
+      tokenProvider: inputs.pushTokenProvider,
+      identity: inputs.gitIdentity,
+    });
+    laneWorkspaceDirs = laneGits.map((_, i) => laneWorkDir(inputs.workspaceDir, i));
+  }
+
+  // A bounded worker pool: `laneCount` workers each pull the next unclaimed
+  // chain index and run it to completion in their own lane. Each chain's
+  // outcome is stashed at ITS OWN index (not append order), so the final
+  // concatenation below reproduces the original chain order regardless of
+  // which lane finished first.
+  const chainOutcomes: Array<
+    | {
+        results: IssueResult[];
+        deferred: DeferredIssue[];
+        notStarted: IssueLite[];
+        triaged: TriagedIssue[];
+      }
+    | undefined
+  > = Array.from({ length: chains.length });
+  let nextChainIndex = 0;
+  const lanePromises = laneGits.map(async (laneGit, laneIndex) => {
+    const laneWorkspaceDir = laneWorkspaceDirs[laneIndex] as string;
+    for (;;) {
+      const i = nextChainIndex;
+      nextChainIndex += 1;
+      if (i >= chains.length) return;
+      chainOutcomes[i] = await runChain(chains[i] as IssueLite[], laneGit, laneWorkspaceDir);
+    }
+  });
+  try {
+    await Promise.all(lanePromises);
+  } finally {
+    if (laneCount > 1) {
+      try {
+        await teardownLanes({
+          exec: deps.exec,
+          mainGitDir: git.gitDirPath,
+          mainWorkDir: inputs.workspaceDir,
+          laneCount,
+        });
+      } catch (error) {
+        log.warn(
+          `failed to tear down lane worktrees (${String(error)}); the next run's ` +
+            `"Reset workspace git state" step clears them`,
+        );
+      }
+    }
+  }
+  for (const outcome of chainOutcomes) {
+    if (outcome === undefined) continue;
+    results.push(...outcome.results);
+    deferred.push(...outcome.deferred);
+    notStarted.push(...outcome.notStarted);
+    triaged.push(...outcome.triaged);
   }
 
   return {

@@ -211,6 +211,7 @@ async function run(): Promise<void> {
         labels: parseLabelInput(core.getInput("priority-labels")),
         includeUnlabeled: booleanInput("priority-include-unlabeled", true),
       },
+      maxParallel: positiveIntInput("max-parallel", 1),
       workspaceDir,
       tempDir,
       runUrl,

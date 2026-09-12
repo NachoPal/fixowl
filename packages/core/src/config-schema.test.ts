@@ -128,6 +128,7 @@ describe("resolveRepoSettings", () => {
       skipDuplicates: true,
       verifyBeforeFix: true,
       priority: { labels: [], includeUnlabeled: true },
+      maxParallel: 1,
     });
   });
 

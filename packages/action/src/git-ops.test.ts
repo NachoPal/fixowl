@@ -4,7 +4,17 @@ import { join } from "node:path";
 import { FIXOWL_BOT_EMAIL } from "@fixowl/core";
 import { describe, expect, it } from "vitest";
 import type { Exec } from "./deps.ts";
-import { extractGitDir, GitWorkspace, hostGitDirFor, restoreGitDir } from "./git-ops.ts";
+import { realExec } from "./real-exec.ts";
+import {
+  createLaneWorkspaces,
+  extractGitDir,
+  GitWorkspace,
+  hostGitDirFor,
+  laneWorkDir,
+  resolveLaneCount,
+  restoreGitDir,
+  teardownLanes,
+} from "./git-ops.ts";
 
 function makeWorkspace(): { workspaceDir: string; gitMarker: string } {
   const root = mkdtempSync(join(tmpdir(), "fixowl-gitops-"));
@@ -181,5 +191,129 @@ describe("GitWorkspace token provider", () => {
     await ws.push("issue/3-z");
 
     expect(envs.every((env) => env === undefined)).toBe(true);
+  });
+});
+
+const GB = 1024 ** 3;
+
+describe("resolveLaneCount (issue #36 resource guard)", () => {
+  it("stays at 1 lane when max_parallel is 1, regardless of memory or chain count", () => {
+    expect(
+      resolveLaneCount({ maxParallel: 1, chainCount: 10, totalMemBytes: 64 * GB }),
+    ).toMatchObject({ laneCount: 1, clampedByMemory: false });
+  });
+
+  it("clamps to the chain count when there are fewer chains than the configured max", () => {
+    const result = resolveLaneCount({ maxParallel: 8, chainCount: 2, totalMemBytes: 64 * GB });
+    expect(result.laneCount).toBe(2);
+    expect(result.clampedByMemory).toBe(false);
+  });
+
+  it("clamps to floor(0.8 * totalMem / 6GB) when RAM is the binding constraint", () => {
+    // 16 GiB * 0.8 / 6 GiB = 2.13 -> 2 lanes, even though 4 were requested and
+    // 4 chains are available.
+    const result = resolveLaneCount({ maxParallel: 4, chainCount: 4, totalMemBytes: 16 * GB });
+    expect(result.memoryGuard).toBe(2);
+    expect(result.laneCount).toBe(2);
+    expect(result.clampedByMemory).toBe(true);
+  });
+
+  it("never returns fewer than 1 lane even on a tiny host", () => {
+    const result = resolveLaneCount({ maxParallel: 4, chainCount: 4, totalMemBytes: 1 * GB });
+    expect(result.memoryGuard).toBe(1);
+    expect(result.laneCount).toBe(1);
+    expect(result.clampedByMemory).toBe(true);
+  });
+
+  it("does not report a memory clamp when max_parallel itself is the binding constraint", () => {
+    const result = resolveLaneCount({ maxParallel: 2, chainCount: 10, totalMemBytes: 64 * GB });
+    expect(result.laneCount).toBe(2);
+    expect(result.clampedByMemory).toBe(false);
+  });
+});
+
+async function git(cwd: string, gitDir: string | undefined, ...argv: string[]): Promise<string> {
+  const base = gitDir !== undefined ? ["--git-dir", gitDir] : [];
+  const result = await realExec.run(
+    [
+      "git",
+      ...base,
+      "-c",
+      "user.name=test",
+      "-c",
+      "user.email=test@test",
+      "-c",
+      "commit.gpgsign=false",
+      ...argv,
+    ],
+    { cwd },
+  );
+  if (result.code !== 0) throw new Error(`git ${argv.join(" ")}: ${result.stderr}`);
+  return result.stdout;
+}
+
+describe("createLaneWorkspaces / teardownLanes (issue #36)", () => {
+  it("creates independent worktree lanes that can check out different branches concurrently", async () => {
+    const root = mkdtempSync(join(tmpdir(), "fixowl-lanes-"));
+    const mainWorkDir = join(root, "workspace");
+    mkdirSync(mainWorkDir, { recursive: true });
+    await git(mainWorkDir, undefined, "init", "-b", "main");
+    writeFileSync(join(mainWorkDir, "app.txt"), "v1\n");
+    await git(mainWorkDir, undefined, "add", "-A");
+    await git(mainWorkDir, undefined, "commit", "-m", "seed");
+
+    const mainGitDir = extractGitDir(mainWorkDir);
+    try {
+      const lanes = await createLaneWorkspaces({
+        exec: realExec,
+        mainGitDir,
+        mainWorkDir,
+        laneCount: 2,
+      });
+      expect(lanes).toHaveLength(2);
+
+      // Each lane has its own working directory, distinct from the main one.
+      const lane0Dir = laneWorkDir(mainWorkDir, 0);
+      const lane1Dir = laneWorkDir(mainWorkDir, 1);
+      expect(existsSync(lane0Dir)).toBe(true);
+      expect(existsSync(lane1Dir)).toBe(true);
+      expect(lane0Dir).not.toBe(lane1Dir);
+
+      // Lanes check out different branches concurrently with no conflict (the
+      // whole point of using worktrees instead of a shared checkout).
+      await lanes[0]?.configureIdentity();
+      await lanes[1]?.configureIdentity();
+      await lanes[0]?.checkoutNewBranch("lane-a", "main");
+      await lanes[1]?.checkoutNewBranch("lane-b", "main");
+      writeFileSync(join(lane0Dir, "a.txt"), "from lane a\n");
+      writeFileSync(join(lane1Dir, "b.txt"), "from lane b\n");
+      await lanes[0]?.commitAll("lane a work");
+      await lanes[1]?.commitAll("lane b work");
+
+      // Each lane's commit landed only on its own branch, and the main
+      // workspace's working tree (and checked-out branch) is untouched.
+      const laneABranch = await git(mainWorkDir, mainGitDir, "log", "-1", "--format=%s", "lane-a");
+      const laneBBranch = await git(mainWorkDir, mainGitDir, "log", "-1", "--format=%s", "lane-b");
+      expect(laneABranch.trim()).toBe("lane a work");
+      expect(laneBBranch.trim()).toBe("lane b work");
+      expect(existsSync(join(mainWorkDir, "a.txt"))).toBe(false);
+      expect(existsSync(join(mainWorkDir, "b.txt"))).toBe(false);
+
+      // The git-dir-never-in-a-container invariant holds per lane too: the
+      // worktree `.git` file git leaves behind is dropped just like a planted
+      // one on the main workspace, before any container would mount the dir.
+      lanes[0]?.dropPlantedGitDir();
+      expect(existsSync(join(lane0Dir, ".git"))).toBe(false);
+
+      await teardownLanes({ exec: realExec, mainGitDir, mainWorkDir, laneCount: 2 });
+      expect(existsSync(lane0Dir)).toBe(false);
+      expect(existsSync(lane1Dir)).toBe(false);
+      // `git worktree prune` cleared the dangling administrative metadata too.
+      const list = await git(mainWorkDir, mainGitDir, "worktree", "list", "--porcelain");
+      expect(list).not.toContain("lane-0");
+      expect(list).not.toContain("lane-1");
+    } finally {
+      restoreGitDir(mainWorkDir, mainGitDir);
+    }
   });
 });

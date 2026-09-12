@@ -1851,3 +1851,81 @@ describe("runNight priority selection", () => {
     expect(summary.results.map((r) => r.issue.number)).toEqual([4, 3]);
   });
 });
+
+describe("runNight bounded concurrency (issue #36, max_parallel)", () => {
+  it("runs two independent chains concurrently in separate lanes with no collision", async () => {
+    const { originDir, workspaceDir, inputs } = await setup();
+    const github = new FakeGitHub([issue(1, "Fix header", "x"), issue(2, "Fix footer", "y")]);
+
+    // Records the workspace dir each agent container saw, and asserts the
+    // git-dir-never-in-a-container invariant holds for every recorded dir at
+    // the moment the container would have mounted it.
+    const gitDirLeaks: string[] = [];
+    const engine = new FakeEngine((spec): ExecResult | undefined => {
+      if (spec.name.includes("-classify-")) return ok(""); // fall back to all-independent
+      const match = /-(\d+)-agent$/.exec(spec.name);
+      if (match) {
+        if (existsSync(join(spec.workspaceDir, ".git"))) gitDirLeaks.push(spec.workspaceDir);
+        const issueNumber = Number(match[1]);
+        writeFileSync(join(spec.workspaceDir, `fix-${issueNumber}.txt`), `fixed ${issueNumber}\n`);
+        return ok("done");
+      }
+      return ok(); // verification check containers
+    });
+
+    const summary = await runNight(
+      { github, engine, exec: realExec, log: silentLog, clock: instantClock() },
+      { ...inputs, maxParallel: 2 },
+    );
+
+    // Both chains shipped - order-independently, since they run concurrently.
+    expect(summary.results.map((r) => r.status)).toEqual(["pr-opened", "pr-opened"]);
+    expect(github.pulls.map((pr) => pr.head).toSorted((a, b) => a.localeCompare(b))).toEqual([
+      "issue/1-fix-header",
+      "issue/2-fix-footer",
+    ]);
+
+    // Lanes don't collide: each issue's agent ran against its own worktree dir,
+    // never the main workspace dir, and never each other's.
+    const agentDirs = engine.runs
+      .filter((spec) => /-\d+-agent$/.test(spec.name))
+      .map((spec) => spec.workspaceDir);
+    expect(agentDirs).toHaveLength(2);
+    expect(new Set(agentDirs).size).toBe(2);
+    expect(agentDirs).not.toContain(workspaceDir);
+
+    // No agent container ever saw a `.git` in its mounted workspace, in either lane.
+    expect(gitDirLeaks).toEqual([]);
+
+    // The lane worktrees were torn down at the end of the night.
+    expect(existsSync(join(workspaceDir, "worktrees"))).toBe(false);
+
+    const branches = await remoteBranches(originDir);
+    expect(branches).toContain("issue/1-fix-header");
+    expect(branches).toContain("issue/2-fix-footer");
+  });
+
+  it("max_parallel left at its default (1) behaves byte-for-byte like the pre-#36 sequential night", async () => {
+    const { originDir, workspaceDir, inputs } = await setup();
+    const github = new FakeGitHub(structuredClone(threeIssues));
+    const engine = makeEngine({
+      workspaceDir,
+      classifyOutput: '{"chains": [[1], [2], [3]]}',
+    });
+
+    const summary = await runNight(
+      { github, engine, exec: realExec, log: silentLog, clock: instantClock() },
+      inputs, // maxParallel left undefined -> resolves to FIXOWL_DEFAULTS.maxParallel (1)
+    );
+
+    expect(summary.results.map((r) => r.status)).toEqual(["pr-opened", "pr-opened", "pr-opened"]);
+    expect(github.pulls.map((pr) => pr.head)).toEqual([
+      "issue/1-fix-header",
+      "issue/2-fix-footer",
+      "issue/3-fix-sidebar",
+    ]);
+    // No lane worktrees are ever created at N=1.
+    expect(existsSync(join(workspaceDir, "worktrees"))).toBe(false);
+    expect(await remoteBranches(originDir)).toHaveLength(4);
+  });
+});

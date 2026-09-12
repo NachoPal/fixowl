@@ -157,6 +157,15 @@ const repoEntrySchema = z.object({
    * enables it. See docs/priority-selection.md.
    */
   priority: prioritySchema.optional(),
+  /**
+   * Opt-in bounded concurrency (issue #36): run this many independent chains at
+   * once, each internally sequential, using a `git worktree` per lane for
+   * isolation. Unset resolves to 1 (FIXOWL_DEFAULTS.maxParallel), which is
+   * byte-for-byte the pre-#36 sequential behavior - see main.ts's N===1
+   * special case. Actual concurrency is further clamped by a resource guard
+   * (see resolveLaneCount in git-ops.ts) and by the number of chains tonight.
+   */
+  max_parallel: z.number().int().positive().optional(),
 });
 
 export { labelModelsSchema };
@@ -259,6 +268,8 @@ export const globalConfigSchema = z.object({
       verify_before_fix: z.boolean().optional(),
       /** Default priority-label selection for every repo that does not set its own. */
       priority: prioritySchema.optional(),
+      /** Default max-parallel for every repo that does not set its own (see the repo entry). */
+      max_parallel: z.number().int().positive().optional(),
     })
     .optional(),
   agents: z.record(z.string(), agentSettingsSchema).optional(),
@@ -353,6 +364,12 @@ export const FIXOWL_DEFAULTS = {
   priorityLabels: ["priority: high", "priority: medium", "priority: low"],
   priorityIncludeUnlabeled: true,
   /**
+   * Opt-in bounded concurrency (issue #36). 1 is ALSO the resolution fallback
+   * for an unset value, so a pre-#36 config runs exactly one chain at a time -
+   * byte-for-byte the old sequential night. See docs/parallel-execution.md.
+   */
+  maxParallel: 1,
+  /**
    * CI-gated fix loop: at most this many agent passes before a draft PR is
    * left with the outstanding failures, and how long each pass waits for the
    * pushed head's required checks before counting a CI timeout. See
@@ -430,6 +447,12 @@ export interface ResolvedRepoSettings {
    * cap highest-priority-first. See docs/priority-selection.md and priority.ts.
    */
   priority: PrioritySettings;
+  /**
+   * Bounded chain concurrency (issue #36). Defaults to 1 (sequential, unchanged
+   * behavior); actual runtime concurrency is further clamped by the resource
+   * guard and the chain count (see resolveLaneCount in git-ops.ts).
+   */
+  maxParallel: number;
 }
 
 export function resolveRepoSettings(config: GlobalConfig, repoName: string): ResolvedRepoSettings {
@@ -485,6 +508,7 @@ export function resolveRepoSettings(config: GlobalConfig, repoName: string): Res
     // block is taken from the repo or defaults (not deep-merged) so the ordered
     // label list is never ambiguous - like `label_models`.
     priority: resolvePriority(entry.priority ?? defaults.priority),
+    maxParallel: entry.max_parallel ?? defaults.max_parallel ?? FIXOWL_DEFAULTS.maxParallel,
   };
 }
 

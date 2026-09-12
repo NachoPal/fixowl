@@ -1,4 +1,4 @@
-import { existsSync, renameSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, renameSync, rmSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { type CommitTip, FIXOWL_DEFAULT_GIT_IDENTITY, type GitIdentity } from "@fixowl/core";
 import type { Exec, ExecResult } from "./deps.ts";
@@ -77,6 +77,11 @@ export class GitWorkspace {
      */
     private readonly identity: GitIdentity = FIXOWL_DEFAULT_GIT_IDENTITY,
   ) {}
+
+  /** This workspace's explicit `--git-dir` path (issue #36's lane factory needs it to fan out worktrees). */
+  get gitDirPath(): string {
+    return this.gitDir;
+  }
 
   private async authEnv(): Promise<Record<string, string> | undefined> {
     if (this.tokenProvider === undefined) return undefined;
@@ -220,4 +225,125 @@ export class GitWorkspace {
   async deleteRemoteBranch(branch: string): Promise<void> {
     await this.git("push", "origin", "--delete", `refs/heads/${branch}`);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Bounded concurrency (issue #36): a lane is one `git worktree`-isolated
+// checkout so an independent chain can run concurrently with others without
+// the checkouts stepping on each other's HEAD/index. Only the OUTER chain
+// loop uses lanes; each chain's own issues still run strictly sequentially in
+// their assigned lane (main.ts).
+// ---------------------------------------------------------------------------
+
+/** Bytes a single agent/verify container is capped at (container-exec.ts `--memory 6g`). */
+const BYTES_PER_CONTAINER = 6 * 1024 ** 3;
+
+export interface LaneCountResult {
+  /** The effective number of concurrent lanes to run tonight. Always >= 1. */
+  laneCount: number;
+  /** How many lanes the host's RAM can safely support (>= 1). */
+  memoryGuard: number;
+  /** True when the configured `max_parallel` was clamped down by the memory guard. */
+  clampedByMemory: boolean;
+}
+
+/**
+ * Pure resource-guard math, kept independent of `os.totalmem()` so it is unit
+ * testable without mocking the OS module. Effective concurrency is the min of:
+ * the configured `max_parallel`, a RAM-based guard (`floor(0.8 * totalMemBytes
+ * / 6GB)`, since each container is capped at 6g), and tonight's chain count
+ * (no point starting more lanes than there is independent work). Always
+ * returns at least 1 lane.
+ */
+export function resolveLaneCount(params: {
+  maxParallel: number;
+  chainCount: number;
+  totalMemBytes: number;
+}): LaneCountResult {
+  const { maxParallel, chainCount, totalMemBytes } = params;
+  const memoryGuard = Math.max(1, Math.floor((0.8 * totalMemBytes) / BYTES_PER_CONTAINER));
+  const byChains = Math.max(1, chainCount);
+  const laneCount = Math.max(1, Math.min(maxParallel, memoryGuard, byChains));
+  return {
+    laneCount,
+    memoryGuard,
+    clampedByMemory: memoryGuard < maxParallel && laneCount === memoryGuard,
+  };
+}
+
+/** Where lane `index`'s worktree lives, under the main workspace. */
+export function laneWorkDir(mainWorkDir: string, index: number): string {
+  return join(mainWorkDir, "worktrees", `lane-${index}`);
+}
+
+/** Where git keeps lane `index`'s worktree administrative files (its "git dir"). */
+function laneAdminDir(mainGitDir: string, index: number): string {
+  return join(mainGitDir, "worktrees", `lane-${index}`);
+}
+
+/**
+ * Creates `laneCount` `git worktree` lanes off the current HEAD (detached, so
+ * no branch-checked-out conflict with the main workspace or other lanes), each
+ * wrapped in its own `GitWorkspace` sharing the extracted main git dir. Every
+ * lane git command still names its own explicit `--git-dir` (the worktree's
+ * administrative dir under `<mainGitDir>/worktrees/lane-<i>`), so the "git dir
+ * never enters a container" invariant holds per lane exactly as it does for
+ * the main workspace - the worktree's `.git` file left in the lane's working
+ * tree is inert to these commands and is dropped by `dropPlantedGitDir` before
+ * the first container run, same as a planted `.git` on the main workspace.
+ */
+export async function createLaneWorkspaces(params: {
+  exec: Exec;
+  mainGitDir: string;
+  mainWorkDir: string;
+  laneCount: number;
+  tokenProvider?: () => Promise<string> | string;
+  identity?: GitIdentity;
+}): Promise<GitWorkspace[]> {
+  const { exec, mainGitDir, mainWorkDir, laneCount, tokenProvider, identity } = params;
+  const lanes: GitWorkspace[] = [];
+  for (let i = 0; i < laneCount; i++) {
+    const dir = laneWorkDir(mainWorkDir, i);
+    rmSync(dir, { recursive: true, force: true });
+    mkdirSync(dirname(dir), { recursive: true });
+    const result = await exec.run(
+      ["git", "--git-dir", mainGitDir, "worktree", "add", "--detach", dir, "HEAD"],
+      { cwd: mainWorkDir },
+    );
+    if (result.code !== 0) {
+      throw new Error(
+        `git worktree add (lane ${i}) failed (exit ${result.code}): ${result.stderr}`,
+      );
+    }
+    // `identity` undefined still resolves to the class's own default parameter
+    // (FIXOWL_DEFAULT_GIT_IDENTITY), exactly like constructing the main GitWorkspace.
+    lanes.push(new GitWorkspace(exec, dir, laneAdminDir(mainGitDir, i), tokenProvider, identity));
+  }
+  return lanes;
+}
+
+/**
+ * Tears down every lane created by `createLaneWorkspaces`. Deletes each lane's
+ * working directory first, then `git worktree prune` (NOT `git worktree
+ * remove`, which refuses a worktree whose `.git` file was stripped by
+ * `dropPlantedGitDir`/container hardening - prune only cleans up the
+ * now-dangling administrative metadata, which is safe once the working
+ * directory itself is already gone). Best-effort per lane so one stuck lane
+ * never strands the rest.
+ */
+export async function teardownLanes(params: {
+  exec: Exec;
+  mainGitDir: string;
+  mainWorkDir: string;
+  laneCount: number;
+}): Promise<void> {
+  const { exec, mainGitDir, mainWorkDir, laneCount } = params;
+  for (let i = 0; i < laneCount; i++) {
+    rmSync(laneWorkDir(mainWorkDir, i), { recursive: true, force: true });
+  }
+  await exec.run(["git", "--git-dir", mainGitDir, "worktree", "prune"], { cwd: mainWorkDir });
+  // Best-effort: drop the now-empty `worktrees` parent dir too, so a clean
+  // night leaves nothing behind for the next run's own lanes to collide with
+  // (the workflow's "Reset workspace git state" step is the crash-safety net).
+  rmSync(dirname(laneWorkDir(mainWorkDir, 0)), { recursive: true, force: true });
 }

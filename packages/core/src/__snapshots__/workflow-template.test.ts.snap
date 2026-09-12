@@ -31,8 +31,10 @@ jobs:
       # Security guard: if a previous run was hard-killed mid-night, the
       # workspace .git may be one an agent container planted. Checkout must
       # never run git against it, so every night starts from a clean clone.
+      # Stale lane worktrees (issue #36's bounded concurrency, "$GITHUB_WORKSPACE/worktrees")
+      # from a killed run are cleared too, so a re-run never reuses a half-torn-down lane.
       - name: Reset workspace git state
-        run: rm -rf "$GITHUB_WORKSPACE/.git" "$GITHUB_WORKSPACE.fixowl-git"
+        run: rm -rf "$GITHUB_WORKSPACE/.git" "$GITHUB_WORKSPACE.fixowl-git" "$GITHUB_WORKSPACE/worktrees"
 
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:

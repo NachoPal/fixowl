@@ -85917,7 +85917,16 @@ var repoEntrySchema = external_exports.object({
    * as before - list all matching, oldest-first, cap. A non-empty `priority.labels`
    * enables it. See docs/priority-selection.md.
    */
-  priority: prioritySchema.optional()
+  priority: prioritySchema.optional(),
+  /**
+   * Opt-in bounded concurrency (issue #36): run this many independent chains at
+   * once, each internally sequential, using a `git worktree` per lane for
+   * isolation. Unset resolves to 1 (FIXOWL_DEFAULTS.maxParallel), which is
+   * byte-for-byte the pre-#36 sequential behavior - see main.ts's N===1
+   * special case. Actual concurrency is further clamped by a resource guard
+   * (see resolveLaneCount in git-ops.ts) and by the number of chains tonight.
+   */
+  max_parallel: external_exports.number().int().positive().optional()
 });
 var githubAppSchema = external_exports.object({
   app_id: external_exports.union([external_exports.number().int().positive(), external_exports.string().regex(/^\d+$/)]),
@@ -85990,7 +85999,9 @@ var globalConfigSchema = external_exports.object({
     skip_duplicates: external_exports.boolean().optional(),
     verify_before_fix: external_exports.boolean().optional(),
     /** Default priority-label selection for every repo that does not set its own. */
-    priority: prioritySchema.optional()
+    priority: prioritySchema.optional(),
+    /** Default max-parallel for every repo that does not set its own (see the repo entry). */
+    max_parallel: external_exports.number().int().positive().optional()
   }).optional(),
   agents: external_exports.record(external_exports.string(), agentSettingsSchema).optional(),
   repos: external_exports.array(repoEntrySchema).min(1)
@@ -86069,6 +86080,12 @@ var FIXOWL_DEFAULTS = {
   priorityLabels: ["priority: high", "priority: medium", "priority: low"],
   priorityIncludeUnlabeled: true,
   /**
+   * Opt-in bounded concurrency (issue #36). 1 is ALSO the resolution fallback
+   * for an unset value, so a pre-#36 config runs exactly one chain at a time -
+   * byte-for-byte the old sequential night. See docs/parallel-execution.md.
+   */
+  maxParallel: 1,
+  /**
    * CI-gated fix loop: at most this many agent passes before a draft PR is
    * left with the outstanding failures, and how long each pass waits for the
    * pushed head's required checks before counting a CI timeout. See
@@ -86125,7 +86142,8 @@ function resolveRepoSettings(config2, repoName) {
     // config written before this feature selects exactly as it did. The whole
     // block is taken from the repo or defaults (not deep-merged) so the ordered
     // label list is never ambiguous - like `label_models`.
-    priority: resolvePriority(entry.priority ?? defaults2.priority)
+    priority: resolvePriority(entry.priority ?? defaults2.priority),
+    maxParallel: entry.max_parallel ?? defaults2.max_parallel ?? FIXOWL_DEFAULTS.maxParallel
   };
 }
 function resolvePriority(priority) {
@@ -125560,7 +125578,8 @@ function asRef(value) {
 }
 
 // packages/action/src/main.ts
-import { existsSync as existsSync5, mkdirSync as mkdirSync3, readFileSync as readFileSync2, writeFileSync as writeFileSync3 } from "node:fs";
+import { existsSync as existsSync5, mkdirSync as mkdirSync4, readFileSync as readFileSync2, writeFileSync as writeFileSync3 } from "node:fs";
+import { totalmem } from "node:os";
 import { join as join7 } from "node:path";
 var import_yaml = __toESM(require_dist5(), 1);
 
@@ -125990,7 +126009,7 @@ function issueEvidenceArtifactName(issueNumber) {
 }
 
 // packages/action/src/git-ops.ts
-import { existsSync as existsSync4, renameSync, rmSync } from "node:fs";
+import { existsSync as existsSync4, mkdirSync, renameSync, rmSync } from "node:fs";
 import { basename as basename3, dirname, join as join4, resolve as resolve2 } from "node:path";
 function hostGitDirFor(workspaceDir) {
   const normalized = resolve2(workspaceDir);
@@ -126026,6 +126045,10 @@ var GitWorkspace = class {
   gitDir;
   tokenProvider;
   identity;
+  /** This workspace's explicit `--git-dir` path (issue #36's lane factory needs it to fan out worktrees). */
+  get gitDirPath() {
+    return this.gitDir;
+  }
   async authEnv() {
     if (this.tokenProvider === void 0) return void 0;
     const token = await this.tokenProvider();
@@ -126147,6 +126170,52 @@ var GitWorkspace = class {
     await this.git("push", "origin", "--delete", `refs/heads/${branch}`);
   }
 };
+var BYTES_PER_CONTAINER = 6 * 1024 ** 3;
+function resolveLaneCount(params) {
+  const { maxParallel, chainCount, totalMemBytes } = params;
+  const memoryGuard = Math.max(1, Math.floor(0.8 * totalMemBytes / BYTES_PER_CONTAINER));
+  const byChains = Math.max(1, chainCount);
+  const laneCount = Math.max(1, Math.min(maxParallel, memoryGuard, byChains));
+  return {
+    laneCount,
+    memoryGuard,
+    clampedByMemory: memoryGuard < maxParallel && laneCount === memoryGuard
+  };
+}
+function laneWorkDir(mainWorkDir, index) {
+  return join4(mainWorkDir, "worktrees", `lane-${index}`);
+}
+function laneAdminDir(mainGitDir, index) {
+  return join4(mainGitDir, "worktrees", `lane-${index}`);
+}
+async function createLaneWorkspaces(params) {
+  const { exec, mainGitDir, mainWorkDir, laneCount, tokenProvider, identity } = params;
+  const lanes = [];
+  for (let i = 0; i < laneCount; i++) {
+    const dir = laneWorkDir(mainWorkDir, i);
+    rmSync(dir, { recursive: true, force: true });
+    mkdirSync(dirname(dir), { recursive: true });
+    const result = await exec.run(
+      ["git", "--git-dir", mainGitDir, "worktree", "add", "--detach", dir, "HEAD"],
+      { cwd: mainWorkDir }
+    );
+    if (result.code !== 0) {
+      throw new Error(
+        `git worktree add (lane ${i}) failed (exit ${result.code}): ${result.stderr}`
+      );
+    }
+    lanes.push(new GitWorkspace(exec, dir, laneAdminDir(mainGitDir, i), tokenProvider, identity));
+  }
+  return lanes;
+}
+async function teardownLanes(params) {
+  const { exec, mainGitDir, mainWorkDir, laneCount } = params;
+  for (let i = 0; i < laneCount; i++) {
+    rmSync(laneWorkDir(mainWorkDir, i), { recursive: true, force: true });
+  }
+  await exec.run(["git", "--git-dir", mainGitDir, "worktree", "prune"], { cwd: mainWorkDir });
+  rmSync(dirname(laneWorkDir(mainWorkDir, 0)), { recursive: true, force: true });
+}
 
 // packages/action/src/idempotency.ts
 function filterAlreadyAttempted(issues, remoteBranches) {
@@ -126211,7 +126280,7 @@ async function selectIssuesByPriority(params) {
 }
 
 // packages/action/src/issue-pipeline.ts
-import { mkdirSync as mkdirSync2, writeFileSync as writeFileSync2 } from "node:fs";
+import { mkdirSync as mkdirSync3, writeFileSync as writeFileSync2 } from "node:fs";
 import { join as join6 } from "node:path";
 
 // packages/action/src/ci-poll.ts
@@ -126515,7 +126584,7 @@ function extractFirstJsonObject(text) {
 }
 
 // packages/action/src/verification.ts
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync as mkdirSync2, writeFileSync } from "node:fs";
 import { join as join5 } from "node:path";
 
 // packages/action/src/verify-web-script.ts
@@ -126609,7 +126678,7 @@ async function runVerification(params) {
   const checks = verify?.checks ?? [];
   const webChecks = verify?.web ?? [];
   if (checks.length === 0 && webChecks.length === 0) return outcomes;
-  mkdirSync(evidenceDir, { recursive: true });
+  mkdirSync2(evidenceDir, { recursive: true });
   for (const check2 of checks) {
     log3.info(`verify: running check "${check2.name}"`);
     const result = await engine.run({
@@ -126643,7 +126712,7 @@ ${tailLog(result.stdout, result.stderr)}`
     for (const web of webChecks) {
       log3.info(`verify: web check "${web.name}" against ${web.url}`);
       const webEvidenceDir = join5(evidenceDir, `web-${sanitize(web.name)}`);
-      mkdirSync(webEvidenceDir, { recursive: true });
+      mkdirSync2(webEvidenceDir, { recursive: true });
       const command = `( ${web.start} ) >${EVIDENCE_MOUNT_PATH}/app.log 2>&1 & node ${VERIFY_WEB_SCRIPT_MOUNT_PATH} --url ${shellQuote(web.url)} --out ${EVIDENCE_MOUNT_PATH} --deadline ${web.startup_timeout_seconds ?? 120}`;
       const result = await engine.run({
         image,
@@ -126698,8 +126767,8 @@ async function processIssue(deps, ctx) {
   const { issue: issue3, branch } = ctx;
   const base = { issue: issue3, branch, verification: [] };
   let usage;
-  mkdirSync2(ctx.evidenceDir, { recursive: true });
-  mkdirSync2(ctx.promptDir, { recursive: true });
+  mkdirSync3(ctx.evidenceDir, { recursive: true });
+  mkdirSync3(ctx.promptDir, { recursive: true });
   log3.info(`issue #${issue3.number}: branching ${branch} from ${ctx.baseRef}`);
   await git.checkoutNewBranch(branch, ctx.baseRef);
   const title = buildPrTitle(issue3.number, issue3.title);
@@ -127301,7 +127370,11 @@ async function runNightWithGit(deps, inputs, git) {
   const results = [];
   const notStarted = [];
   let budgetStop;
-  for (const chain of chains) {
+  async function runChain(chain, laneGit, laneWorkspaceDir) {
+    const chainResults = [];
+    const chainDeferred = [];
+    const chainNotStarted = [];
+    const chainTriaged = [];
     let baseRef = `origin/${inputs.defaultBranch}`;
     let prBase = inputs.defaultBranch;
     let stackedOn;
@@ -127314,7 +127387,7 @@ async function runNightWithGit(deps, inputs, git) {
         }
       }
       if (budgetStop !== void 0) {
-        notStarted.push(issue3);
+        chainNotStarted.push(issue3);
         continue;
       }
       const unshipped = (prereqPlan.prereqs.get(issue3.number) ?? []).filter(
@@ -127322,12 +127395,12 @@ async function runNightWithGit(deps, inputs, git) {
       );
       if (unshipped.length > 0) {
         const reasonParts = unshipped.map((n) => {
-          const prereqResult = results.find((res) => res.issue.number === n);
+          const prereqResult = chainResults.find((res) => res.issue.number === n);
           return prereqResult?.status === "pr-opened" && prereqResult.draft === true ? `#${n} (left as a draft, CI not green)` : `#${n}`;
         });
         const reason = `prerequisite ${reasonParts.join(", ")} did not ship tonight`;
         log3.info(`issue #${issue3.number}: deferred - ${reason}`);
-        deferred.push({ issue: issue3, reason });
+        chainDeferred.push({ issue: issue3, reason });
         continue;
       }
       const branch = issueBranchName(issue3.number, issue3.title);
@@ -127337,11 +127410,11 @@ async function runNightWithGit(deps, inputs, git) {
       let issueStackedOn = stackedOn;
       if (stackBase !== void 0) {
         try {
-          await git.fetchRemoteBranch(stackBase.branch);
+          await laneGit.fetchRemoteBranch(stackBase.branch);
         } catch (error62) {
           const reason = `could not fetch in-flight prerequisite branch ${stackBase.branch}: ${String(error62)}`;
           log3.info(`issue #${issue3.number}: deferred - ${reason}`);
-          deferred.push({ issue: issue3, reason });
+          chainDeferred.push({ issue: issue3, reason });
           continue;
         }
         issueBaseRef = `origin/${stackBase.branch}`;
@@ -127358,7 +127431,13 @@ async function runNightWithGit(deps, inputs, git) {
       });
       if (!resolution.ok) {
         log3.error(`issue #${issue3.number}: ${resolution.error}`);
-        results.push({ issue: issue3, branch, status: "error", verification: [], error: resolution.error });
+        chainResults.push({
+          issue: issue3,
+          branch,
+          status: "error",
+          verification: [],
+          error: resolution.error
+        });
         continue;
       }
       if (resolution.source === "label") {
@@ -127370,7 +127449,7 @@ async function runNightWithGit(deps, inputs, git) {
       let result;
       try {
         result = await processIssue(
-          { git, engine, github, log: log3, clock: deps.clock },
+          { git: laneGit, engine, github, log: log3, clock: deps.clock },
           {
             issue: issue3,
             branch,
@@ -127383,7 +127462,7 @@ async function runNightWithGit(deps, inputs, git) {
             adapter,
             agentEnv,
             selection: resolution.selection,
-            workspaceDir: inputs.workspaceDir,
+            workspaceDir: laneWorkspaceDir,
             promptDir: join7(inputs.tempDir, "fixowl-prompts"),
             evidenceDir,
             timeoutMs: inputs.issueTimeoutMinutes * 60 * 1e3,
@@ -127396,7 +127475,7 @@ async function runNightWithGit(deps, inputs, git) {
       } catch (error62) {
         log3.error(`issue #${issue3.number}: ${String(error62)}`);
         try {
-          await git.discardAllChanges();
+          await laneGit.discardAllChanges();
         } catch {
         }
         result = {
@@ -127407,7 +127486,7 @@ async function runNightWithGit(deps, inputs, git) {
           error: error62 instanceof Error ? error62.message : String(error62)
         };
       }
-      results.push(result);
+      chainResults.push(result);
       if (result.usage !== void 0) {
         tokensUsed += result.usage.totalTokens;
         tokensMeasured = true;
@@ -127417,7 +127496,7 @@ async function runNightWithGit(deps, inputs, git) {
         warnings.push(warning2);
         log3.warn(warning2);
       }
-      if (result.triaged !== void 0) triaged.push(result.triaged);
+      if (result.triaged !== void 0) chainTriaged.push(result.triaged);
       await uploadIssueEvidence(deps, issue3.number, evidenceDir);
       if (result.status === "pr-opened" && result.prNumber !== void 0 && result.draft === false) {
         baseRef = branch;
@@ -127426,6 +127505,78 @@ async function runNightWithGit(deps, inputs, git) {
         shipped.add(issue3.number);
       }
     }
+    return {
+      results: chainResults,
+      deferred: chainDeferred,
+      notStarted: chainNotStarted,
+      triaged: chainTriaged
+    };
+  }
+  const configuredMaxParallel = inputs.maxParallel ?? FIXOWL_DEFAULTS.maxParallel;
+  const { laneCount, clampedByMemory } = resolveLaneCount({
+    maxParallel: configuredMaxParallel,
+    chainCount: chains.length,
+    totalMemBytes: totalmem()
+  });
+  if (clampedByMemory) {
+    const warning2 = `max_parallel (${configuredMaxParallel}) was clamped to ${laneCount} lane(s) by the host's available memory (each container is capped at 6g)`;
+    warnings.push(warning2);
+    log3.warn(warning2);
+  }
+  let laneGits;
+  let laneWorkspaceDirs;
+  if (laneCount <= 1) {
+    laneGits = [git];
+    laneWorkspaceDirs = [inputs.workspaceDir];
+  } else {
+    log3.info(
+      `running up to ${laneCount} chain(s) concurrently (${chains.length} chain(s) tonight)`
+    );
+    laneGits = await createLaneWorkspaces({
+      exec: deps.exec,
+      mainGitDir: git.gitDirPath,
+      mainWorkDir: inputs.workspaceDir,
+      laneCount,
+      tokenProvider: inputs.pushTokenProvider,
+      identity: inputs.gitIdentity
+    });
+    laneWorkspaceDirs = laneGits.map((_2, i) => laneWorkDir(inputs.workspaceDir, i));
+  }
+  const chainOutcomes = Array.from({ length: chains.length });
+  let nextChainIndex = 0;
+  const lanePromises = laneGits.map(async (laneGit, laneIndex) => {
+    const laneWorkspaceDir = laneWorkspaceDirs[laneIndex];
+    for (; ; ) {
+      const i = nextChainIndex;
+      nextChainIndex += 1;
+      if (i >= chains.length) return;
+      chainOutcomes[i] = await runChain(chains[i], laneGit, laneWorkspaceDir);
+    }
+  });
+  try {
+    await Promise.all(lanePromises);
+  } finally {
+    if (laneCount > 1) {
+      try {
+        await teardownLanes({
+          exec: deps.exec,
+          mainGitDir: git.gitDirPath,
+          mainWorkDir: inputs.workspaceDir,
+          laneCount
+        });
+      } catch (error62) {
+        log3.warn(
+          `failed to tear down lane worktrees (${String(error62)}); the next run's "Reset workspace git state" step clears them`
+        );
+      }
+    }
+  }
+  for (const outcome of chainOutcomes) {
+    if (outcome === void 0) continue;
+    results.push(...outcome.results);
+    deferred.push(...outcome.deferred);
+    notStarted.push(...outcome.notStarted);
+    triaged.push(...outcome.triaged);
   }
   return {
     results,
@@ -127548,7 +127699,7 @@ async function classifyIssues(params) {
     stdin = prompt;
   } else {
     const promptDir = join7(inputs.tempDir, "fixowl-prompts");
-    mkdirSync3(promptDir, { recursive: true });
+    mkdirSync4(promptDir, { recursive: true });
     const promptFile = join7(promptDir, "classify.md");
     writeFileSync3(promptFile, prompt);
     extraMounts.push({ host: promptFile, container: PROMPT_MOUNT_PATH, readOnly: true });
@@ -129181,6 +129332,7 @@ async function run() {
         labels: parseLabelInput(getInput("priority-labels")),
         includeUnlabeled: booleanInput("priority-include-unlabeled", true)
       },
+      maxParallel: positiveIntInput("max-parallel", 1),
       workspaceDir,
       tempDir,
       runUrl,

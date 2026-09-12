@@ -162,6 +162,16 @@ inputs:
       midnight). Empty degrades to the calendar day.
     required: false
     default: ""
+  max-parallel:
+    description: >-
+      Opt-in bounded concurrency (issue #36): run this many independent chains at
+      once, each internally sequential, using a separate `git worktree` lane per
+      chain. Actual concurrency is further clamped by a resource guard
+      (~0.8 * total RAM / 6GB per container) and by tonight's chain count. "1"
+      (the default) is byte-for-byte the pre-#36 sequential night. See
+      docs/parallel-execution.md.
+    required: false
+    default: "1"
 
 runs:
   using: node24
