@@ -223,12 +223,19 @@ See [docs/releasing.md](docs/releasing.md).
   registers, `requiredContextsStalled` in `ci-gate.ts`) or a bare timeout with
   nothing red stops early, and any failure after the draft PR exists annotates
   and keeps that draft rather than stranding it (issues #72/#74/#75/#76; the poll
-  absorbs a transient read error per #73). The pure gate decision is
+  absorbs a transient read error per #73). Before each CI wait it is also
+  conflict-aware: the pure `packages/core/src/conflict-gate.ts::classifyMergeability`
+  maps a dirty PR (a conflicted draft can surface as `mergeable:false`/`draft`,
+  shadowing `dirty`) to a host-side rebase-and-re-run (`git-ops.ts::rebaseOnto`,
+  `--force-with-lease`) bounded by `conflict_max_tries`, leaving a distinct
+  `needs-rebase` draft when unresolved instead of burning the CI timeout on a
+  merge ref that can never register. The pure gate decision is
   `packages/core/src/ci-gate.ts`; the poll loop is `ci-poll.ts` (inject a `Clock`
   in tests); `getRequiredChecks`/`getChecksForRef`/`getFailedCheckLogs` live
   behind `deps.ts`. Config is `ci_max_tries` (3) /
-  `ci_timeout_minutes` (60) in `config-schema.ts`, propagated through
-  `provision` -> `action.yml` inputs. See [docs/ci-fix-loop.md](docs/ci-fix-loop.md).
+  `ci_timeout_minutes` (60) / `conflict_max_tries` (2) in `config-schema.ts`,
+  propagated through `provision` -> `action.yml` inputs. See
+  [docs/ci-fix-loop.md](docs/ci-fix-loop.md).
 
 - Pre-work issue triage is two layers between selection and the agent, both
   default ON and free. Layer A (the deterministic pre-gate, `triage.ts::planTriage`
