@@ -1674,7 +1674,7 @@ listed above (edit that file or re-run \`fixowl init\`), then continue with:
   log.info("\n$ fixowl provision");
   let provisionResult: ProvisionResult;
   try {
-    provisionResult = await provisionCommand(ctx, undefined, {});
+    provisionResult = await provisionCommand(ctx, undefined, { prompter });
   } catch (error) {
     log.error(describeError(error));
     log.info(`

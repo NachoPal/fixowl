@@ -184,6 +184,22 @@ spends it (registration is the one step needing Administration: write). It is
 a different host than the runner? Use `fixowl provision --no-register`, then
 `fixowl start --register` on the runner host.
 
+Provisioning renders the workflow with the fixowl action **pinned**, and asks
+once per run which version to pin (all repos in the run get the same one):
+
+- **this CLI's release (default)** - resolves the `v<cli-version>` tag to its
+  immutable commit SHA, so the action always matches the CLI you provisioned
+  with. A dev/source build whose version has no published tag degrades to
+  main HEAD with a note (rather than failing).
+- **a specific release / RC tag you type** (e.g. `v0.2.0-rc.9`) - resolved
+  online to its SHA; a tag that does not exist is a hard error, never a silent
+  fallback.
+- **main** - the deliberate moving-ref exception (`NachoPal/fixowl@main`), for
+  always-latest tracking such as fixowl's own self-run repo.
+
+Skip the prompt with `fixowl provision --action-version <tag|main>` (defaults to
+this CLI's release) for automation and re-provisioning.
+
 Those stay available on their own for later changes: to update an
 already-configured repo, `fixowl edit [repo]` re-walks the per-repo questions
 pre-filled with your current values in a keep-or-change style, writes only what

@@ -16,6 +16,8 @@ import { stopCommand } from "./commands/stop.ts";
 import { validateCommand } from "./commands/validate.ts";
 import { watchCommand } from "./commands/watch.ts";
 import { makeContext } from "./context.ts";
+import { parseActionVersionFlag } from "./github/action-version.ts";
+import { createPrompter } from "./prompt.ts";
 import { version } from "./version.ts";
 
 export function createProgram(): Command {
@@ -62,12 +64,33 @@ export function createProgram(): Command {
       "--no-register",
       "skip runner registration (register on the runner host with `start --register`)",
     )
-    .action(async (repo: string | undefined, options: { schedule: boolean; register: boolean }) => {
-      await provisionCommand(makeContext(configPath()), repo, {
-        noSchedule: !options.schedule,
-        noRegister: !options.register,
-      });
-    });
+    .option(
+      "--action-version <ref>",
+      "pin the workflow's fixowl action to this tag (e.g. v0.2.0-rc.9) or `main` (default: this CLI's release, asked interactively)",
+    )
+    .action(
+      async (
+        repo: string | undefined,
+        options: { schedule: boolean; register: boolean; actionVersion?: string },
+      ) => {
+        // The flag skips the prompt; without it, provision asks interactively.
+        const actionVersion =
+          options.actionVersion !== undefined
+            ? parseActionVersionFlag(options.actionVersion, version)
+            : undefined;
+        const prompter = actionVersion === undefined ? createPrompter() : undefined;
+        try {
+          await provisionCommand(makeContext(configPath()), repo, {
+            noSchedule: !options.schedule,
+            noRegister: !options.register,
+            actionVersion,
+            prompter,
+          });
+        } finally {
+          prompter?.close();
+        }
+      },
+    );
 
   program
     .command("start [repo]")

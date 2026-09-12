@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Octokit } from "@octokit/rest";
-import { ensureLabels, PICKUP_LABEL_META, SELECTOR_LABEL_META } from "./repo-provisioning.ts";
+import {
+  ensureLabels,
+  PICKUP_LABEL_META,
+  resolveActionRef,
+  SELECTOR_LABEL_META,
+} from "./repo-provisioning.ts";
 
 interface CreatedLabel {
   name: string;
@@ -65,5 +70,95 @@ describe("ensureLabels", () => {
 
     expect(names).toEqual(["quick"]);
     expect(created.map((label) => label.name)).toEqual(["quick"]);
+  });
+});
+
+const ACTION_REPO = "NachoPal/fixowl";
+
+/**
+ * A fake Octokit whose `repos.getCommit` resolves a fixed map of ref -> SHA and
+ * 404s for anything else, so `resolveActionRef` sees a tag/HEAD as present or
+ * missing exactly as the map says. Records the refs it was asked to resolve.
+ */
+function fakeCommitOctokit(shaByRef: Record<string, string>): {
+  octokit: Octokit;
+  refsAsked: string[];
+} {
+  const refsAsked: string[] = [];
+  const notFound = Object.assign(new Error("Not Found"), { status: 404 });
+  const octokit = {
+    rest: {
+      repos: {
+        getCommit: vi.fn(async ({ ref: commitRef }: { ref: string }) => {
+          refsAsked.push(commitRef);
+          const sha = shaByRef[commitRef];
+          if (sha === undefined) throw notFound;
+          return { data: { sha } };
+        }),
+      },
+    },
+  } as unknown as Octokit;
+  return { octokit, refsAsked };
+}
+
+describe("resolveActionRef", () => {
+  it("default (cli-release): pins the CLI version's tag SHA with a version comment", async () => {
+    const { octokit, refsAsked } = fakeCommitOctokit({ "v0.2.0-rc.10": "tagsha" });
+
+    const resolved = await resolveActionRef(octokit, ACTION_REPO, {
+      kind: "cli-release",
+      cliVersion: "0.2.0-rc.10",
+    });
+
+    expect(resolved.ref).toBe(`${ACTION_REPO}@tagsha`);
+    expect(resolved.comment).toBe("v0.2.0-rc.10");
+    expect(refsAsked).toEqual(["v0.2.0-rc.10"]);
+  });
+
+  it("typed tag: resolves it online to its SHA", async () => {
+    const { octokit } = fakeCommitOctokit({ "v0.2.0-rc.9": "rc9sha" });
+
+    const resolved = await resolveActionRef(octokit, ACTION_REPO, {
+      kind: "tag",
+      tag: "v0.2.0-rc.9",
+    });
+
+    expect(resolved.ref).toBe(`${ACTION_REPO}@rc9sha`);
+    expect(resolved.comment).toBe("v0.2.0-rc.9");
+  });
+
+  it("typed tag not found: hard-fails with an actionable error (no silent fallback)", async () => {
+    // HEAD would resolve, proving the failure is a deliberate refusal, not an
+    // inability to reach the repo.
+    const { octokit } = fakeCommitOctokit({ HEAD: "headsha" });
+
+    await expect(
+      resolveActionRef(octokit, ACTION_REPO, { kind: "tag", tag: "v9.9.9" }),
+    ).rejects.toThrow(/tag "v9\.9\.9" was not found/);
+  });
+
+  it("main: pins the moving @main ref, never a frozen SHA", async () => {
+    const { octokit, refsAsked } = fakeCommitOctokit({ HEAD: "headsha" });
+
+    const resolved = await resolveActionRef(octokit, ACTION_REPO, { kind: "main" });
+
+    expect(resolved.ref).toBe(`${ACTION_REPO}@main`);
+    expect(resolved.comment).toBe("main (tracks latest)");
+    // A moving ref needs no online resolution at all.
+    expect(refsAsked).toEqual([]);
+  });
+
+  it("dev build with no matching tag: default falls back to main HEAD with a note", async () => {
+    const { octokit, refsAsked } = fakeCommitOctokit({ HEAD: "headsha" });
+
+    const resolved = await resolveActionRef(octokit, ACTION_REPO, {
+      kind: "cli-release",
+      cliVersion: "0.2.0",
+    });
+
+    expect(resolved.ref).toBe(`${ACTION_REPO}@headsha`);
+    expect(resolved.comment).toMatch(/no v0\.2\.0 tag; dev\/source build/);
+    // It tries the tag first, then falls back to HEAD.
+    expect(refsAsked).toEqual(["v0.2.0", "HEAD"]);
   });
 });

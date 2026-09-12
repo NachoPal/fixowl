@@ -222,6 +222,25 @@ usage %, total tokens, and graceful wall-clock; see the README "Run budgets"
 section), the
 per-issue timeout, and the agent's own turn limit.
 
+## Workflow action pinning
+
+- The workflow `fixowl provision` renders pins the fixowl action to an
+  **immutable commit SHA**, not a mutable ref, so a compromised or force-moved
+  upstream tag cannot silently change what runs on the runner. Provisioning asks
+  once which version to pin (a single per-run choice for every repo): the
+  release this CLI is built from (default - the `v<cli-version>` tag resolved to
+  its SHA, so the action matches the CLI), or a specific release/RC tag you type
+  (resolved online; a non-existent tag is a hard error, never a silent
+  fallback). `--action-version <tag|main>` skips the prompt for automation.
+- The **one** exception is the explicit `main` choice, which pins the moving
+  `NachoPal/fixowl@main` ref on purpose - for always-latest tracking such as
+  fixowl's own self-run repo. A frozen main-HEAD SHA is exactly what goes stale,
+  so `main` is left mutable by design; everything else stays SHA-pinned.
+- Dev/source-build safety valve: when the CLI's own version has no matching
+  published tag (a base version with no `-rc.N` tag, or a local build), the
+  default degrades to main HEAD with a note rather than failing. A *typed* tag
+  that is not found still hard-fails.
+
 ## Runner posture
 
 - Persistent (non-ephemeral) runners on a dedicated machine that hosts only
