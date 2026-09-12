@@ -78,9 +78,9 @@ CLI-driven config change, not just first setup: editing config means re-running
 (Contents/Workflows/Pull requests: write, plus Secrets/Issues: write when those
 change). So keep the admin PAT (you may strip only Administration: write after
 registration) if you plan to keep managing config through the CLI; revoke it
-entirely only once you are done with CLI config edits - after that, config
-changes go through the manual route below. See [docs/security.md](security.md)
-for the full breakdown.
+entirely once you are done with CLI config edits, and re-mint it later only when
+you want to re-provision. See [docs/security.md](security.md) for the full
+breakdown.
 
 If you provision from a different machine than the one that runs the runner,
 run `fixowl provision --no-register` there and `fixowl start --register` on the
@@ -89,14 +89,6 @@ runner host.
 `fixowl start` writes each runner's `.env` with `DOCKER_HOST` pointing at the
 Colima socket and a PATH that covers Homebrew on Intel (`/usr/local/bin`) and
 Apple Silicon (`/opt/homebrew/bin`).
-
-**No admin PAT at all:** if you don't want to hand fixowl an admin token, run
-`fixowl provision --manual` instead. It makes no API calls against the target
-repo - it renders the workflow, `.fixowl.yml`, and issue template with the same
-renderers `fixowl provision` uses, writes them to `./fixowl-manual/<repo>/`, and
-prints the `gh label create` / `gh secret set` commands and PR steps to run
-yourself. This is the recommended setup for security-conscious maintainers; see
-[docs/security.md](security.md).
 
 ## 5. Verify end to end
 

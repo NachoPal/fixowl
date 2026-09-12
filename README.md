@@ -184,11 +184,6 @@ spends it (registration is the one step needing Administration: write). It is
 a different host than the runner? Use `fixowl provision --no-register`, then
 `fixowl start --register` on the runner host.
 
-Don't want to hand fixowl an admin token at all? `fixowl provision --manual`
-renders the same workflow, `.fixowl.yml`, and issue template and prints the
-`gh label create` / `gh secret set` commands to run yourself, instead of
-calling the GitHub API. See [docs/security.md](docs/security.md).
-
 Those stay available on their own for later changes: to update an
 already-configured repo, `fixowl edit [repo]` re-walks the per-repo questions
 pre-filled with your current values in a keep-or-change style, writes only what

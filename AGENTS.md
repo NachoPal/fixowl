@@ -104,13 +104,6 @@ See [docs/releasing.md](docs/releasing.md).
   overwriting. Never route `edit` through `renderConfigYaml` (a lossy fresh-file
   renderer, kept strictly init-only). `edit` is config, not re-onboarding: no
   App/token/runner setup.
-- `fixowl provision --manual` (`packages/cli/src/commands/provision-manual.ts`)
-  is the no-admin-token provisioning path: it renders the workflow,
-  `.fixowl.yml`, and issue template with the exact same renderers
-  `provisionCommand` uses (so the two can never drift), writes them under
-  `./fixowl-manual/<repo>/`, and prints `gh` steps instead of calling the
-  GitHub API - it never touches `ctx.admin`. Extend both commands together if
-  provisioning grows a new artifact.
 - App onboarding (`fixowl init`) is GitHub's App Manifest one-click flow: pure
   manifest + rationale logic in `packages/cli/src/github/app-manifest.ts` (its
   permissions must stay in lockstep with init's `verifyApp`, `fixowl validate`,

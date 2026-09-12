@@ -97,21 +97,14 @@ loop could never verify check runs on one. A config that still sets the old
     admin PAT, none of it Administration: write.
   - Net: **keep the admin PAT** (you may strip only `Administration: write`
     after registration) if you want to keep managing config through the CLI;
-    **revoke it entirely** only once you are done with CLI-driven config
-    changes - after that, config edits go through the manual route
-    (`fixowl provision --manual`, below). Either way the automated night run is
-    unaffected.
-- **The recommended no-admin-token setup is `fixowl provision --manual`.**
-  Everything the admin token does for provisioning (labels, secret names,
-  workflow PR, starter-files PR) can be done by the maintainer themselves;
-  `--manual` renders those same artifacts (via the same renderers, so they
-  never drift from what `provision` would produce) into
-  `./fixowl-manual/<repo>/` and prints copy-paste `gh` commands instead of
-  calling the GitHub API, so it never needs an admin token at all. Runner
-  registration still needs *some* Administration: write, spent either as a
-  one-time `fixowl start --register` (revoke the token immediately after) or
-  fully manually via the GitHub UI's own "New self-hosted runner" flow, which
-  needs no PAT.
+    **revoke it entirely** once you are done with CLI-driven config changes. Either
+    way the automated night run is unaffected.
+- **The admin PAT is setup-only and revocable.** Setup (`fixowl init` /
+  `fixowl provision`) needs it once - runner registration is the single step
+  that requires `Administration: write` - and routine operation (`fixowl start`,
+  `fixowl status`, the automated night run) needs no admin token at all. After
+  provisioning you can revoke the PAT entirely (or downgrade it to read-only, see
+  below), and re-mint it later only when you want to re-provision through the CLI.
 - Keeping the admin token at **Administration: read** (rather than revoking it)
   buys one thing: the local online check in `fixowl start` and `fixowl status`,
   which lists the repo's runners. That is inherently an Administration read, so
