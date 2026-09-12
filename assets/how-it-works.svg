@@ -1,150 +1,203 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 908" width="1200" height="908" role="img" aria-labelledby="t d">
-  <title id="t">How fixowl works</title>
-  <desc id="d">A sequence diagram with three actors: your machine running the fixowl CLI, your repo on GitHub, and a self-hosted runner host with Docker. Setup happens once: fixowl provision pushes labels, sealed secrets and the workflow file to GitHub, and fixowl start installs and runs the self-hosted runner service. Every night the cron in the workflow dispatches a job to the runner while your machine is asleep; the fixowl action selects issues labeled overnight and orders them by the repo's native blocked-by prerequisites, deferring any issue whose prerequisite isn't shipping tonight. Issues are otherwise independent by default; grouping the rest by file conflicts is an optional, off-by-default step. For each issue the action runs the agent in a Docker container with no GitHub token inside, runs a cheap local .fixowl.yml pre-check, then pushes the branch and opens the pull request as a draft. A bounded CI-gated fix loop then waits for the base branch's required checks: when they pass the draft flips to ready for review; when they fail or time out the failures are fed back to the agent and it retries, up to ci_max_tries, leaving an annotated draft if the budget is exhausted. In the morning you review the pull request. fixowl never merges.</desc>
+<?xml version="1.0" encoding="UTF-8"?>
+<svg id="fxfig" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1240 1060" width="1240" height="1060" preserveAspectRatio="xMidYMid meet" role="img" aria-labelledby="fxDesc">
+  <desc id="fxDesc">A high-level architecture map with four locations. Your machine runs the fixowl CLI and a host scheduler, and is where you file, label and review. GitHub holds the App identity, the issues labeled overnight, the workflow and sealed secrets, the required CI checks, and the pull requests. The runner host runs the self-hosted (or GitHub-hosted) runner and the fixowl Action, which spawns one per-issue Docker container that runs the coding agent. Ten numbered steps, colored violet for one-time setup, green for the nightly run and amber for morning review, trace setup, issue selection, running the agent in a container, opening one draft PR, the CI-gated loop, the flip from draft to ready, and your morning review. fixowl never merges.</desc>
 
   <style>
-    .bg    { fill: #0a0f1e; }
-    .band  { fill: #101a33; }
-    .card  { fill: #16203a; stroke: #2b3a5c; stroke-width: 1.5; }
-    .pipe  { fill: #131d36; stroke: #33456e; stroke-width: 1.5; }
-    .note  { fill: #131d36; stroke: #2b3a5c; stroke-width: 1.5; }
-    .life  { stroke: #2c3d5e; stroke-width: 2; stroke-dasharray: 4 7; }
-    .ttl   { font: 700 18px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #f2ede3; }
-    .sub   { font: 400 14px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #9fb0cc; }
-    .bandt { font: 700 13px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #a78bfa; letter-spacing: 1.8px; }
-    .l1    { font: 600 15px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #f2ede3; }
-    .l2    { font: 400 14px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #9fb0cc; }
-    .idle  { font: 400 14px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #6b7f9e; }
-    .mono  { font: 400 15px ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; fill: #c4b5fd; }
-    .mono2 { font: 400 13px ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; fill: #8fa3c4; }
-    .step  { font: 400 15px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #dbe4f0; }
-    .num   { font: 700 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #0a0f1e; }
-    .green { font: 600 13.5px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #4ade80; }
-    .amber { font: 600 13.5px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #fbbf24; }
-    .optband { fill: #0e1830; stroke: #3f6ea5; stroke-width: 1.3; stroke-dasharray: 6 4; }
-    .optt  { font: 700 11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #93c5fd; letter-spacing: 0.8px; }
-    .optl  { font: 400 13px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #8aa0c2; }
-    .ap    { stroke: #a78bfa; stroke-width: 2.5; fill: none; marker-end: url(#ap); }
-    .ag    { stroke: #4ade80; stroke-width: 2.5; fill: none; marker-end: url(#ag); }
-    .ac    { stroke: #b9c6da; stroke-width: 2.5; fill: none; marker-end: url(#ac); }
-    .loop  { stroke: #f59e0b; stroke-width: 2; fill: none; stroke-dasharray: 5 4; marker-end: url(#aa); }
+    #fxfig text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+    #fxfig .bg      { fill: #0a0f1e; }
+    #fxfig .zone    { fill: #101a33; stroke: #24314f; stroke-width: 1.5; }
+    #fxfig .box     { fill: #16203a; stroke: #2b3a5c; stroke-width: 1.5; }
+    #fxfig .boxlg   { fill: #1b2745; stroke: #2b3a5c; stroke-width: 1.5; }
+    #fxfig .ctr     { fill: #101a33; stroke: #4ade80; stroke-width: 1.6; stroke-dasharray: 5 4; }
+    #fxfig .title   { fill: #f2ede3; font-weight: 700; font-size: 27px; letter-spacing: -.01em; }
+    #fxfig .subttl  { fill: #9fb0cc; font-size: 15px; }
+    #fxfig .zt      { fill: #f2ede3; font-weight: 700; font-size: 15px; letter-spacing: .04em; }
+    #fxfig .zsub    { fill: #6b7f9e; font-size: 12px; }
+    #fxfig .t       { fill: #f2ede3; font-weight: 650; font-size: 15px; }
+    #fxfig .ts      { fill: #9fb0cc; font-size: 12.5px; }
+    #fxfig .tsm     { fill: #6b7f9e; font-size: 11.5px; }
+    #fxfig .mn      { fill: #c4b5fd; font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+    #fxfig .amberT  { fill: #fbbf24; font-weight: 700; }
+    #fxfig .pillA   { fill: #131d36; stroke: #fbbf24; stroke-width: 1.4; }
+    #fxfig .pillG   { fill: #131d36; stroke: #4ade80; stroke-width: 1.4; }
+    #fxfig .pillAt  { fill: #fbbf24; font-weight: 700; font-size: 13px; }
+    #fxfig .pillGt  { fill: #4ade80; font-weight: 700; font-size: 13px; }
+    #fxfig .ev      { stroke: #a78bfa; stroke-width: 2.2; fill: none; marker-end: url(#mv); }
+    #fxfig .eg      { stroke: #4ade80; stroke-width: 2.2; fill: none; marker-end: url(#mg); }
+    #fxfig .egb     { stroke: #4ade80; stroke-width: 2.2; fill: none; marker-end: url(#mg); marker-start: url(#mg); }
+    #fxfig .ea      { stroke: #fbbf24; stroke-width: 2.2; fill: none; marker-end: url(#ma); }
+    #fxfig .thin    { stroke: #6b7f9e; stroke-width: 1.4; fill: none; marker-end: url(#mm); stroke-dasharray: 3 4; }
+    #fxfig .nb      { fill: #a78bfa; }
+    #fxfig .nb.g    { fill: #4ade80; }
+    #fxfig .nb.a    { fill: #fbbf24; }
+    #fxfig .nbt     { fill: #0a0f1e; font-weight: 700; font-size: 12px; }
+    #fxfig .lgh     { fill: #a78bfa; font-weight: 700; font-size: 13px; letter-spacing: .12em; }
+    #fxfig .lgt     { fill: #dbe4f0; font-size: 13.5px; }
+    #fxfig .lgf     { fill: #9fb0cc; font-size: 12.5px; }
   </style>
 
   <defs>
-    <marker id="ap" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
-      <path d="M0,0 L10,4 L0,8 z" fill="#a78bfa"/>
-    </marker>
-    <marker id="ag" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
-      <path d="M0,0 L10,4 L0,8 z" fill="#4ade80"/>
-    </marker>
-    <marker id="ac" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
-      <path d="M0,0 L10,4 L0,8 z" fill="#b9c6da"/>
-    </marker>
-    <marker id="aa" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
-      <path d="M0,0 L10,4 L0,8 z" fill="#f59e0b"/>
-    </marker>
+    <marker id="mv" markerUnits="userSpaceOnUse" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto-start-reverse"><path d="M0,0 L10,4 L0,8 z" fill="#a78bfa"/></marker>
+    <marker id="mg" markerUnits="userSpaceOnUse" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto-start-reverse"><path d="M0,0 L10,4 L0,8 z" fill="#4ade80"/></marker>
+    <marker id="ma" markerUnits="userSpaceOnUse" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto-start-reverse"><path d="M0,0 L10,4 L0,8 z" fill="#fbbf24"/></marker>
+    <marker id="mm" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto-start-reverse"><path d="M0,0 L9,3.5 L0,7 z" fill="#6b7f9e"/></marker>
   </defs>
 
-  <rect class="bg" x="0" y="0" width="1200" height="908" rx="18"/>
+  <rect class="bg" x="0" y="0" width="1240" height="1060" rx="18"/>
 
-  <!-- phase bands (drawn first: lifelines and content sit on top) -->
-  <rect class="band" x="20" y="124" width="1160" height="146" rx="12"/>
-  <rect class="band" x="20" y="286" width="1160" height="490" rx="12"/>
-  <rect class="band" x="20" y="792" width="1160" height="96" rx="12"/>
+  <!-- ===== HEADER ===== -->
+  <text class="subttl" x="40" y="80">Four locations, ten steps — you set it up once, then every night it opens one draft PR per issue.</text>
 
-  <!-- lifelines -->
-  <line class="life" x1="170" y1="104" x2="170" y2="872"/>
-  <line class="life" x1="590" y1="104" x2="590" y2="872"/>
-  <line class="life" x1="985" y1="104" x2="985" y2="872"/>
+  <!-- ===== ZONES ===== -->
+  <rect class="zone" x="40"  y="150" width="326" height="600" rx="16"/>
+  <rect class="zone" x="398" y="150" width="360" height="600" rx="16"/>
+  <rect class="zone" x="822" y="150" width="378" height="600" rx="16"/>
 
-  <!-- actors -->
-  <rect class="card" x="30" y="28" width="280" height="76" rx="12"/>
-  <text class="ttl" x="170" y="61" text-anchor="middle">Your machine</text>
-  <text class="sub" x="170" y="85" text-anchor="middle">the fixowl CLI</text>
+  <text class="zt"   x="62"  y="140">💻  YOUR MACHINE</text>
+  <text class="zt"   x="420" y="140">🐙  GITHUB · your repo</text>
+  <text class="zt"   x="844" y="140">🖥️  RUNNER HOST</text>
+  <text class="zsub" x="844" y="176">self-hosted · or GitHub-hosted (cloud)</text>
 
-  <rect class="card" x="450" y="28" width="280" height="76" rx="12"/>
-  <text class="ttl" x="590" y="61" text-anchor="middle">Your repo on GitHub</text>
-  <text class="sub" x="590" y="85" text-anchor="middle">issues · workflow · pull requests</text>
+  <!-- ===== ZONE A: YOUR MACHINE ===== -->
+  <rect class="box" x="58" y="190" width="290" height="104" rx="11"/>
+  <text class="t"   x="76" y="222">fixowl CLI</text>
+  <text class="ts"  x="76" y="246">init · provision · start · run</text>
+  <text class="tsm" x="76" y="268">your command-line tool — where setup happens</text>
 
-  <rect class="card" x="845" y="28" width="280" height="76" rx="12"/>
-  <text class="ttl" x="985" y="61" text-anchor="middle">Runner host</text>
-  <text class="sub" x="985" y="85" text-anchor="middle">any Mac or Linux box with Docker</text>
+  <rect class="box" x="58" y="322" width="290" height="76" rx="11"/>
+  <text class="t"   x="76" y="352">Host scheduler</text>
+  <text class="ts"  x="76" y="374">launchd — dispatches the night on time</text>
 
-  <!-- band 1: setup -->
-  <text class="bandt" x="40" y="150">SETUP · ONCE</text>
+  <rect class="box" x="58" y="628" width="290" height="104" rx="11"/>
+  <text class="t"   x="76" y="660">You (the operator)</text>
+  <text class="ts"  x="76" y="684">file &amp; label issues during the day</text>
+  <text class="ts"  x="76" y="704">review pull requests in the morning</text>
 
-  <text class="mono" x="380" y="176" text-anchor="middle">fixowl provision</text>
-  <text class="l2"   x="380" y="195" text-anchor="middle">labels · sealed secrets · workflow file</text>
-  <line class="ap" x1="176" y1="208" x2="584" y2="208"/>
+  <!-- ===== ZONE B: GITHUB ===== -->
+  <rect class="box" x="416" y="190" width="326" height="72" rx="11"/>
+  <text class="t"   x="434" y="220">GitHub App — the night's identity</text>
+  <text class="ts"  x="434" y="244">least-privilege installation token</text>
 
-  <rect x="390" y="214" width="380" height="38" fill="#101a33"/>
-  <text class="mono" x="580" y="230" text-anchor="middle">fixowl start</text>
-  <text class="l2"   x="580" y="249" text-anchor="middle">installs + runs the self-hosted runner service</text>
-  <line class="ap" x1="176" y1="262" x2="979" y2="262"/>
+  <rect class="box" x="416" y="282" width="326" height="72" rx="11"/>
+  <text class="t"   x="434" y="312">Open issues labeled <tspan class="mn">overnight</tspan></text>
+  <text class="ts"  x="434" y="336">selected &amp; ordered by native blocked-by</text>
 
-  <!-- band 2: every night -->
-  <text class="bandt" x="40" y="312">EVERY NIGHT</text>
+  <rect class="box" x="416" y="374" width="326" height="84" rx="11"/>
+  <text class="t"   x="434" y="404">Workflow  +  sealed secrets</text>
+  <text class="ts"  x="434" y="428">committed via PR · GitHub cron / host trigger</text>
 
-  <text class="l1"    x="787" y="326" text-anchor="middle">nightly cron dispatches the job</text>
-  <text class="mono2" x="787" y="344" text-anchor="middle">runs-on: [self-hosted, fixowl]</text>
-  <line class="ap" x1="596" y1="356" x2="979" y2="356"/>
+  <rect class="box" x="416" y="478" width="326" height="70" rx="11"/>
+  <text class="t"   x="434" y="508">Required CI checks</text>
+  <text class="ts"  x="434" y="532">the authority — green flips draft → ready</text>
 
-  <!-- your machine is out of the loop at night -->
-  <text class="idle" x="170" y="556" text-anchor="middle">your machine is asleep;</text>
-  <text class="idle" x="170" y="576" text-anchor="middle">nothing runs here</text>
+  <rect class="boxlg" x="416" y="566" width="326" height="126" rx="11"/>
+  <text class="t"   x="434" y="596">Pull request — one per issue</text>
+  <rect class="pillA" x="434" y="612" width="88" height="28" rx="14"/>
+  <text class="pillAt" x="478" y="631" text-anchor="middle">DRAFT</text>
+  <path class="eg" d="M530,626 H548"/>
+  <rect class="pillG" x="556" y="612" width="118" height="28" rx="14"/>
+  <text class="pillGt" x="615" y="631" text-anchor="middle">READY ✓</text>
+  <text class="mn"  x="434" y="664">branch  issue/&lt;n&gt;-&lt;slug&gt;</text>
+  <text class="ts amberT" x="434" y="684">fixowl NEVER merges</text>
 
-  <!-- where the schedule lives -->
-  <rect class="note" x="452" y="522" width="276" height="62" rx="10"/>
-  <text class="mono2" x="590" y="548" text-anchor="middle">.github/workflows/fixowl.yml</text>
-  <text class="mono2" x="590" y="570" text-anchor="middle">cron: 37 1 * * *</text>
+  <!-- ===== ZONE C: RUNNER HOST ===== -->
+  <rect class="box" x="840" y="194" width="342" height="62" rx="11"/>
+  <text class="t"   x="858" y="222">Self-hosted runner service</text>
+  <text class="tsm" x="858" y="242">a native process on the host</text>
 
-  <!-- the action pipeline, on the runner lane -->
-  <rect class="pipe" x="795" y="376" width="380" height="222" rx="12"/>
-  <text class="ttl" x="815" y="404">the fixowl action</text>
+  <rect class="boxlg" x="840" y="284" width="342" height="286" rx="12"/>
+  <text class="t"   x="858" y="312">fixowl Action</text>
+  <text class="tsm" x="858" y="332">the committed <tspan class="mn">dist/action</tspan> bundle</text>
+  <text class="tsm" x="858" y="352">host commits &amp; pushes the branch</text>
 
-  <circle cx="822" cy="427" r="10" fill="#a78bfa"/>
-  <text class="num"  x="822" y="431" text-anchor="middle">1</text>
-  <text class="step" x="845" y="433">select issues labeled overnight</text>
+  <rect class="ctr" x="860" y="372" width="302" height="176" rx="11"/>
+  <text class="t"   x="878" y="402">Per-issue Docker container</text>
+  <text class="ts"  x="878" y="426">runs the coding agent</text>
+  <text class="ts"  x="878" y="446">claude / codex</text>
+  <line x1="878" y1="460" x2="1144" y2="460" stroke="#2b3a5c" stroke-width="1"/>
+  <text class="tsm" x="878" y="484">one ephemeral container per issue</text>
+  <text class="tsm" x="878" y="504">edits only the working tree</text>
+  <text class="tsm" x="878" y="524">exactly one level of containerization</text>
 
-  <circle cx="822" cy="455" r="10" fill="#a78bfa"/>
-  <text class="num"  x="822" y="459" text-anchor="middle">2</text>
-  <text class="step" x="845" y="461">order by native blocked-by edges</text>
+  <!-- ===== ARROWS (clean orthogonal lanes) ===== -->
 
-  <!-- Layer 2 same-file grouping is opt-in and off by default -->
-  <rect class="optband" x="843" y="471" width="316" height="42" rx="8"/>
-  <text class="optt" x="1001" y="488" text-anchor="middle">OPTIONAL · OFF BY DEFAULT</text>
-  <text class="optl" x="1001" y="505" text-anchor="middle">then group the rest by file conflicts</text>
+  <!-- 3: CLI -> runner (top lane, above everything); riser at x=300 clears the YOUR MACHINE label -->
+  <path class="ev" d="M300,190 V112 H1100 V194"/>
+  <circle class="nb" cx="560" cy="112" r="12"/><text class="nbt" x="560" y="116.5" text-anchor="middle">3</text>
 
-  <circle cx="822" cy="533" r="10" fill="#a78bfa"/>
-  <text class="num"  x="822" y="537" text-anchor="middle">3</text>
-  <text class="step" x="845" y="539">run the agent in a Docker container</text>
+  <!-- 1: CLI -> App -->
+  <path class="ev" d="M348,224 H416"/>
+  <circle class="nb" cx="382" cy="224" r="12"/><text class="nbt" x="382" y="228.5" text-anchor="middle">1</text>
 
-  <circle cx="822" cy="561" r="10" fill="#a78bfa"/>
-  <text class="num"  x="822" y="565" text-anchor="middle">4</text>
-  <text class="step" x="845" y="567">cheap local pre-check (.fixowl.yml)</text>
+  <!-- 2: CLI -> Workflow/secrets -->
+  <path class="ev" d="M348,258 H382 V416 H416"/>
+  <circle class="nb" cx="382" cy="336" r="12"/><text class="nbt" x="382" y="340.5" text-anchor="middle">2</text>
 
-  <text class="green" x="815" y="590">no GitHub token inside the container</text>
+  <!-- schedule feeder (secondary, thin) -->
+  <path class="thin" d="M348,360 H392 V398 H416"/>
 
-  <!-- push and open the PR as a draft -->
-  <text class="mono" x="787" y="626" text-anchor="middle">git push issue/&lt;n&gt;-&lt;slug&gt;</text>
-  <text class="l2"   x="787" y="645" text-anchor="middle">opens exactly one pull request per issue, as a draft</text>
-  <line class="ag" x1="979" y1="656" x2="596" y2="656"/>
+  <!-- 4: workflow -> runner (dispatch); lane x=792 upper -->
+  <path class="eg" d="M742,404 H792 V216 H840"/>
+  <circle class="nb g" cx="792" cy="300" r="12"/><text class="nbt" x="792" y="304.5" text-anchor="middle">4</text>
 
-  <!-- the CI-gated fix loop -->
-  <rect class="pipe" x="360" y="668" width="815" height="100" rx="12"/>
-  <text class="l1"    x="380" y="694">CI-gated fix loop</text>
-  <text class="green" x="512" y="694">· fixowl never merges</text>
-  <text class="green" x="380" y="718">✓ required checks pass → the draft flips to ready for review</text>
-  <text class="amber" x="380" y="740">✗ checks fail or time out → failures fed back, the agent retries (≤ ci_max_tries)</text>
-  <text class="l2"    x="380" y="760">budget exhausted → an annotated draft is left for you to review</text>
+  <!-- 5: issues -> Action (single clean crossing of lane 4) -->
+  <path class="eg" d="M742,318 H840"/>
+  <circle class="nb g" cx="774" cy="318" r="12"/><text class="nbt" x="774" y="322.5" text-anchor="middle">5</text>
 
-  <!-- retry arc: the loop feeds back to the agent -->
-  <path class="loop" d="M1168,720 C 1193,660 1193,555 1177,536"/>
+  <!-- 6: Action -> container (run agent) -->
+  <path class="eg" d="M1120,356 V372"/>
+  <circle class="nb g" cx="1120" cy="346" r="12"/><text class="nbt" x="1120" y="350.5" text-anchor="middle">6</text>
 
-  <!-- band 3: morning -->
-  <text class="bandt" x="40" y="818">IN THE MORNING</text>
+  <!-- 8: CI checks <-> Action (poll + feed failures back); lane x=792 lower -->
+  <path class="egb" d="M742,512 H792 V452 H840"/>
+  <circle class="nb g" cx="792" cy="482" r="12"/><text class="nbt" x="792" y="486.5" text-anchor="middle">8</text>
 
-  <text class="l1"    x="380" y="842" text-anchor="middle">you review the pull request</text>
-  <text class="green" x="380" y="861" text-anchor="middle">fixowl never merges</text>
-  <line class="ac" x1="584" y1="872" x2="176" y2="872"/>
+  <!-- 7: Action -> PR (push + open draft); lane x=806 -->
+  <path class="eg" d="M840,540 H806 V610 H742"/>
+  <circle class="nb g" cx="806" cy="575" r="12"/><text class="nbt" x="806" y="579.5" text-anchor="middle">7</text>
+
+  <!-- 9: CI green -> flip draft to ready (inside GitHub) -->
+  <path class="eg" d="M579,548 V566"/>
+  <circle class="nb g" cx="579" cy="557" r="12"/><text class="nbt" x="579" y="561.5" text-anchor="middle">9</text>
+
+  <!-- 10: PR -> operator (review) -->
+  <path class="ea" d="M416,650 H378 V680 H348"/>
+  <circle class="nb a" cx="378" cy="665" r="12"/><text class="nbt" x="378" y="669.5" text-anchor="middle">10</text>
+
+  <!-- faint internal GitHub pipeline spine -->
+  <path class="thin" d="M579,354 V374" opacity="0.5"/>
+  <path class="thin" d="M579,458 V478" opacity="0.5"/>
+
+  <!-- ===== NUMBERED LEGEND ===== -->
+  <line x1="40" y1="792" x2="1200" y2="792" stroke="#24314f" stroke-width="1.5"/>
+  <text class="lgh" x="40" y="822">THE STEPS</text>
+  <circle cx="150" cy="817" r="6" fill="#a78bfa"/><text class="lgf" x="162" y="822">setup</text>
+  <circle cx="228" cy="817" r="6" fill="#4ade80"/><text class="lgf" x="240" y="822">every night</text>
+  <circle cx="342" cy="817" r="6" fill="#fbbf24"/><text class="lgf" x="354" y="822">morning</text>
+
+  <!-- legend column 1 -->
+  <circle class="nb"   cx="52" cy="858" r="11"/><text class="nbt" x="52" y="862" text-anchor="middle">1</text>
+  <text class="lgt" x="74" y="863">CLI creates &amp; installs the GitHub App</text>
+  <circle class="nb"   cx="52" cy="894" r="11"/><text class="nbt" x="52" y="898" text-anchor="middle">2</text>
+  <text class="lgt" x="74" y="899">CLI provisions repo: labels · secrets · workflow (PR)</text>
+  <circle class="nb"   cx="52" cy="930" r="11"/><text class="nbt" x="52" y="934" text-anchor="middle">3</text>
+  <text class="lgt" x="74" y="935">CLI installs &amp; starts the runner service</text>
+  <circle class="nb g" cx="52" cy="966" r="11"/><text class="nbt" x="52" y="970" text-anchor="middle">4</text>
+  <text class="lgt" x="74" y="971">Nightly schedule dispatches the job to the runner</text>
+  <circle class="nb g" cx="52" cy="1002" r="11"/><text class="nbt" x="52" y="1006" text-anchor="middle">5</text>
+  <text class="lgt" x="74" y="1007">Action selects overnight issues (by blocked-by)</text>
+
+  <!-- legend column 2 -->
+  <circle class="nb g" cx="642" cy="858" r="11"/><text class="nbt" x="642" y="862" text-anchor="middle">6</text>
+  <text class="lgt" x="664" y="863">Agent runs in a per-issue Docker container</text>
+  <circle class="nb g" cx="642" cy="894" r="11"/><text class="nbt" x="642" y="898" text-anchor="middle">7</text>
+  <text class="lgt" x="664" y="899">Host pushes the branch &amp; opens one draft PR</text>
+  <circle class="nb g" cx="642" cy="930" r="11"/><text class="nbt" x="642" y="934" text-anchor="middle">8</text>
+  <text class="lgt" x="664" y="935">CI-gated loop waits for the repo's required checks</text>
+  <circle class="nb g" cx="642" cy="966" r="11"/><text class="nbt" x="642" y="970" text-anchor="middle">9</text>
+  <text class="lgt" x="664" y="971">Green flips draft → READY; red retries, else annotated</text>
+  <circle class="nb a" cx="642" cy="1002" r="11"/><text class="nbt" x="642" y="1006" text-anchor="middle">10</text>
+  <text class="lgt" x="664" y="1007">Morning: you review the ready PRs — never merges</text>
+
+  <text class="lgf" x="40" y="1044">Where it runs:  your machine  ·  GitHub  ·  the self-hosted runner host  ·  a per-issue Docker container</text>
 </svg>

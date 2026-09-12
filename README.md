@@ -62,7 +62,7 @@ and share with a team.
 
 ## How it works
 
-![Setup, once: fixowl provision pushes labels, sealed secrets and the workflow file to your repo on GitHub, and fixowl start installs and runs the self-hosted runner service on the runner host. Every night: the workflow's cron dispatches a job to that runner while your machine is asleep, and the fixowl action selects issues labeled overnight and orders them by the repo's native blocked-by prerequisites (deferring any issue whose prerequisite isn't shipping tonight); issues are otherwise independent by default, with file-conflict grouping an optional, off-by-default step. For each issue it runs the agent in a Docker container with no GitHub token inside, runs a cheap local .fixowl.yml pre-check, then pushes the branch and opens the pull request as a draft. A bounded CI-gated fix loop waits for the base branch's required checks: when they pass the draft flips to ready for review; when they fail or time out the failures are fed back to the agent and it retries, up to ci_max_tries, leaving an annotated draft if the budget is exhausted. In the morning: you review the pull request, and fixowl never merges.](assets/how-it-works.svg)
+![Architecture map of how fixowl works across your machine, GitHub and the runner host, in ten numbered steps from one-time setup through the nightly run to your morning PR review.](assets/how-it-works.svg)
 
 - **One PR per issue**, branch `issue/<n>-<slug>`. The branch doubles as the
   idempotency marker: reruns never duplicate work, and deleting the branch is
