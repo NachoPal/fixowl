@@ -7,10 +7,22 @@ import {
   type ChecksForRef,
   type RequiredChecks,
 } from "@fixowl/core";
-import type { GitHubApi, Logger } from "./deps.ts";
+import type { GitHubApi, Logger, PullRequestMergeState } from "./deps.ts";
 
 /** Default gap between polls of a pushed head's checks. */
 export const CI_POLL_INTERVAL_MS = 15_000;
+
+/** Default gap between polls of a PR's mergeability while GitHub is still computing it. */
+export const MERGEABILITY_POLL_INTERVAL_MS = 3_000;
+
+/**
+ * How long to wait for GitHub to finish computing a PR's mergeability
+ * (`mergeable: null` -> known) before the conflict gate falls open to `proceed`.
+ * Small: the computation normally lands within a second or two of a push, and a
+ * still-unknown state must never block the night - the CI wait then runs as it
+ * did before this gate existed.
+ */
+export const MERGEABILITY_RESOLVE_TIMEOUT_MS = 60_000;
 
 /**
  * How many *consecutive* transient read errors the poll loop absorbs before it
@@ -200,6 +212,29 @@ export async function waitForRequiredChecks(
         usedFallback: gating.usedFallback,
       };
     }
+    await clock.sleep(pollMs);
+  }
+}
+
+/**
+ * Reads a PR's mergeability, polling while GitHub is still computing it
+ * (`mergeable: null`). Returns as soon as `mergeable` is known (`true`/`false`),
+ * or the last-seen (still-null) state once `timeoutMs` elapses - the caller then
+ * falls open to the normal CI wait, so an unknowable mergeability never blocks
+ * the night. The read edge is itself fail-open (github-api.ts), so this never
+ * throws. See conflict-gate.ts::classifyMergeability.
+ */
+export async function resolveMergeability(
+  deps: { github: GitHubApi; clock: Clock },
+  params: { prNumber: number; timeoutMs: number; pollMs?: number },
+): Promise<PullRequestMergeState> {
+  const { github, clock } = deps;
+  const pollMs = params.pollMs ?? MERGEABILITY_POLL_INTERVAL_MS;
+  const start = clock.now();
+  for (;;) {
+    const state = await github.getPullRequestMergeState(params.prNumber);
+    if (state.mergeable !== null) return state;
+    if (clock.now() - start >= params.timeoutMs) return state;
     await clock.sleep(pollMs);
   }
 }

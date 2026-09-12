@@ -79,6 +79,14 @@ inputs:
       before counting the attempt as a CI timeout.
     required: false
     default: "60"
+  conflict-max-tries:
+    description: >-
+      Max agent passes fixowl spends rebasing-and-re-running to resolve a PR that
+      went dirty (its base branch advanced under it with a conflict). When
+      exhausted the draft is left flagged "needs rebase" instead of waiting on
+      required checks a dirty PR's merge ref can never complete.
+    required: false
+    default: "2"
   default-model:
     description: >-
       Model id the agent runs with when an issue carries none of the selector

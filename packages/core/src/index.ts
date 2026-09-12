@@ -145,6 +145,7 @@ export {
   type GatingChecks,
   type RequiredChecks,
 } from "./ci-gate.ts";
+export { classifyMergeability, type ConflictAction } from "./conflict-gate.ts";
 export {
   renderFixowlWorkflow,
   WORKFLOW_PATH,

@@ -1,8 +1,10 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   addSamples,
+  classifyMergeability,
   getSpendMeter,
+  isFixowlBranchTip,
   PROMPT_MOUNT_PATH,
   type AgentAdapter,
   type CheckStatusLite,
@@ -12,7 +14,9 @@ import {
   type SpendSample,
 } from "@fixowl/core";
 import {
+  MERGEABILITY_RESOLVE_TIMEOUT_MS,
   realClock,
+  resolveMergeability,
   waitForRequiredChecks,
   type Clock,
   type WaitForChecksResult,
@@ -28,7 +32,11 @@ import {
   type CiCheckFailure,
   type CiGateSummary,
 } from "./pr-body.ts";
-import { buildFixPrompt, type CheckFailureFeedback } from "./prompt-builder.ts";
+import {
+  buildConflictPrompt,
+  buildFixPrompt,
+  type CheckFailureFeedback,
+} from "./prompt-builder.ts";
 import { TRIAGED_LABEL, triageComment, type TriageCategory, type TriagedIssue } from "./triage.ts";
 import { parseVerdict, type Verdict } from "./verdict.ts";
 import { runVerification } from "./verification.ts";
@@ -67,6 +75,13 @@ export interface IssueRunContext {
   /** How long each pass waits for the pushed head's required checks. */
   ciTimeoutMs: number;
   /**
+   * Max agent passes spent rebasing-and-re-running to resolve a PR that went
+   * `dirty` (its base advanced under it with a conflict). When exhausted the
+   * draft is left flagged "needs rebase" instead of waiting out the CI timeout on
+   * checks a dirty PR's merge ref can never complete. See conflict-gate.ts.
+   */
+  conflictMaxTries: number;
+  /**
    * Layer B: when true, the fix prompt asks the agent to verify against the
    * current code first, and a no-diff run leaves a comment + `fixowl:triaged`
    * label and opens NO PR (instead of a silent no-changes). Default resolves on
@@ -79,7 +94,13 @@ export interface IssueRunContext {
 export interface IssueResult {
   issue: IssueLite;
   branch: string;
-  status: "pr-opened" | "no-changes" | "agent-failed" | "error";
+  /**
+   * `needs-rebase`: the PR conflicts with its base (`dirty`) and fixowl's bounded
+   * rebase-and-re-run could not resolve it, so a draft is left flagged for a
+   * manual rebase. It is NOT a hard failure (a PR was opened and the conflict was
+   * surfaced), so it never counts toward the all-failed wipeout.
+   */
+  status: "pr-opened" | "no-changes" | "agent-failed" | "error" | "needs-rebase";
   prNumber?: number;
   prUrl?: string;
   draft?: boolean;
@@ -150,6 +171,9 @@ export async function processIssue(
   let lastCi: WaitForChecksResult | undefined;
   // Layer B: the first pass's verify-first verdict (advisory), read from stdout.
   let firstPassVerdict: Verdict | undefined;
+  // Agent passes already spent resolving conflicts on a dirty PR, across the loop
+  // (bounded by ctx.conflictMaxTries). A clean rebase spends none.
+  let conflictPassesUsed = 0;
 
   try {
     for (let attempt = 1; attempt <= maxTries; attempt++) {
@@ -232,7 +256,7 @@ export async function processIssue(
 
       await git.commitAll(title);
       await git.push(branch);
-      const headSha = await git.headSha();
+      let headSha = await git.headSha();
 
       if (pr === undefined) {
         pr = await github.ensurePullRequest({
@@ -248,6 +272,40 @@ export async function processIssue(
           draft: true,
         });
         log.info(`issue #${issue.number}: opened draft PR #${pr.number}`);
+      }
+
+      // Conflict gate: a PR whose base advanced under it with a conflicting
+      // change goes `dirty`, and GitHub cannot build its merge ref, so the
+      // required checks never register or complete - waiting on CI would burn the
+      // whole timeout (and retries) on checks that can never go green. Detect it
+      // and rebase-and-re-run to resolve, else leave a distinct "needs rebase"
+      // draft (never masquerade as a CI wait). See conflict-gate.ts / docs.
+      const mergeState = await resolveMergeability(
+        { github, clock },
+        { prNumber: pr.number, timeoutMs: MERGEABILITY_RESOLVE_TIMEOUT_MS },
+      );
+      if (classifyMergeability(mergeState.mergeable, mergeState.state) === "rebase") {
+        log.info(
+          `issue #${issue.number}: PR #${pr.number} is dirty (conflicts with ${ctx.prBase}); ` +
+            `attempting rebase-and-re-run instead of waiting on CI`,
+        );
+        const rebase = await rebaseAndResolveConflict(deps, ctx, {
+          attempt,
+          budgetLeft: ctx.conflictMaxTries - conflictPassesUsed,
+        });
+        conflictPassesUsed += rebase.passesUsed;
+        if (rebase.usage !== undefined) {
+          usage = usage === undefined ? rebase.usage : addSamples(usage, rebase.usage);
+          base.usage = usage;
+        }
+        if (!rebase.resolved) {
+          return await finishNeedsRebase(deps, ctx, { pr, lastVerification, usage });
+        }
+        headSha = rebase.headSha;
+        log.info(
+          `issue #${issue.number}: rebased onto ${ctx.prBase} and resolved conflicts; ` +
+            `resuming CI gate on ${headSha.slice(0, 12)}`,
+        );
       }
 
       const required = await readRequiredChecks(github, ctx.prBase, log);
@@ -404,7 +462,12 @@ function noDiffCategory(verdict: Verdict | undefined): TriageCategory {
 async function runAgent(
   deps: IssuePipelineDeps,
   ctx: IssueRunContext,
-  params: { attempt: number; previousFailures: readonly CheckFailureFeedback[] | undefined },
+  params: {
+    attempt: number;
+    previousFailures?: readonly CheckFailureFeedback[] | undefined;
+    /** When set, this is a conflict-resolution pass: resolve the listed files' markers. */
+    conflict?: { files: readonly string[] };
+  },
 ): Promise<{
   stdout: string;
   stderr: string;
@@ -415,12 +478,20 @@ async function runAgent(
   const { engine, log } = deps;
   const { issue } = ctx;
 
-  const prompt = buildFixPrompt({
-    issue,
-    repoConfig: ctx.repoConfig,
-    previousFailures: params.previousFailures,
-    verifyFirst: ctx.verifyBeforeFix,
-  });
+  const prompt =
+    params.conflict !== undefined
+      ? buildConflictPrompt({
+          issue,
+          baseBranch: ctx.prBase,
+          conflictedFiles: params.conflict.files,
+          repoConfig: ctx.repoConfig,
+        })
+      : buildFixPrompt({
+          issue,
+          repoConfig: ctx.repoConfig,
+          previousFailures: params.previousFailures,
+          verifyFirst: ctx.verifyBeforeFix,
+        });
   const promptFile = join(ctx.promptDir, `issue-${issue.number}.md`);
   writeFileSync(promptFile, prompt);
 
@@ -453,6 +524,174 @@ async function runAgent(
   // (undefined for a subscription agent or an unparseable output; see agent-spend.ts).
   const usage = getSpendMeter(ctx.adapter.name).parse(result.stdout, result.stderr);
   return { ...result, usage };
+}
+
+/** True when any listed working-tree file still holds a git conflict opener (`<<<<<<< `). */
+function conflictMarkersRemain(workspaceDir: string, files: readonly string[]): boolean {
+  for (const file of files) {
+    let content: string;
+    try {
+      content = readFileSync(join(workspaceDir, file), "utf8");
+    } catch {
+      // A deleted/renamed conflict path can't be scanned; let the rebase --continue
+      // (unmerged-index check) be the authority for those rather than blocking here.
+      continue;
+    }
+    if (/^<<<<<<< /m.test(content)) return true;
+  }
+  return false;
+}
+
+type RebaseOutcome =
+  | { resolved: true; headSha: string; passesUsed: number; usage: SpendSample | undefined }
+  | { resolved: false; passesUsed: number; usage: SpendSample | undefined };
+
+/**
+ * Rebase the dirty branch onto the current base and, if the rebase conflicts,
+ * re-run the agent to resolve the markers - bounded by `budgetLeft` agent passes.
+ * A clean rebase force-pushes with no agent pass. On success the branch is
+ * rewritten onto the fresh base and force-pushed (one PR, the idempotency
+ * marker); on give-up the rebase is aborted so the working tree and branch are
+ * left at the pre-rebase state for the caller's `needs-rebase` annotation.
+ *
+ * All git runs on the host (the agent container never holds a token or sees
+ * `.git`); the branch tip is confirmed fixowl's own before any force-push, and
+ * `--force-with-lease` refuses to clobber a concurrent push.
+ */
+async function rebaseAndResolveConflict(
+  deps: IssuePipelineDeps,
+  ctx: IssueRunContext,
+  params: { attempt: number; budgetLeft: number },
+): Promise<RebaseOutcome> {
+  const { git, log } = deps;
+  const { issue, branch } = ctx;
+  let usage: SpendSample | undefined;
+
+  // Ownership guard: only rewrite a branch that is provably fixowl's own work.
+  // A fixowl branch fixowl pushed this run tips at `fix #<n>: ...`, so this is
+  // true by construction; the check defends the pathological case where a human
+  // force-pushed over the branch between our push and now (never clobber them).
+  const tip = await git.remoteBranchTip(branch);
+  if (!isFixowlBranchTip(tip, issue.number)) {
+    log.warn(
+      `issue #${issue.number}: ${branch} tip is not fixowl's own work; not rebasing/force-pushing`,
+    );
+    return { resolved: false, passesUsed: 0, usage };
+  }
+
+  const initial = await git.rebaseOnto(ctx.prBase);
+  if (initial.status === "clean") {
+    await git.forcePushWithLease(branch);
+    return { resolved: true, headSha: await git.headSha(), passesUsed: 0, usage };
+  }
+
+  let conflicted = initial.files;
+  let passes = 0;
+  while (passes < params.budgetLeft) {
+    passes += 1;
+    const agentResult = await runAgent(deps, ctx, {
+      attempt: params.attempt,
+      conflict: { files: conflicted },
+    });
+    if (agentResult.usage !== undefined) {
+      usage = usage === undefined ? agentResult.usage : addSamples(usage, agentResult.usage);
+    }
+    if (agentResult.timedOut || agentResult.code !== 0) {
+      log.warn(`issue #${issue.number}: agent failed during conflict resolution; aborting rebase`);
+      await git.rebaseAbort();
+      return { resolved: false, passesUsed: passes, usage };
+    }
+    // `git add` marks files resolved by index state alone, so a file the agent
+    // left markers in would be committed with them; scan before continuing.
+    if (conflictMarkersRemain(ctx.workspaceDir, conflicted)) {
+      log.info(
+        `issue #${issue.number}: conflict markers remain after resolution pass ${passes}/${params.budgetLeft}`,
+      );
+      continue;
+    }
+    const step = await git.rebaseContinue();
+    if (step.status === "clean") {
+      await git.forcePushWithLease(branch);
+      return { resolved: true, headSha: await git.headSha(), passesUsed: passes, usage };
+    }
+    if (step.status === "conflicted") {
+      conflicted = step.files;
+      continue;
+    }
+    log.warn(`issue #${issue.number}: rebase could not continue (stuck); aborting`);
+    await git.rebaseAbort();
+    return { resolved: false, passesUsed: passes, usage };
+  }
+  log.warn(
+    `issue #${issue.number}: conflict resolution budget (${ctx.conflictMaxTries}) exhausted; aborting rebase`,
+  );
+  await git.rebaseAbort();
+  return { resolved: false, passesUsed: passes, usage };
+}
+
+/**
+ * The PR is dirty and the bounded rebase-and-re-run could not resolve it. Leave
+ * the existing draft flagged distinctly ("needs rebase - conflicts") and stop
+ * early rather than entering a CI wait on checks a dirty PR can never complete.
+ * The annotation is best-effort (a write failure must not lose the returned PR
+ * info); the working tree was left clean by the aborted rebase, but discard once
+ * more so the next chain member checks out cleanly.
+ */
+async function finishNeedsRebase(
+  deps: IssuePipelineDeps,
+  ctx: IssueRunContext,
+  state: {
+    pr: { number: number; url: string };
+    lastVerification: CheckOutcome[];
+    usage: SpendSample | undefined;
+  },
+): Promise<IssueResult> {
+  const { git, github, log } = deps;
+  const { issue } = ctx;
+  log.warn(
+    `issue #${issue.number}: PR #${state.pr.number} conflicts with ${ctx.prBase} and could not be ` +
+      `rebased automatically; leaving a draft flagged for a manual rebase`,
+  );
+  try {
+    await git.discardAllChanges();
+  } catch (discardError) {
+    log.warn(
+      `issue #${issue.number}: could not discard changes after the rebase (${String(discardError)})`,
+    );
+  }
+  try {
+    await github.updatePullRequestBody(
+      state.pr.number,
+      buildPrBody({
+        issueNumber: issue.number,
+        verification: state.lastVerification,
+        stackedOn: ctx.stackedOn,
+        runUrl: ctx.runUrl,
+        ci: { state: "needs-rebase", base: ctx.prBase },
+      }),
+    );
+    await github.createIssueComment(
+      issue.number,
+      `🦉 fixowl left ${state.pr.url} as a draft: it conflicts with \`${ctx.prBase}\` and fixowl's ` +
+        `automated rebase could not resolve the conflicts. Rebase this branch onto \`${ctx.prBase}\` ` +
+        `and resolve them, or re-run fixowl.`,
+    );
+  } catch (writeError) {
+    log.warn(
+      `issue #${issue.number}: could not annotate the needs-rebase draft (${String(writeError)}); ` +
+        `it is still recorded in the run summary`,
+    );
+  }
+  return {
+    issue,
+    branch: ctx.branch,
+    status: "needs-rebase",
+    prNumber: state.pr.number,
+    prUrl: state.pr.url,
+    draft: true,
+    verification: state.lastVerification,
+    usage: state.usage,
+  };
 }
 
 /**

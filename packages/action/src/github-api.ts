@@ -6,6 +6,7 @@ import type {
   IssueLite,
   IssueTriageSignals,
   PullRequestLite,
+  PullRequestMergeState,
 } from "./deps.ts";
 
 /** The GitHub-API edge of the action: the real `GitHubApi` implementation. */
@@ -282,6 +283,19 @@ export function makeGitHubApi(
       if (merged !== undefined) return { number: merged.number, state: "MERGED" };
       const [closed] = prs;
       return closed === undefined ? undefined : { number: closed.number, state: "CLOSED" };
+    },
+    async getPullRequestMergeState(prNumber: number): Promise<PullRequestMergeState> {
+      // A single `pulls.get` returns GitHub's computed mergeability. The first
+      // read after a push often returns `mergeable: null` AND kicks off the
+      // computation, so the caller polls (ci-poll.ts::resolveMergeability).
+      // Fail-open: any read error degrades to "unknown", so the conflict gate
+      // falls through to the normal CI wait rather than aborting the night.
+      try {
+        const { data } = await octokit.pulls.get({ owner, repo, pull_number: prNumber });
+        return { mergeable: data.mergeable ?? null, state: data.mergeable_state ?? "unknown" };
+      } catch {
+        return { mergeable: null, state: "unknown" };
+      }
     },
     async listRecentWorkflowRuns() {
       if (runsOctokit === undefined) return [];

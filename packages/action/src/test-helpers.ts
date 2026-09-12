@@ -12,6 +12,7 @@ import type {
   IssueTriageSignals,
   Logger,
   PullRequestLite,
+  PullRequestMergeState,
 } from "./deps.ts";
 
 export const silentLog: Logger = {
@@ -89,6 +90,17 @@ export class FakeGitHub implements GitHubApi {
   checksReadable = true;
   /** Failure detail for a red check; default none. */
   failedLogs: (check: CheckStatusLite) => string | undefined = () => undefined;
+  /**
+   * A PR's mergeability, resolved per call so tests can vary it across calls
+   * (e.g. `dirty` on the first read, then `clean`). Default: always mergeable, so
+   * the conflict gate is a no-op and every PR proceeds straight to the CI wait.
+   */
+  mergeStateFor: (prNumber: number) => PullRequestMergeState = () => ({
+    mergeable: true,
+    state: "clean",
+  });
+  /** Every prNumber passed to getPullRequestMergeState, in call order. */
+  mergeStateLookups: number[] = [];
   private nextPrNumber = 100;
 
   constructor(public issues: IssueLite[]) {}
@@ -134,6 +146,11 @@ export class FakeGitHub implements GitHubApi {
   async getPullRequestForBranch(branch: string): Promise<PullRequestLite | undefined> {
     this.prLookups.push(branch);
     return this.pullsByBranch.get(branch);
+  }
+
+  async getPullRequestMergeState(prNumber: number): Promise<PullRequestMergeState> {
+    this.mergeStateLookups.push(prNumber);
+    return this.mergeStateFor(prNumber);
   }
 
   async ensurePullRequest(params: {

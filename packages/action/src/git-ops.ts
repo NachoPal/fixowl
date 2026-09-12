@@ -4,6 +4,19 @@ import { type CommitTip, FIXOWL_DEFAULT_GIT_IDENTITY, type GitIdentity } from "@
 import type { Exec, ExecResult } from "./deps.ts";
 
 /**
+ * The outcome of a rebase step (`rebaseOnto` / `rebaseContinue`):
+ *  - `clean`      the rebase applied/completed with no conflicts.
+ *  - `conflicted` it stopped with unmerged paths; `files` are the conflicted
+ *                 working-tree files for the agent to resolve.
+ *  - `stuck`      `rebase --continue` could not proceed (nothing staged to
+ *                 resolve) - only from `rebaseContinue`.
+ */
+export type RebaseResult =
+  | { status: "clean" }
+  | { status: "conflicted"; files: string[] }
+  | { status: "stuck" };
+
+/**
  * All git happens on the host (the runner), outside any container: the coding
  * agent never sees a GitHub token. Two structural rules keep it that way.
  *
@@ -206,6 +219,84 @@ export class GitWorkspace {
 
   async push(branch: string): Promise<void> {
     await this.git("push", "origin", `${branch}:refs/heads/${branch}`);
+  }
+
+  /**
+   * Runs a git command WITHOUT throwing on a non-zero exit, so callers can
+   * branch on the code (a rebase "fails" with conflicts, which is expected).
+   * `extraEnv` is merged over the auth env (e.g. GIT_EDITOR for a non-interactive
+   * `rebase --continue`).
+   */
+  private async gitRaw(
+    extraEnv: Record<string, string> | undefined,
+    ...argv: string[]
+  ): Promise<ExecResult> {
+    const auth = await this.authEnv();
+    const env = auth !== undefined || extraEnv !== undefined ? { ...auth, ...extraEnv } : undefined;
+    return this.exec.run([...this.baseArgv(), ...argv], { cwd: this.dir, env });
+  }
+
+  /** The unmerged (conflicted) working-tree paths of an in-progress rebase. */
+  private async unmergedFiles(): Promise<string[]> {
+    const out = await this.gitRaw(undefined, "diff", "--name-only", "--diff-filter=U");
+    return out.stdout
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line !== "");
+  }
+
+  /**
+   * Rebase the current branch onto the CURRENT tip of `baseBranch` (fetched
+   * first, since the night otherwise keeps the base ref it fetched at job start).
+   * A clean rebase leaves the branch replayed onto the new base; a conflict stops
+   * the rebase with markers in the working tree for the agent to resolve
+   * (`rebaseContinue` after). A non-conflict failure aborts and throws so the
+   * caller annotates rather than silently proceeding. Used to recover a PR that
+   * went `dirty` because its base advanced (conflict-gate.ts).
+   */
+  async rebaseOnto(
+    baseBranch: string,
+  ): Promise<{ status: "clean" } | { status: "conflicted"; files: string[] }> {
+    await this.fetchRemoteBranch(baseBranch);
+    const result = await this.gitRaw(undefined, "rebase", `refs/remotes/origin/${baseBranch}`);
+    if (result.code === 0) return { status: "clean" };
+    const files = await this.unmergedFiles();
+    if (files.length > 0) return { status: "conflicted", files };
+    await this.rebaseAbort();
+    throw new Error(
+      `git rebase onto origin/${baseBranch} failed: ${result.stderr.trim() || result.stdout.trim()}`,
+    );
+  }
+
+  /**
+   * Stage the agent's conflict resolution and continue the rebase. Returns
+   * `clean` when the rebase finished, `conflicted` when it stopped again on a
+   * later commit (the branch may carry more than one commit), or `stuck` when it
+   * could not proceed. `GIT_EDITOR=true` keeps `rebase --continue` from opening
+   * an editor for the reused commit message (an unattended run must never hang).
+   */
+  async rebaseContinue(): Promise<RebaseResult> {
+    await this.git("add", "-A");
+    const result = await this.gitRaw({ GIT_EDITOR: "true" }, "rebase", "--continue");
+    if (result.code === 0) return { status: "clean" };
+    const files = await this.unmergedFiles();
+    if (files.length > 0) return { status: "conflicted", files };
+    return { status: "stuck" };
+  }
+
+  /** Abort an in-progress rebase, best-effort (never throws from teardown). */
+  async rebaseAbort(): Promise<void> {
+    await this.gitRaw(undefined, "rebase", "--abort");
+  }
+
+  /**
+   * Force-push a rewritten branch with `--force-with-lease`: git refuses if the
+   * remote branch advanced beyond what we last pushed, so a concurrent push is
+   * never clobbered - the branch-ownership guard for a rewritten history. Used
+   * after a rebase; the branch is still exactly one PR (the idempotency marker).
+   */
+  async forcePushWithLease(branch: string): Promise<void> {
+    await this.git("push", "--force-with-lease", "origin", `${branch}:refs/heads/${branch}`);
   }
 
   /**

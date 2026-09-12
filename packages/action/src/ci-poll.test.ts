@@ -1,6 +1,7 @@
 import type { CheckStatusLite } from "@fixowl/core";
 import { describe, expect, it } from "vitest";
-import { waitForRequiredChecks, type Clock } from "./ci-poll.ts";
+import { resolveMergeability, waitForRequiredChecks, type Clock } from "./ci-poll.ts";
+import type { PullRequestMergeState } from "./deps.ts";
 import type { Logger } from "./deps.ts";
 import { FakeGitHub, issue, silentLog } from "./test-helpers.ts";
 
@@ -289,5 +290,49 @@ describe("waitForRequiredChecks", () => {
     expect(result.timedOut).toBe(false);
     // settle window is 2 * pollMs; polls at t=0, 15000, 30000 (>= window) -> 3 looks
     expect(calls).toBe(3);
+  });
+});
+
+describe("resolveMergeability", () => {
+  it("polls while GitHub is still computing, then returns the known state", async () => {
+    const states: PullRequestMergeState[] = [
+      { mergeable: null, state: "unknown" },
+      { mergeable: null, state: "unknown" },
+      { mergeable: false, state: "dirty" },
+    ];
+    const github = new FakeGitHub([issue(1, "x", "y")]);
+    let call = 0;
+    github.mergeStateFor = () =>
+      states[Math.min(call++, states.length - 1)] ?? { mergeable: false, state: "dirty" };
+    const result = await resolveMergeability(
+      { github, clock: fakeClock() },
+      { prNumber: 42, timeoutMs: 600_000, pollMs: 3_000 },
+    );
+    expect(result).toEqual({ mergeable: false, state: "dirty" });
+    expect(github.mergeStateLookups).toEqual([42, 42, 42]);
+  });
+
+  it("returns immediately once mergeability is known", async () => {
+    const github = new FakeGitHub([issue(1, "x", "y")]);
+    github.mergeStateFor = () => ({ mergeable: true, state: "clean" });
+    const result = await resolveMergeability(
+      { github, clock: fakeClock() },
+      { prNumber: 7, timeoutMs: 600_000, pollMs: 3_000 },
+    );
+    expect(result).toEqual({ mergeable: true, state: "clean" });
+    expect(github.mergeStateLookups).toEqual([7]);
+  });
+
+  it("falls open to the last (still-null) state once the timeout elapses", async () => {
+    const github = new FakeGitHub([issue(1, "x", "y")]);
+    github.mergeStateFor = () => ({ mergeable: null, state: "unknown" });
+    const result = await resolveMergeability(
+      { github, clock: fakeClock() },
+      { prNumber: 9, timeoutMs: 6_000, pollMs: 3_000 },
+    );
+    // Never becomes known; the poller gives up so the caller can proceed (fail-open).
+    expect(result.mergeable).toBeNull();
+    // polls at t=0, 3000, 6000 (>= timeout) -> 3 looks, then returns.
+    expect(github.mergeStateLookups.length).toBe(3);
   });
 });
