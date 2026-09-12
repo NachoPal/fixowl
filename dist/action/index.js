@@ -86279,6 +86279,7 @@ function failedChecks(gating) {
 function classifyMergeability(mergeable, state3) {
   if (mergeable === null) return "unknown";
   if (state3 === "dirty") return "rebase";
+  if (mergeable === false && state3 === "draft") return "rebase";
   return "proceed";
 }
 
@@ -127136,8 +127137,9 @@ async function runAgent(deps, ctx, params) {
     stdin,
     timeoutMs: ctx.timeoutMs
   });
+  const logName = params.conflict !== void 0 ? `agent-attempt-${params.attempt}-conflict-${params.conflict.pass}.log` : `agent-attempt-${params.attempt}.log`;
   writeFileSync2(
-    join6(ctx.evidenceDir, `agent-attempt-${params.attempt}.log`),
+    join6(ctx.evidenceDir, logName),
     `${result.stdout}
 ${result.stderr}
 (exit ${result.code}${result.timedOut ? ", timed out" : ""})
@@ -127180,7 +127182,7 @@ async function rebaseAndResolveConflict(deps, ctx, params) {
     passes += 1;
     const agentResult = await runAgent(deps, ctx, {
       attempt: params.attempt,
-      conflict: { files: conflicted }
+      conflict: { files: conflicted, pass: passes }
     });
     if (agentResult.usage !== void 0) {
       usage = usage === void 0 ? agentResult.usage : addSamples(usage, agentResult.usage);
