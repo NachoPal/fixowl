@@ -13,11 +13,13 @@
     "format": "oxfmt --write packages scripts",
     "test": "vitest run",
     "build": "node scripts/build.mjs",
-    "e2e:docker": "node scripts/run-local-docker-e2e.mjs"
+    "e2e:docker": "node scripts/run-local-docker-e2e.mjs",
+    "prepare": "husky"
   },
   "devDependencies": {
     "@types/node": "^24.3.0",
     "esbuild": "0.28.2",
+    "husky": "^9.1.7",
     "oxfmt": "0.66.0",
     "oxlint": "1.81.0",
     "typescript": "7.0.2",

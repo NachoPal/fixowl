@@ -22,6 +22,12 @@ and opens exactly one PR per issue. It never merges.
 - `pnpm test` - vitest. The single test entry CI invokes.
 - `pnpm build` - esbuild bundles for the action (`dist/action/index.js`, checked in;
   CI fails if stale) and the CLI (`packages/cli/dist`, gitignored).
+- `pnpm install` wires up a Husky pre-commit hook via the `prepare` script
+  (`.husky/pre-commit`): when a commit stages changes under `packages/core` or
+  `packages/action` it runs `pnpm build` and re-stages `dist/action/index.js` so
+  a stale bundle can't be committed; other commits fast-path past it. Local
+  safety net only (bypassable with `--no-verify`); the CI "Bundle freshness" step
+  stays authoritative.
 
 Releases are cut manually by `.github/workflows/release.yml` from the BASE version
 committed in `packages/cli/package.json` (the single source of truth); the channel
