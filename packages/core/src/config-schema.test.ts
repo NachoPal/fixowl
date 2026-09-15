@@ -7,6 +7,7 @@ import {
   resolveRepoSettings,
   RUNTIME_TOKEN_REMOVED_MESSAGE,
   runnerBaseDir,
+  WEB_CHECK_REMOVED_MESSAGE,
   workflowHasSchedule,
 } from "./config-schema.ts";
 
@@ -468,13 +469,6 @@ describe("repoFileConfigSchema (.fixowl.yml)", () => {
       dockerfile: "Dockerfile",
       verify: {
         checks: [{ name: "python-tests", run: "PYTHONPATH=src uv run pytest tests/" }],
-        web: [
-          {
-            name: "game-client",
-            start: "cd client && npm run dev",
-            url: "http://localhost:5173/?slug=callisto_v2",
-          },
-        ],
       },
       prompt_extra: "Behavior pins are load-bearing.",
     });
@@ -489,5 +483,17 @@ describe("repoFileConfigSchema (.fixowl.yml)", () => {
     expect(() =>
       repoFileConfigSchema.parse({ version: 1, verify: { checks: [{ run: "true" }] } }),
     ).toThrow();
+  });
+
+  it("rejects the removed verify.web key with a migration message (never silently drops it)", () => {
+    expect(() =>
+      repoFileConfigSchema.parse({
+        version: 1,
+        verify: {
+          checks: [{ name: "tests", run: "npm test" }],
+          web: [{ name: "app", start: "npm run dev", url: "http://localhost:5173/" }],
+        },
+      }),
+    ).toThrow(WEB_CHECK_REMOVED_MESSAGE);
   });
 });

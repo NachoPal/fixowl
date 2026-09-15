@@ -252,6 +252,17 @@ See [docs/releasing.md](docs/releasing.md).
   propagated through `provision` -> `action.yml` inputs. See
   [docs/ci-fix-loop.md](docs/ci-fix-loop.md).
 
+- **fixowl is verification-agnostic.** The ONLY verification path is the generic
+  `verify.checks` (run any command in the container - `runVerification` in
+  `packages/action/src/verification.ts`); fixowl automates issue fixes, not *how*
+  a PR is verified. There is no built-in browser/screenshot step: the old
+  `verify.web` capability was removed and a stray `web:` key is rejected loudly at
+  load (`WEB_CHECK_REMOVED_MESSAGE`, the `RUNTIME_TOKEN_REMOVED_MESSAGE` pattern),
+  never silently dropped. A browser screenshot is a user-provided check: Playwright
+  in their own image + a normal `checks` entry. The two `templates/dockerfiles/`
+  samples (`web`, `electron`) are OPTIONAL helper images for exactly that, not a
+  feature. Do not reintroduce a built-in browser/screenshot path.
+
 - Pre-work issue triage is two layers between selection and the agent, both
   default ON and free. Layer A (the deterministic pre-gate, `triage.ts::planTriage`
   + the read-only `getIssueTriageSignals` edge) runs on the fresh set before the

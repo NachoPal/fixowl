@@ -2,20 +2,20 @@
 version: 1
 
 # Image the coding agent and verification run in. Must contain: the agent CLI,
-# git, your toolchain, and (for web verification) Playwright + chromium.
+# git, and your toolchain (plus whatever your verify commands need).
 dockerfile: Dockerfile
 
 verify:
   # Commands run in a fresh container after the agent finishes, as a cheap
   # pre-filter: if they fail, fixowl feeds the output back to the agent and
   # retries without pushing (no CI spend). They do not decide ready-vs-draft -
-  # the target repo's required CI does that.
+  # the target repo's required CI does that. fixowl runs the commands you
+  # declare here and stays agnostic about *how* the change is verified.
   checks:
     - { name: tests, run: "npm test" }
-  # Optional: start the app, wait for the URL, capture a screenshot as PR
-  # evidence. Requires playwright in the image; degrades to "unavailable".
-  # web:
-  #   - { name: app, start: "npm run dev", url: "http://localhost:5173/" }
+  # Want a browser screenshot? Bring it yourself: add Playwright to your image
+  # (see templates/dockerfiles/web.Dockerfile) and drive it from a normal check,
+  # e.g. { name: screenshot, run: "node scripts/screenshot.mjs" }.
 
 # Extra instructions appended to every fix prompt for this repo.
 # prompt_extra: |

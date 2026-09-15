@@ -557,13 +557,18 @@ const verifyCheckSchema = z.object({
   run: z.string().min(1),
 });
 
-const webCheckSchema = z.object({
-  name: z.string().min(1),
-  start: z.string().min(1),
-  url: z.string().min(1),
-  /** Seconds to wait for the app to become reachable (default 120; cold dev-server compiles can need more). */
-  startup_timeout_seconds: z.number().int().positive().optional(),
-});
+/**
+ * Rejected loudly: the built-in `verify.web` browser-screenshot capability was
+ * removed. fixowl is verification-agnostic - it runs the commands you declare in
+ * `verify.checks` and stays out of *how* a PR is verified. Zod strips unknown
+ * keys, so without this explicit reject a stray `web:` would be silently dropped
+ * and verification would quietly stop running.
+ */
+export const WEB_CHECK_REMOVED_MESSAGE =
+  "verify.web (the built-in browser-screenshot capability) was removed: fixowl runs the " +
+  "commands you declare in verify.checks and stays agnostic about how PRs are verified. To " +
+  "run a browser check, bring it yourself - add Playwright (or your tool of choice) to your " +
+  "image and drive it from a normal verify.checks entry; see templates/dockerfiles/web.Dockerfile";
 
 export const repoFileConfigSchema = z.object({
   version: z.literal(1),
@@ -571,7 +576,8 @@ export const repoFileConfigSchema = z.object({
   verify: z
     .object({
       checks: z.array(verifyCheckSchema).optional(),
-      web: z.array(webCheckSchema).optional(),
+      /** Rejected loudly: the built-in browser-screenshot capability no longer exists. */
+      web: z.undefined({ error: WEB_CHECK_REMOVED_MESSAGE }).optional(),
     })
     .optional(),
   prompt_extra: z.string().optional(),
@@ -579,7 +585,6 @@ export const repoFileConfigSchema = z.object({
 
 export type RepoFileConfig = z.infer<typeof repoFileConfigSchema>;
 export type VerifyCheck = z.infer<typeof verifyCheckSchema>;
-export type WebCheck = z.infer<typeof webCheckSchema>;
 
 /** Path of the per-repo config inside the target repository. */
 export const REPO_CONFIG_PATH = ".fixowl.yml";

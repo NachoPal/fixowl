@@ -4,9 +4,9 @@
 
 During the day you file GitHub issues and label them `overnight`. Every night,
 on a cron schedule, fixowl picks them up on a self-hosted runner, runs a coding
-agent (Claude Code by default, swappable) inside a container per issue, verifies
-the change when possible (headless Playwright screenshots for web apps, test
-suites otherwise), and opens **exactly one pull request per issue** with the
+agent (Claude Code by default, swappable) inside a container per issue, runs the
+verify commands you declare in `.fixowl.yml` (fixowl stays agnostic about _how_ a
+change is verified), and opens **exactly one pull request per issue** with the
 evidence attached.
 
 In the morning you review. **fixowl never merges.**
@@ -198,8 +198,8 @@ fixowl uses two GitHub credentials, both scoped to only the target repos:
 The coding agent never holds a GitHub token: only the env vars in its adapter's
 allowlist (for `claude`, `CLAUDE_CODE_OAUTH_TOKEN`) ever enter the per-issue
 container. Each target repo also carries a `.fixowl.yml` (proposed by `provision`
-when missing) declaring its Dockerfile, verify commands, optional web screenshot
-targets, and repo-specific prompt instructions.
+when missing) declaring its Dockerfile, verify commands, and repo-specific prompt
+instructions.
 
 See [docs/security.md](https://github.com/NachoPal/fixowl/blob/main/docs/security.md)
 for the full security model.

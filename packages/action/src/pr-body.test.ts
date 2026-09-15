@@ -13,15 +13,13 @@ describe("buildPrBody", () => {
       issueNumber: 7,
       verification: [
         { name: "tests", status: "passed" },
-        { name: "web", status: "failed", detail: "console errors; see evidence" },
-        { name: "e2e", status: "unavailable", detail: "playwright not in image" },
+        { name: "e2e", status: "failed", detail: "assertion failed" },
       ],
       runUrl: "https://github.com/o/r/actions/runs/1",
     });
     expect(body).toContain("Closes #7.");
     expect(body).toContain("| tests | ✅ passed |");
-    expect(body).toContain("| web | ❌ failed (console errors; see evidence) |");
-    expect(body).toContain("| e2e | ⚪ unavailable (playwright not in image) |");
+    expect(body).toContain("| e2e | ❌ failed (assertion failed) |");
     // The PR links to this issue's own progressively-uploaded artifact - the one
     // that survives a cancelled run - not the combined end-of-job artifact.
     expect(body).toContain("`fixowl-evidence-issue-7`");
@@ -161,8 +159,8 @@ describe("buildPrBody", () => {
 });
 
 describe("anyCheckFailed", () => {
-  it("fails only on failed, not unavailable", () => {
-    expect(anyCheckFailed([{ name: "a", status: "unavailable" }])).toBe(false);
+  it("fails only on a failed check", () => {
+    expect(anyCheckFailed([{ name: "a", status: "passed" }])).toBe(false);
     expect(
       anyCheckFailed([
         { name: "a", status: "passed" },

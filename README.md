@@ -7,9 +7,9 @@
 During the day you file GitHub issues and label them `overnight`. Every night,
 on a cron schedule, fixowl picks them up on a self-hosted runner, runs a coding
 agent (Claude Code by default, swappable) inside a Docker container per issue,
-verifies the change when possible (headless Playwright screenshots for web
-apps, test suites otherwise), and opens **exactly one pull request per issue**
-with the evidence attached.
+runs the verify commands you declare in `.fixowl.yml` (fixowl stays agnostic
+about *how* a change is verified), and opens **exactly one pull request per
+issue** with the evidence attached.
 
 In the morning you review. **fixowl never merges.**
 
@@ -94,9 +94,12 @@ and share with a team.
   default branch independently. Native `blocked-by` ordering is always-on either
   way. Issues are fixed one at a time - topology, not concurrency. See
   [docs/stacked-prs.md](docs/stacked-prs.md).
-- **Verification is a capability, not a mandate**: repos declare checks and
-  optional web screenshot targets in `.fixowl.yml`; missing capability
-  degrades to "unavailable", and each issue's screenshots/logs land in a
+- **Verification is a capability, not a mandate**: repos declare the verify
+  commands to run in `.fixowl.yml` and fixowl stays agnostic about *how* a change
+  is verified - a browser screenshot is just a check you bring yourself (Playwright
+  in your own image + your own command). With no checks declared, verification
+  simply records nothing, and each issue's logs (plus whatever evidence your own
+  checks produce) land in a
   per-issue `fixowl-evidence-issue-<n>` artifact - uploaded from within the
   action the moment that issue finishes, so a run that is cancelled mid-flight
   (e.g. the self-hosted host sleeps) still keeps the evidence for every issue it
@@ -400,12 +403,13 @@ and the in-band spend meter behind `SpendMeter`/`getSpendMeter` in
 `packages/core/src/agent-spend.ts`.
 
 Each target repo carries a `.fixowl.yml` (proposed by `provision` when
-missing) declaring its Dockerfile, verify commands, optional web screenshot
-targets, and repo-specific prompt instructions.
+missing) declaring its Dockerfile, verify commands, and repo-specific prompt
+instructions.
 
 **The Dockerfile contract:** fixowl runs the coding agent inside this per-repo
 image, so the image must contain the CLI for whichever agent the repo runs, plus
-git, your toolchain, and (for web verification) Playwright with chromium:
+git, your toolchain, and whatever your verify commands need (e.g. Playwright with
+chromium if one of your checks drives a browser):
 
 - `agent: claude` needs the `claude` CLI (`@anthropic-ai/claude-code`).
 - `agent: codex` needs the `codex` CLI (`@openai/codex`), and `OPENAI_API_KEY`
@@ -415,8 +419,10 @@ git, your toolchain, and (for web verification) Playwright with chromium:
 The samples in **[templates/dockerfiles/](templates/dockerfiles/)**
 (`web.Dockerfile`, `electron.Dockerfile`) install **both** the `claude` and
 `codex` CLIs, so most repos can copy a sample as-is and run either agent without
-hand-writing a Dockerfile. Add any repo-specific build tools your verify commands
-need on top.
+hand-writing a Dockerfile. Both are optional helpers that also bundle Playwright,
+so if you want a browser-based check you can pair a sample with a normal
+`verify.checks` command that drives it. Add any repo-specific build tools your
+verify commands need on top.
 
 ## Scheduling trigger
 

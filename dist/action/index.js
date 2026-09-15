@@ -86219,19 +86219,14 @@ var verifyCheckSchema = external_exports.object({
   name: external_exports.string().min(1),
   run: external_exports.string().min(1)
 });
-var webCheckSchema = external_exports.object({
-  name: external_exports.string().min(1),
-  start: external_exports.string().min(1),
-  url: external_exports.string().min(1),
-  /** Seconds to wait for the app to become reachable (default 120; cold dev-server compiles can need more). */
-  startup_timeout_seconds: external_exports.number().int().positive().optional()
-});
+var WEB_CHECK_REMOVED_MESSAGE = "verify.web (the built-in browser-screenshot capability) was removed: fixowl runs the commands you declare in verify.checks and stays agnostic about how PRs are verified. To run a browser check, bring it yourself - add Playwright (or your tool of choice) to your image and drive it from a normal verify.checks entry; see templates/dockerfiles/web.Dockerfile";
 var repoFileConfigSchema = external_exports.object({
   version: external_exports.literal(1),
   dockerfile: external_exports.string().min(1).optional(),
   verify: external_exports.object({
     checks: external_exports.array(verifyCheckSchema).optional(),
-    web: external_exports.array(webCheckSchema).optional()
+    /** Rejected loudly: the built-in browser-screenshot capability no longer exists. */
+    web: external_exports.undefined({ error: WEB_CHECK_REMOVED_MESSAGE }).optional()
   }).optional(),
   prompt_extra: external_exports.string().optional()
 });
@@ -126559,8 +126554,7 @@ function renderCiSection(ci) {
 }
 var STATUS_LABEL = {
   passed: "\u2705 passed",
-  failed: "\u274C failed",
-  unavailable: "\u26AA unavailable"
+  failed: "\u274C failed"
 };
 function anyCheckFailed(outcomes) {
   return outcomes.some((outcome) => outcome.status === "failed");
@@ -126599,7 +126593,7 @@ function buildPrBody(params) {
   lines.push(``);
   if (params.runUrl) {
     lines.push(
-      `Screenshots and logs are in the \`${issueEvidenceArtifactName(params.issueNumber)}\` artifact of [this run](${params.runUrl}) (uploaded as this issue finishes, so it survives even if the run is later cancelled).`,
+      `Logs (and whatever evidence your own checks produce) are in the \`${issueEvidenceArtifactName(params.issueNumber)}\` artifact of [this run](${params.runUrl}) (uploaded as this issue finishes, so it survives even if the run is later cancelled).`,
       ``
     );
   }
@@ -126716,81 +126710,6 @@ function extractFirstJsonObject(text) {
 // packages/action/src/verification.ts
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join as join5 } from "node:path";
-
-// packages/action/src/verify-web-script.ts
-var VERIFY_WEB_SCRIPT_MOUNT_PATH = "/fixowl/verify-web.mjs";
-var VERIFY_WEB_SCRIPT = `import { mkdirSync, writeFileSync } from "node:fs";
-import { setTimeout as sleep } from "node:timers/promises";
-
-const args = process.argv.slice(2);
-function arg(name) {
-  const index = args.indexOf("--" + name);
-  return index >= 0 ? args[index + 1] : undefined;
-}
-const url = arg("url");
-const out = arg("out") ?? "/fixowl/evidence/web";
-if (!url) {
-  console.error("fixowl-verify-web: --url is required");
-  process.exit(1);
-}
-
-let chromium;
-try {
-  ({ chromium } = await import("playwright"));
-} catch {
-  try {
-    ({ chromium } = await import("@playwright/test"));
-  } catch {
-    console.error("fixowl-verify-web: playwright is not installed in this image; web verification unavailable");
-    process.exit(3);
-  }
-}
-
-const deadlineSeconds = Number(arg("deadline") ?? "120");
-const deadline = Date.now() + deadlineSeconds * 1000;
-let reachable = false;
-let lastError = "";
-while (Date.now() < deadline) {
-  try {
-    const response = await fetch(url);
-    if (response.status < 400) {
-      reachable = true;
-      break;
-    }
-    lastError = "HTTP " + response.status;
-  } catch (error) {
-    lastError = String(error);
-  }
-  await sleep(2000);
-}
-if (!reachable) {
-  console.error("fixowl-verify-web: app never became reachable at " + url + ": " + lastError);
-  process.exit(1);
-}
-
-mkdirSync(out, { recursive: true });
-const browser = await chromium.launch();
-const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
-const consoleErrors = [];
-page.on("console", (message) => {
-  if (message.type() === "error") consoleErrors.push(message.text());
-});
-page.on("pageerror", (error) => consoleErrors.push(String(error)));
-await page.goto(url, { waitUntil: "load", timeout: 60_000 });
-await sleep(3000);
-await page.screenshot({ path: out + "/page.png", fullPage: true });
-writeFileSync(out + "/console-errors.log", consoleErrors.join("\\n") + "\\n");
-await browser.close();
-
-if (consoleErrors.length > 0) {
-  console.error("fixowl-verify-web: " + consoleErrors.length + " console error(s) captured");
-  process.exit(2);
-}
-console.log("fixowl-verify-web: screenshot captured, no console errors");
-`;
-
-// packages/action/src/verification.ts
-var EVIDENCE_MOUNT_PATH = "/fixowl/evidence";
 var CHECK_TIMEOUT_MS = 15 * 60 * 1e3;
 var CHECK_LOG_MAX2 = 8e3;
 function tailLog(stdout, stderr) {
@@ -126799,15 +126718,11 @@ ${stderr}`.trim();
   return combined.length <= CHECK_LOG_MAX2 ? combined : `...(truncated)...
 ${combined.slice(-CHECK_LOG_MAX2)}`;
 }
-function shellQuote(value) {
-  return `'${value.replaceAll("'", `'\\''`)}'`;
-}
 async function runVerification(params) {
   const { engine, log: log3, image, workspaceDir, evidenceDir, repoFullName, issueNumber, verify } = params;
   const outcomes = [];
   const checks = verify?.checks ?? [];
-  const webChecks = verify?.web ?? [];
-  if (checks.length === 0 && webChecks.length === 0) return outcomes;
+  if (checks.length === 0) return outcomes;
   mkdirSync(evidenceDir, { recursive: true });
   for (const check2 of checks) {
     log3.info(`verify: running check "${check2.name}"`);
@@ -126836,48 +126751,7 @@ ${result.stderr}
 ${tailLog(result.stdout, result.stderr)}`
     });
   }
-  if (webChecks.length > 0) {
-    const scriptFile = join5(evidenceDir, "verify-web.mjs");
-    writeFileSync(scriptFile, VERIFY_WEB_SCRIPT);
-    for (const web of webChecks) {
-      log3.info(`verify: web check "${web.name}" against ${web.url}`);
-      const webEvidenceDir = join5(evidenceDir, `web-${sanitize(web.name)}`);
-      mkdirSync(webEvidenceDir, { recursive: true });
-      const command = `( ${web.start} ) >${EVIDENCE_MOUNT_PATH}/app.log 2>&1 & node ${VERIFY_WEB_SCRIPT_MOUNT_PATH} --url ${shellQuote(web.url)} --out ${EVIDENCE_MOUNT_PATH} --deadline ${web.startup_timeout_seconds ?? 120}`;
-      const result = await engine.run({
-        image,
-        name: containerName(repoFullName, issueNumber, `web-${web.name}`),
-        workspaceDir,
-        argv: ["bash", "-lc", command],
-        extraMounts: [
-          { host: scriptFile, container: VERIFY_WEB_SCRIPT_MOUNT_PATH, readOnly: true },
-          { host: webEvidenceDir, container: EVIDENCE_MOUNT_PATH }
-        ],
-        timeoutMs: CHECK_TIMEOUT_MS
-      });
-      writeFileSync(
-        join5(webEvidenceDir, "verify.log"),
-        `${result.stdout}
-${result.stderr}
-(exit ${result.code}${result.timedOut ? ", timed out" : ""})
-`
-      );
-      const outcome = webOutcome(web.name, result.code, result.timedOut);
-      if (outcome.status === "failed") {
-        outcome.log = tailLog(result.stdout, result.stderr);
-      }
-      outcomes.push(outcome);
-    }
-  }
   return outcomes;
-}
-function webOutcome(name, code, timedOut) {
-  if (timedOut) return { name, status: "failed", detail: "timed out" };
-  if (code === 0) return { name, status: "passed", detail: "screenshot captured" };
-  if (code === 3) return { name, status: "unavailable", detail: "playwright not in image" };
-  if (code === 2) return { name, status: "failed", detail: "console errors; see evidence" };
-  if (code === 1) return { name, status: "failed", detail: "app unreachable" };
-  return { name, status: "failed", detail: `exit ${code}` };
 }
 function sanitize(name) {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");

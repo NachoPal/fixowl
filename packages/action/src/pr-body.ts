@@ -2,7 +2,7 @@ import { issueEvidenceArtifactName } from "./evidence.ts";
 
 export interface CheckOutcome {
   name: string;
-  status: "passed" | "failed" | "unavailable";
+  status: "passed" | "failed";
   detail?: string;
   /** Captured command output (bounded); fed back to the agent on a failed pre-check, not rendered in the PR body. */
   log?: string;
@@ -121,7 +121,6 @@ function renderCiSection(ci: CiGateSummary): string[] {
 const STATUS_LABEL: Record<CheckOutcome["status"], string> = {
   passed: "✅ passed",
   failed: "❌ failed",
-  unavailable: "⚪ unavailable",
 };
 
 export function anyCheckFailed(outcomes: readonly CheckOutcome[]): boolean {
@@ -173,9 +172,9 @@ export function buildPrBody(params: {
 
   if (params.runUrl) {
     lines.push(
-      `Screenshots and logs are in the \`${issueEvidenceArtifactName(params.issueNumber)}\` ` +
-        `artifact of [this run](${params.runUrl}) (uploaded as this issue finishes, so it ` +
-        `survives even if the run is later cancelled).`,
+      `Logs (and whatever evidence your own checks produce) are in the ` +
+        `\`${issueEvidenceArtifactName(params.issueNumber)}\` artifact of [this run](${params.runUrl}) ` +
+        `(uploaded as this issue finishes, so it survives even if the run is later cancelled).`,
       ``,
     );
   }

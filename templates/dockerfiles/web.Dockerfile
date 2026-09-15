@@ -1,8 +1,9 @@
-# Sample fixowl Dockerfile for a Node web app, with Playwright for verification
-# evidence. Adapt versions to your repo and keep it versioned with your code.
-#
-# The Playwright base image bundles chromium and every system dependency, so
-# `verify.web` screenshots work out of the box.
+# Optional sample fixowl Dockerfile for a Node web app, bundled with Playwright.
+# fixowl has no built-in browser step; this is just a convenient base if you want
+# to run a browser-based check yourself. The Playwright base image ships chromium
+# and every system dependency, so a `verify.checks` entry that drives a browser
+# (e.g. a screenshot script) works out of the box - see .fixowl.yml. Adapt
+# versions to your repo and keep it versioned with your code.
 FROM mcr.microsoft.com/playwright:v1.55.0-noble
 
 # Coding agent CLIs. Install the one for whichever agent this repo runs:

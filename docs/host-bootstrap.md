@@ -1,12 +1,24 @@
 # Host bootstrap (runner machine)
 
-Setting up a pristine machine (reference host: Intel MacBook Pro, x86_64) as the
-fixowl runner host. Nothing stack-specific is ever installed on the host: only
-Docker (via Colima) and the GitHub Actions runner infrastructure. Everything
-else lives in each repo's Docker image.
+Setting up a pristine machine as the fixowl runner host. Nothing stack-specific
+is ever installed on the host: only a Docker-compatible engine and the GitHub
+Actions runner infrastructure. Everything else lives in each repo's Docker image.
 
-The Intel/x86_64 host matters: it matches GitHub-hosted Linux runners, so the
-same images behave identically locally and in the cloud (no arm64/amd64 drift).
+**Supported hosts.** fixowl ships a self-hosted runner build for **macOS on Apple
+Silicon (arm64)**, **macOS on Intel (x64)**, and **Linux x64** - all first-class
+(`runnerPlatform` in `packages/cli/src/runner/install.ts`). Only Linux arm64 has
+no pinned build; run those (and Windows) on a GitHub-hosted runner instead (see
+section 6). This guide is written for macOS; the Linux-x64 steps differ only in
+how you install the engine and keep the box awake.
+
+**A note on container architecture (a consideration, not a rule).** fixowl pins
+no `--platform` anywhere, so containers follow the host: an Apple Silicon host
+builds and runs arm64 images, an Intel or Linux-x64 host amd64. If you want to
+match a specific cloud target byte-for-byte you *can* - GitHub now offers both
+amd64 and arm64 Linux runners, so "match the cloud" is no longer uniquely amd64,
+and an Apple Silicon host can produce amd64 images via emulation (Colima
+`--arch x86_64`, or the VZ + Rosetta backend) at a speed cost. Weigh that
+trade-off for your repos; nothing in fixowl forces a particular architecture.
 
 ## 1. Remote access (do this at the keyboard once)
 
@@ -16,7 +28,16 @@ same images behave identically locally and in the cloud (no arm64/amd64 drift).
 
 Everything below works over SSH.
 
-## 2. Homebrew + Colima
+## 2. Homebrew + a Docker engine
+
+fixowl needs any working Docker-compatible engine, not a specific one:
+`checkDockerEngine` (`packages/cli/src/docker/engine-check.ts`) prefers Colima
+when it is running but otherwise accepts whatever `docker info` succeeds against
+- Docker Desktop or a plain Docker daemon are equally fine.
+
+**Colima is the recommended choice for a headless/SSH host** because it is
+headless and SSH-friendly (no GUI login session required), which is the usual
+shape of a dedicated runner box:
 
 ```sh
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
@@ -26,10 +47,17 @@ brew services start colima   # restart Colima after reboots
 docker info                  # sanity check
 ```
 
-Colima is used instead of Docker Desktop because it is headless and
-SSH-friendly. Colima shares `$HOME` into its VM, which is why fixowl requires
-the runner directory (default `~/.fixowl/runners`) to live under `$HOME`:
-that is what makes `-v $GITHUB_WORKSPACE:/workspace` mounts work.
+If you prefer **Docker Desktop** or a **plain Docker daemon** (e.g. on a Linux
+host), install and start that instead and skip the Colima commands; `docker info`
+succeeding is all fixowl checks for. `fixowl provision`/`start` detect the engine
+and only set `DOCKER_HOST` when it is Colima.
+
+**A Colima-specific consequence:** Colima shares `$HOME` into its VM, which is why
+- *when you run Colima* - the runner directory (default `~/.fixowl/runners`) must
+live under `$HOME`: that is what makes `-v $GITHUB_WORKSPACE:/workspace` mounts
+resolve inside the VM. On a native Docker daemon (Docker Desktop's file sharing,
+or Linux) there is no VM boundary, so this is a Colima detail, not a universal
+fixowl requirement.
 
 ## 3. Keep-awake
 
@@ -86,9 +114,10 @@ If you provision from a different machine than the one that runs the runner,
 run `fixowl provision --no-register` there and `fixowl start --register` on the
 runner host.
 
-`fixowl start` writes each runner's `.env` with `DOCKER_HOST` pointing at the
-Colima socket and a PATH that covers Homebrew on Intel (`/usr/local/bin`) and
-Apple Silicon (`/opt/homebrew/bin`).
+`fixowl start` writes each runner's `.env` with a PATH that covers Homebrew on
+Intel (`/usr/local/bin`) and Apple Silicon (`/opt/homebrew/bin`), and - only when
+the detected engine is Colima - a `DOCKER_HOST` pointing at the Colima socket. On
+a native Docker daemon no `DOCKER_HOST` is written; the default socket is used.
 
 ## 5. Verify end to end
 
@@ -101,7 +130,7 @@ fixowl run owner/repo       # dispatches a night run now and follows it
 
 The canary check for a fresh host is a repo whose issue makes the agent run
 `docker run --rm -v "$GITHUB_WORKSPACE:/w" alpine ls /w`: it proves the runner,
-the Colima engine, and workspace mounting in one shot.
+the container engine, and workspace mounting in one shot.
 
 ## 6. Running on a GitHub-hosted (cloud) runner
 
@@ -118,9 +147,13 @@ host. To switch an existing repo, set `runner_mode: github-hosted` (with
 provision`.
 
 On a GitHub-hosted runner Docker is preinstalled, the action is plain Node, and
-the same `docker run` steps just work. Host-bound verification (visible browsers,
-iOS/macOS targets) is the only thing you give up. Every container already runs as
-the host runner's `--user <uid>:<gid>` (injected in `DockerEngine.run`), so on
-Linux agent writes to the mounted workspace stay owned by the runner user and
-clean up normally; see the security model's container hardening in
-[security.md](security.md).
+the same `docker run` steps just work. Verification runs *inside the container*
+(fixowl just executes the commands you declare in `.fixowl.yml`), so ordinary
+containerized checks - including a headless browser check you bring in your own
+image - run identically on GitHub-hosted Linux runners. The genuinely host-bound
+cases you give up on the cloud are narrow: a *literally visible* browser window on
+a physical display, real GPU / hardware / physically-attached devices, and
+iOS/macOS/Xcode targets. Every container already runs as the host runner's
+`--user <uid>:<gid>` (injected in `DockerEngine.run`), so on Linux agent writes to
+the mounted workspace stay owned by the runner user and clean up normally; see the
+security model's container hardening in [security.md](security.md).
