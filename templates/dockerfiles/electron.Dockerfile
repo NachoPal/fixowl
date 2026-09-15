@@ -1,5 +1,7 @@
-# Sample fixowl Dockerfile for an Electron app: verification runs against a
-# virtual display (Xvfb); Playwright drives Electron directly.
+# Optional sample fixowl Dockerfile for an Electron app. fixowl has no built-in
+# browser step; this is a convenient base if you want to run Electron end-to-end
+# checks yourself via `verify.checks`. It adds a virtual display (Xvfb) so a
+# `verify.checks` command can drive Electron directly (e.g. through Playwright).
 FROM mcr.microsoft.com/playwright:v1.55.0-noble
 
 RUN apt-get update \

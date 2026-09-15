@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -74,74 +74,5 @@ describe("runVerification", () => {
       verify: { checks: [{ name: "t", run: "true" }] },
     });
     expect(engine.runs[0]?.env).toBeUndefined();
-  });
-
-  it("web: exit 3 records unavailable, exit 0 passes, exit 2 fails", async () => {
-    const evidenceDir = tempDir();
-    let exitCode = 3;
-    const engine = new FakeEngine(() => ({
-      code: exitCode,
-      stdout: "",
-      stderr: "",
-      timedOut: false,
-    }));
-    const verify = {
-      web: [{ name: "app", start: "npm run dev", url: "http://localhost:5173/" }],
-    };
-    const shared = {
-      engine,
-      log: silentLog,
-      image: "img",
-      workspaceDir: "/ws",
-      repoFullName: "test/repo",
-      issueNumber: 7,
-    };
-
-    expect((await runVerification({ ...shared, evidenceDir, verify }))[0]).toEqual({
-      name: "app",
-      status: "unavailable",
-      detail: "playwright not in image",
-    });
-
-    exitCode = 0;
-    expect((await runVerification({ ...shared, evidenceDir, verify }))[0]?.status).toBe("passed");
-
-    exitCode = 2;
-    expect((await runVerification({ ...shared, evidenceDir, verify }))[0]).toMatchObject({
-      name: "app",
-      status: "failed",
-      detail: "console errors; see evidence",
-    });
-  });
-
-  it("web: mounts the verify script read-only and an evidence dir, quotes the url", async () => {
-    const evidenceDir = tempDir();
-    const engine = new FakeEngine();
-    await runVerification({
-      engine,
-      log: silentLog,
-      image: "img",
-      workspaceDir: "/ws",
-      evidenceDir,
-      repoFullName: "test/repo",
-      issueNumber: 7,
-      verify: {
-        web: [{ name: "app", start: "npm run dev", url: "http://localhost:5173/?slug=x&y=z" }],
-      },
-    });
-    const spec = engine.runs[0];
-    expect(spec?.extraMounts).toEqual([
-      {
-        host: join(evidenceDir, "verify-web.mjs"),
-        container: "/fixowl/verify-web.mjs",
-        readOnly: true,
-      },
-      { host: join(evidenceDir, "web-app"), container: "/fixowl/evidence" },
-    ]);
-    expect(existsSync(join(evidenceDir, "verify-web.mjs"))).toBe(true);
-    const command = spec?.argv[2] ?? "";
-    expect(command).toContain("( npm run dev )");
-    expect(command).toContain("'http://localhost:5173/?slug=x&y=z'");
-    expect(command).toContain("--deadline 120");
   });
 });

@@ -122,6 +122,7 @@ export {
   runnerBaseDir,
   runnerModeSchema,
   scheduleTriggerSchema,
+  WEB_CHECK_REMOVED_MESSAGE,
   workflowHasSchedule,
   type GithubAppConfig,
   type GlobalConfig,
@@ -131,7 +132,6 @@ export {
   type RunnerMode,
   type ScheduleTrigger,
   type VerifyCheck,
-  type WebCheck,
 } from "./config-schema.ts";
 export {
   evaluateGate,
