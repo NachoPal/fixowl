@@ -3,8 +3,6 @@ name: fixowl
 run-name: "fixowl night run${{ github.event.inputs.source == 'scheduled-fallback' && ' [scheduled-fallback]' || '' }}"
 
 on:
-  schedule:
-    - cron: "37 0 * * *"
   workflow_dispatch:
     inputs:
       source:
@@ -36,22 +34,20 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - uses: NachoPal/fixowl@aa009e44ffacb0a17b597ab52a91ae225a19200a # main @ 2026-09-08
+      - uses: NachoPal/fixowl@main # main (tracks latest)
         with:
           labels-any: "for: agent"
           labels-all: ""
           agent: claude
           agent-env: "CLAUDE_CODE_OAUTH_TOKEN"
-          max-issues-per-run: "3"
+          max-issues-per-run: "10"
           issue-timeout-minutes: "120"
           max-ci-tries: "3"
           ci-timeout-minutes: "60"
           source: "${{ github.event.inputs.source }}"
-          schedule: "37 0 * * *"
           usage-budget-percent: "85"
           run-budget-minutes: "240"
-          default-model: "sonnet"
-          default-effort: "medium"
+          label-models: "{\"effort: high\":{\"model\":\"opus\",\"effort\":\"high\"},\"effort: low\":{\"model\":\"sonnet\",\"effort\":\"high\"},\"effort: max\":{\"model\":\"opus\",\"effort\":\"max\"},\"effort: medium\":{\"model\":\"opus\",\"effort\":\"medium\"},\"effort: xhigh\":{\"model\":\"opus\",\"effort\":\"xhigh\"}}"
         env:
           GITHUB_TOKEN: ${{ github.token }} # Actions: read, for the once-a-day budget guard
           FIXOWL_APP_ID: ${{ secrets.FIXOWL_APP_ID }}
@@ -65,7 +61,7 @@ jobs:
       # convenience fallback for a fully-successful night. Its FinalizeArtifact
       # step intermittently 403s (a cancelled-job runner reconnect, or a
       # transient artifact-service error), so it must never fail the whole run.
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         if: always()
         continue-on-error: true
         with:
