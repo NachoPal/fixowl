@@ -174,6 +174,18 @@ export async function processIssue(
   // Agent passes already spent resolving conflicts on a dirty PR, across the loop
   // (bounded by ctx.conflictMaxTries). A clean rebase spends none.
   let conflictPassesUsed = 0;
+  // The head this attempt's CI wait would gate on, once a PR exists; lets a later
+  // pass detect it produced no further changes (see the no-op short-circuit below).
+  let lastCiHeadSha: string | undefined;
+  // The most recent CI-red feedback, kept separately from `previousFailures` so a
+  // later local pre-check failure can be folded in alongside it instead of
+  // replacing it outright (a local failure after a CI-red attempt should not make
+  // the agent lose the CI context it was working on).
+  let lastCiFailures: CheckFailureFeedback[] | undefined;
+  // prBase is fixed per issue, so its required checks are read (and cached) once
+  // for the whole loop rather than once per CI-bound attempt; left unset if no
+  // attempt ever reaches a CI wait.
+  let required: RequiredChecks | undefined;
 
   try {
     for (let attempt = 1; attempt <= maxTries; attempt++) {
@@ -220,6 +232,22 @@ export async function processIssue(
         return await handleNoDiff(deps, ctx, base, firstPassVerdict);
       }
 
+      // A PR already exists and this pass changed nothing since the last push (the
+      // agent gave up or re-produced the same tree working the prior CI/local
+      // feedback): a no-op commit, push, and full CI re-poll of the same SHA would
+      // gain nothing, so stop early instead of burning another CI cycle.
+      if (
+        pr !== undefined &&
+        lastCiHeadSha !== undefined &&
+        !(await git.hasChangesAgainst(lastCiHeadSha))
+      ) {
+        log.info(
+          `issue #${issue.number}: agent made no further changes since the last push; ` +
+            `leaving an annotated draft without re-running CI (attempt ${attempt}/${maxTries})`,
+        );
+        break;
+      }
+
       const verification = await runVerification({
         engine,
         log,
@@ -235,7 +263,10 @@ export async function processIssue(
       // Cheap pre-filter: a change that cannot even pass the local smoke test
       // never reaches CI. Feed the local failures back and retry, no push.
       if (anyCheckFailed(verification)) {
-        previousFailures = localFeedback(verification);
+        // Keep any CI context from an earlier red attempt alongside the fresh local
+        // failures, so this pass's feedback doesn't erase what the agent was
+        // already working on.
+        previousFailures = [...(lastCiFailures ?? []), ...localFeedback(verification)];
         log.info(
           `issue #${issue.number}: local pre-check failed (attempt ${attempt}/${maxTries}); not pushing`,
         );
@@ -308,7 +339,8 @@ export async function processIssue(
         );
       }
 
-      const required = await readRequiredChecks(github, ctx.prBase, log);
+      lastCiHeadSha = headSha;
+      required ??= await readRequiredChecks(github, ctx.prBase, log);
       log.info(
         `issue #${issue.number}: waiting for CI on ${headSha.slice(0, 12)} (attempt ${attempt}/${maxTries})`,
       );
@@ -376,7 +408,8 @@ export async function processIssue(
         break;
       }
 
-      previousFailures = await ciFeedback(github, ci);
+      lastCiFailures = await ciFeedback(github, ci);
+      previousFailures = lastCiFailures;
       log.info(
         `issue #${issue.number}: CI ${ci.timedOut ? "did not complete in time" : "is red"} ` +
           `(attempt ${attempt}/${maxTries})`,

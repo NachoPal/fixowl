@@ -126783,6 +126783,9 @@ async function processIssue(deps, ctx) {
   let lastCi;
   let firstPassVerdict;
   let conflictPassesUsed = 0;
+  let lastCiHeadSha;
+  let lastCiFailures;
+  let required2;
   try {
     for (let attempt = 1; attempt <= maxTries; attempt++) {
       const agentResult = await runAgent(deps, ctx, { attempt, previousFailures });
@@ -126814,6 +126817,12 @@ ${agentResult.stderr}`.trim();
       if (attempt === 1 && !await git.hasChangesAgainst(ctx.baseRef)) {
         return await handleNoDiff(deps, ctx, base, firstPassVerdict);
       }
+      if (pr !== void 0 && lastCiHeadSha !== void 0 && !await git.hasChangesAgainst(lastCiHeadSha)) {
+        log3.info(
+          `issue #${issue3.number}: agent made no further changes since the last push; leaving an annotated draft without re-running CI (attempt ${attempt}/${maxTries})`
+        );
+        break;
+      }
       const verification = await runVerification({
         engine,
         log: log3,
@@ -126826,7 +126835,7 @@ ${agentResult.stderr}`.trim();
       });
       lastVerification = verification;
       if (anyCheckFailed(verification)) {
-        previousFailures = localFeedback(verification);
+        previousFailures = [...lastCiFailures ?? [], ...localFeedback(verification)];
         log3.info(
           `issue #${issue3.number}: local pre-check failed (attempt ${attempt}/${maxTries}); not pushing`
         );
@@ -126878,7 +126887,8 @@ ${agentResult.stderr}`.trim();
           `issue #${issue3.number}: rebased onto ${ctx.prBase} and resolved conflicts; resuming CI gate on ${headSha.slice(0, 12)}`
         );
       }
-      const required2 = await readRequiredChecks(github, ctx.prBase, log3);
+      lastCiHeadSha = headSha;
+      required2 ??= await readRequiredChecks(github, ctx.prBase, log3);
       log3.info(
         `issue #${issue3.number}: waiting for CI on ${headSha.slice(0, 12)} (attempt ${attempt}/${maxTries})`
       );
@@ -126920,7 +126930,8 @@ ${agentResult.stderr}`.trim();
         );
         break;
       }
-      previousFailures = await ciFeedback(github, ci);
+      lastCiFailures = await ciFeedback(github, ci);
+      previousFailures = lastCiFailures;
       log3.info(
         `issue #${issue3.number}: CI ${ci.timedOut ? "did not complete in time" : "is red"} (attempt ${attempt}/${maxTries})`
       );
