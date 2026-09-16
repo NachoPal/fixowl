@@ -125465,8 +125465,8 @@ function makeGitHubApi(octokit, owner, repo, runsOctokit) {
         if (isNotAccessibleError(error62)) return void 0;
         throw error62;
       });
-      if (runs === void 0) return { readable: false, checks: [] };
-      for (const checkRun of runs) {
+      const checkRunsReadable = runs !== void 0;
+      for (const checkRun of runs ?? []) {
         byName.set(checkRun.name, {
           name: checkRun.name,
           status: checkRun.status === null ? "completed" : checkRun.status,
@@ -125475,8 +125475,10 @@ function makeGitHubApi(octokit, owner, repo, runsOctokit) {
           detailsUrl: checkRun.details_url ?? void 0
         });
       }
+      let hasStatuses = false;
       try {
         const { data } = await octokit.repos.getCombinedStatusForRef({ owner, repo, ref: sha });
+        hasStatuses = data.statuses.length > 0;
         for (const status of data.statuses) {
           if (byName.has(status.context)) continue;
           byName.set(status.context, {
@@ -125489,6 +125491,7 @@ function makeGitHubApi(octokit, owner, repo, runsOctokit) {
         }
       } catch {
       }
+      if (!checkRunsReadable && !hasStatuses) return { readable: false, checks: [] };
       return { readable: true, checks: [...byName.values()] };
     },
     async getFailedCheckLogs(check2) {

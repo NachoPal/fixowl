@@ -8,7 +8,8 @@ import { makeGitHubApi, reduceTriageNode } from "./github-api.ts";
  * accessible by integration"; GitHub words the same denial "by personal access
  * token" for a user token, and both are exercised here). `getChecksForRef` must
  * swallow that into `readable: false` (mirroring `getRequiredChecks`) instead
- * of throwing and failing the whole issue.
+ * of throwing and failing the whole issue - unless at least one commit status
+ * is still readable, in which case it gates off that fallback (issue #84).
  */
 describe("makeGitHubApi.getChecksForRef", () => {
   it("returns readable:false (never throws) when the check-runs read 403s", async () => {
@@ -88,6 +89,47 @@ describe("makeGitHubApi.getChecksForRef", () => {
 
     const api = makeGitHubApi(octokit, "owner", "repo", undefined);
     await expect(api.getChecksForRef("deadbeef")).rejects.toThrow("Not Found");
+  });
+
+  it("falls back to commit statuses when check-runs 403s but a status exists (issue #84)", async () => {
+    const notAccessible = Object.assign(
+      new Error("Resource not accessible by personal access token"),
+      { status: 403 },
+    );
+    const octokit = {
+      paginate: async () => {
+        throw notAccessible;
+      },
+      checks: { listForRef: () => {} },
+      repos: {
+        getCombinedStatusForRef: async () => ({
+          data: {
+            statuses: [
+              {
+                context: "ci/third-party",
+                state: "success",
+                description: undefined,
+                target_url: null,
+              },
+            ],
+          },
+        }),
+      },
+    } as unknown as Octokit;
+
+    const api = makeGitHubApi(octokit, "owner", "repo", undefined);
+    const result = await api.getChecksForRef("deadbeef");
+
+    expect(result.readable).toBe(true);
+    expect(result.checks).toEqual([
+      {
+        name: "ci/third-party",
+        status: "completed",
+        conclusion: "success",
+        summary: undefined,
+        detailsUrl: undefined,
+      },
+    ]);
   });
 
   it("degrades on the App-token permission-denial variant (integration)", async () => {
