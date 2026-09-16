@@ -4,21 +4,22 @@ import { join } from "node:path";
 import { run, runOrThrow } from "../exec.ts";
 
 /**
- * The optional local fallback trigger runs as a per-user launchd agent (one per
- * target repo) that fires daily after the repo's cron and runs
- * `fixowl fallback check <repo>`. We write and drive our own plist here rather
- * than reusing the runner's bundled `svc.sh`, which only knows the runner
- * service.
+ * The optional local host scheduler runs as a per-user launchd agent (one per
+ * target repo) that fires daily and runs `fixowl host-scheduler check <repo>`.
+ * Depending on the repo's `schedule_trigger` it is the *primary* trigger
+ * (dispatches the night directly on schedule) or the cron *fallback*. We write
+ * and drive our own plist here rather than reusing the runner's bundled
+ * `svc.sh`, which only knows the runner service.
  *
  * The hard part is time zones. GitHub's cron is fixed UTC; launchd's
  * StartCalendarInterval fires in the host's LOCAL wall-clock time, which shifts
- * an hour with DST. To keep the fallback reliably *after* the cron in every
- * season we schedule it at the local time of `cronUTC + gap + the zone's larger
- * (summer) UTC offset`. That makes the actual fire land between `gap` and
- * `gap + (DST swing)` after the cron all year, never before it - see
- * {@link fallbackLocalTime}. Because the "already ran?" decision keys on the
- * cron-anchored occurrence window (not the calendar day - see
- * `fallback-dispatch.ts`), exact timing is not critical as long as the fire
+ * an hour with DST. To keep the agent reliably *after* the cron in every
+ * season (the fallback role) we schedule it at the local time of
+ * `cronUTC + gap + the zone's larger (summer) UTC offset`. That makes the actual
+ * fire land between `gap` and `gap + (DST swing)` after the cron all year, never
+ * before it - see {@link hostSchedulerLocalTime}. Because the "already ran?"
+ * decision keys on the cron-anchored occurrence window (not the calendar day -
+ * see `fallback-dispatch.ts`), exact timing is not critical as long as the fire
  * stays after the cron, which this guarantees.
  */
 
@@ -30,9 +31,9 @@ export interface DailyCronTime {
 }
 
 /**
- * Parses the hour/minute of a daily `M H * * *` cron (UTC). The fallback needs a
- * single daily fire time; anything more elaborate (ranges, steps, lists, or a
- * non-`*` day/month/weekday) is rejected with a clear message.
+ * Parses the hour/minute of a daily `M H * * *` cron (UTC). The host scheduler
+ * needs a single daily fire time; anything more elaborate (ranges, steps, lists,
+ * or a non-`*` day/month/weekday) is rejected with a clear message.
  */
 export function parseDailyCron(cron: string): DailyCronTime {
   const fields = cron.trim().split(/\s+/);
@@ -42,7 +43,7 @@ export function parseDailyCron(cron: string): DailyCronTime {
   const [minute, hour, dom, month, dow] = fields;
   if (dom !== "*" || month !== "*" || dow !== "*") {
     throw new Error(
-      `the local fallback needs a plain daily cron like "M H * * *"; "${cron}" is not daily`,
+      `the host scheduler needs a plain daily cron like "M H * * *"; "${cron}" is not daily`,
     );
   }
   const minuteUtc = Number(minute);
@@ -62,13 +63,13 @@ export interface LocalTime {
 }
 
 /**
- * The local wall-clock time to program into launchd so the fallback fires after
+ * The local wall-clock time to program into launchd so the agent fires after
  * the UTC cron in every DST season. See the module comment for the reasoning.
  *
  * @param maxOffsetMinutes the larger of the zone's two UTC offsets (its summer /
  *   DST offset), in minutes east of UTC.
  */
-export function fallbackLocalTime(params: {
+export function hostSchedulerLocalTime(params: {
   cron: DailyCronTime;
   gapMinutes: number;
   maxOffsetMinutes: number;
@@ -104,22 +105,36 @@ export function nextFireTime(local: LocalTime, from: Date = new Date()): Date {
   return next;
 }
 
-/** launchd label for a repo's fallback agent, e.g. com.fixowl.fallback.owner-repo. */
-export function fallbackLabel(repoFullName: string): string {
-  const slug = repoFullName
+/** The reverse-DNS slug of a repo full name, e.g. `Acme/Widgets` -> `acme-widgets`. */
+function repoLabelSlug(repoFullName: string): string {
+  return repoFullName
     .toLowerCase()
     .replaceAll(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "");
-  return `com.fixowl.fallback.${slug}`;
+}
+
+/** launchd label for a repo's host scheduler agent, e.g. com.fixowl.host-scheduler.owner-repo. */
+export function hostSchedulerLabel(repoFullName: string): string {
+  return `com.fixowl.host-scheduler.${repoLabelSlug(repoFullName)}`;
+}
+
+/**
+ * The pre-rename launchd label (`com.fixowl.fallback.<slug>`) for a repo. Kept so
+ * `host-scheduler install` can migrate a host provisioned before the rename by
+ * removing its old agent, and so uninstall/status still find one that has not
+ * re-provisioned yet. Remove once no deployed host runs the old label.
+ */
+export function legacyHostSchedulerLabel(repoFullName: string): string {
+  return `com.fixowl.fallback.${repoLabelSlug(repoFullName)}`;
 }
 
 function xmlEscape(value: string): string {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
 
-export interface FallbackPlistParams {
+export interface HostSchedulerPlistParams {
   label: string;
-  /** argv the agent runs, e.g. [node, cliScript, "fallback", "check", repo]. */
+  /** argv the agent runs, e.g. [node, cliScript, "host-scheduler", "check", repo]. */
   programArguments: readonly string[];
   local: LocalTime;
   /** PATH for the agent process, so node/git resolve under launchd. */
@@ -128,8 +143,8 @@ export interface FallbackPlistParams {
   stderrPath: string;
 }
 
-/** Renders the launchd property list for a repo's fallback agent (pure). */
-export function renderFallbackPlist(params: FallbackPlistParams): string {
+/** Renders the launchd property list for a repo's host scheduler agent (pure). */
+export function renderHostSchedulerPlist(params: HostSchedulerPlistParams): string {
   const args = params.programArguments
     .map((arg) => `    <string>${xmlEscape(arg)}</string>`)
     .join("\n");
@@ -173,22 +188,23 @@ ${args}
 // ---------------------------------------------------------------------------
 
 /** Default PATH for the agent, covering Homebrew on Intel and Apple Silicon. */
-export const FALLBACK_PATH_ENV = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
+export const HOST_SCHEDULER_PATH_ENV =
+  "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
 
 export function launchAgentsDir(): string {
   return join(homedir(), "Library", "LaunchAgents");
 }
 
-export function fallbackPlistPath(label: string): string {
+export function hostSchedulerPlistPath(label: string): string {
   return join(launchAgentsDir(), `${label}.plist`);
 }
 
-export function fallbackLogPath(label: string): string {
+export function hostSchedulerLogPath(label: string): string {
   return join(homedir(), ".fixowl", "logs", `${label}.log`);
 }
 
-export function isFallbackInstalled(label: string): boolean {
-  return existsSync(fallbackPlistPath(label));
+export function isHostSchedulerInstalled(label: string): boolean {
+  return existsSync(hostSchedulerPlistPath(label));
 }
 
 /** gui/<uid> domain target for a per-user launchd agent. */
@@ -200,13 +216,13 @@ function guiDomain(): string {
  * Writes the plist and (re)loads it via launchctl. Idempotent: an existing agent
  * is booted out first so the new calendar interval takes effect.
  */
-export async function installFallbackAgent(params: {
+export async function installHostSchedulerAgent(params: {
   label: string;
   plist: string;
 }): Promise<void> {
   mkdirSync(launchAgentsDir(), { recursive: true });
   mkdirSync(join(homedir(), ".fixowl", "logs"), { recursive: true });
-  const path = fallbackPlistPath(params.label);
+  const path = hostSchedulerPlistPath(params.label);
   writeFileSync(path, params.plist);
   // Best-effort unload of any previous version; ignore "not loaded".
   await run(["launchctl", "bootout", `${guiDomain()}/${params.label}`]);
@@ -214,8 +230,8 @@ export async function installFallbackAgent(params: {
 }
 
 /** Boots the agent out (if loaded) and removes its plist. */
-export async function uninstallFallbackAgent(label: string): Promise<boolean> {
-  const path = fallbackPlistPath(label);
+export async function uninstallHostSchedulerAgent(label: string): Promise<boolean> {
+  const path = hostSchedulerPlistPath(label);
   const existed = existsSync(path);
   await run(["launchctl", "bootout", `${guiDomain()}/${label}`]);
   if (existed) rmSync(path, { force: true });
@@ -223,7 +239,7 @@ export async function uninstallFallbackAgent(label: string): Promise<boolean> {
 }
 
 /** Whether launchd currently has the agent loaded. Tolerant of a missing launchctl. */
-export async function isFallbackLoaded(label: string): Promise<boolean> {
+export async function isHostSchedulerLoaded(label: string): Promise<boolean> {
   try {
     const result = await run(["launchctl", "print", `${guiDomain()}/${label}`]);
     return result.code === 0;
@@ -234,7 +250,7 @@ export async function isFallbackLoaded(label: string): Promise<boolean> {
 
 /** Reads the Hour/Minute programmed into an installed plist, for status. */
 export function readPlistLocalTime(label: string): LocalTime | undefined {
-  const path = fallbackPlistPath(label);
+  const path = hostSchedulerPlistPath(label);
   if (!existsSync(path)) return undefined;
   const xml = readFileSync(path, "utf8");
   const hour = /<key>Hour<\/key>\s*<integer>(\d+)<\/integer>/.exec(xml);

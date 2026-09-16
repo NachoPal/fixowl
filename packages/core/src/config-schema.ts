@@ -23,7 +23,7 @@ const cronSchema = z.string().regex(/^\S+ \S+ \S+ \S+ \S+$/, "expected a 5-field
  *  - `both`          the workflow keeps `schedule:` AND the host agent runs in its
  *                    fallback mode (dispatch only if the cron run is missing).
  *
- * See docs/local-fallback.md.
+ * See docs/host-scheduler.md.
  */
 export const scheduleTriggerSchema = z.enum(["github-cron", "host-scheduler", "both"]);
 export type ScheduleTrigger = z.infer<typeof scheduleTriggerSchema>;
@@ -227,7 +227,7 @@ export const globalConfigSchema = z.object({
       dir: z.string().min(1).optional(),
     })
     .optional(),
-  /** The optional host-local fallback trigger (`fixowl fallback`). */
+  /** The host scheduler's cron-fallback tuning (`fixowl host-scheduler`, `both` mode). */
   fallback: z
     .object({
       /** Minutes after each repo's cron to run the local backup check. */
@@ -383,7 +383,7 @@ export const FIXOWL_DEFAULTS = {
    * Minutes after the cron the local fallback fires. Generous on purpose:
    * GitHub schedules also arrive late, and the check-then-dispatch logic makes
    * exact timing non-critical as long as the fallback is reliably after the cron
-   * window. See docs/local-fallback.md.
+   * window. See docs/host-scheduler.md.
    */
   fallbackGapMinutes: 30,
 } as const;

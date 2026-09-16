@@ -15,36 +15,39 @@ import { describeGitHubError } from "../github/errors.ts";
 import { splitRepoFullName, type RepoRef } from "../github/repo-provisioning.ts";
 import { log } from "../log.ts";
 import {
-  FALLBACK_PATH_ENV,
-  fallbackLabel,
-  fallbackLocalTime,
-  fallbackLogPath,
-  fallbackPlistPath,
+  HOST_SCHEDULER_PATH_ENV,
   hostMaxOffsetMinutes,
-  installFallbackAgent,
-  isFallbackInstalled,
-  isFallbackLoaded,
+  hostSchedulerLabel,
+  hostSchedulerLocalTime,
+  hostSchedulerLogPath,
+  hostSchedulerPlistPath,
+  installHostSchedulerAgent,
+  isHostSchedulerInstalled,
+  isHostSchedulerLoaded,
+  legacyHostSchedulerLabel,
   nextFireTime,
   parseDailyCron,
   readPlistLocalTime,
-  renderFallbackPlist,
-  uninstallFallbackAgent,
+  renderHostSchedulerPlist,
+  uninstallHostSchedulerAgent,
   type LocalTime,
-} from "../runner/fallback-launchd.ts";
+} from "../runner/host-scheduler-launchd.ts";
 
-/** Side effects `fallback check` performs; injectable so the decision is testable. */
-export interface FallbackCheckDeps {
+/** Side effects `host-scheduler check` performs; injectable so the decision is testable. */
+export interface HostSchedulerCheckDeps {
   listRecentRuns: (ref: RepoRef) => Promise<WorkflowRunLite[]>;
   getDefaultBranch: (ref: RepoRef) => Promise<string>;
   dispatch: (ref: RepoRef, branch: string) => Promise<void>;
   now: () => Date;
 }
 
-function requireFallbackToken(ctx: CliContext): string {
+// The dispatch token keeps its deployed name (github.fallback_token /
+// FIXOWL_FALLBACK_TOKEN); only the local-scheduler concept was renamed.
+function requireDispatchToken(ctx: CliContext): string {
   const token = ctx.config.github.fallback_token;
   if (token === undefined || token === "") {
     throw new Error(
-      "the local fallback needs github.fallback_token (a fine-grained PAT with " +
+      "the host scheduler needs github.fallback_token (a fine-grained PAT with " +
         "Actions: write on the target repos). Add FIXOWL_FALLBACK_TOKEN to " +
         "~/.fixowl/secrets.env and github.fallback_token: ${FIXOWL_FALLBACK_TOKEN} " +
         "to config.yaml, or re-run `fixowl init` to set it up.",
@@ -53,9 +56,9 @@ function requireFallbackToken(ctx: CliContext): string {
   return token;
 }
 
-/** Real GitHub-backed deps for `fallback check`, authed with the fallback token. */
-export function realFallbackCheckDeps(ctx: CliContext): FallbackCheckDeps {
-  const octokit = githubClient(requireFallbackToken(ctx));
+/** Real GitHub-backed deps for `host-scheduler check`, authed with the dispatch token. */
+export function realHostSchedulerCheckDeps(ctx: CliContext): HostSchedulerCheckDeps {
+  const octokit = githubClient(requireDispatchToken(ctx));
   return {
     async listRecentRuns(ref) {
       const { data } = await octokit.rest.actions.listWorkflowRuns({
@@ -104,10 +107,10 @@ export function realFallbackCheckDeps(ctx: CliContext): FallbackCheckDeps {
  * Either dispatch is tagged so the in-run budget guard treats it as the
  * scheduled slot. Logs clearly whether it fired or stood down.
  */
-export async function fallbackCheckCommand(
+export async function hostSchedulerCheckCommand(
   ctx: CliContext,
   repoArg: string | undefined,
-  deps: FallbackCheckDeps = realFallbackCheckDeps(ctx),
+  deps: HostSchedulerCheckDeps = realHostSchedulerCheckDeps(ctx),
 ): Promise<void> {
   for (const repoFullName of targetRepos(ctx.config, repoArg)) {
     const ref = splitRepoFullName(repoFullName);
@@ -137,9 +140,9 @@ export async function fallbackCheckCommand(
     } catch (error) {
       const detail = describeGitHubError(error);
       const hint = /unexpected inputs/i.test(detail)
-        ? " (the workflow predates the fallback; run `fixowl provision` to update it)"
+        ? " (the workflow predates the host scheduler; run `fixowl provision` to update it)"
         : "";
-      log.error(`${repoFullName}: fallback check failed - ${detail}${hint}`);
+      log.error(`${repoFullName}: host scheduler check failed - ${detail}${hint}`);
       process.exitCode = 1;
     }
   }
@@ -149,7 +152,7 @@ export async function fallbackCheckCommand(
 function cliInvocation(configPath: string | undefined): string[] {
   const script = realpathSync(process.argv[1] ?? "");
   const configArgs = configPath !== undefined ? ["--config", configPath] : [];
-  return [process.execPath, script, ...configArgs, "fallback", "check"];
+  return [process.execPath, script, ...configArgs, "host-scheduler", "check"];
 }
 
 function repoLocalTime(ctx: CliContext, repoFullName: string): LocalTime {
@@ -159,23 +162,23 @@ function repoLocalTime(ctx: CliContext, repoFullName: string): LocalTime {
   // crack; primary mode is the only trigger, so it fires ON the schedule (gap 0).
   const gapMinutes =
     hostSchedulerRole(settings.scheduleTrigger) === "primary" ? 0 : fallbackGapMinutes(ctx.config);
-  return fallbackLocalTime({ cron, gapMinutes, maxOffsetMinutes: hostMaxOffsetMinutes() });
+  return hostSchedulerLocalTime({ cron, gapMinutes, maxOffsetMinutes: hostMaxOffsetMinutes() });
 }
 
 function fmtLocalTime(local: LocalTime): string {
   return `${String(local.hour).padStart(2, "0")}:${String(local.minute).padStart(2, "0")}`;
 }
 
-export async function fallbackInstallCommand(
+export async function hostSchedulerInstallCommand(
   ctx: CliContext,
   repoArg: string | undefined,
   configPath: string | undefined,
 ): Promise<void> {
-  requireFallbackToken(ctx);
+  requireDispatchToken(ctx);
   if (process.platform !== "darwin") {
     throw new Error(
-      "fixowl fallback install currently supports macOS (launchd) only; " +
-        "on Linux add a cron/systemd-timer that runs `fixowl fallback check` after the cron.",
+      "fixowl host-scheduler install currently supports macOS (launchd) only; " +
+        "on Linux add a cron/systemd-timer that runs `fixowl host-scheduler check` after the cron.",
     );
   }
   const invocation = cliInvocation(configPath);
@@ -189,17 +192,23 @@ export async function fallbackInstallCommand(
       );
       continue;
     }
+    // Migrate a host provisioned before the rename: remove the old-label agent
+    // (com.fixowl.fallback.<repo>) before installing the new one, so a
+    // re-provision cleanly moves it over instead of leaving two agents.
+    if (await uninstallHostSchedulerAgent(legacyHostSchedulerLabel(repoFullName))) {
+      log.info(`${repoFullName}: migrated legacy fallback agent to host-scheduler`);
+    }
     const local = repoLocalTime(ctx, repoFullName);
-    const label = fallbackLabel(repoFullName);
-    const plist = renderFallbackPlist({
+    const label = hostSchedulerLabel(repoFullName);
+    const plist = renderHostSchedulerPlist({
       label,
       programArguments: [...invocation, repoFullName],
       local,
-      pathEnv: FALLBACK_PATH_ENV,
-      stdoutPath: fallbackLogPath(label),
-      stderrPath: fallbackLogPath(label),
+      pathEnv: HOST_SCHEDULER_PATH_ENV,
+      stdoutPath: hostSchedulerLogPath(label),
+      stderrPath: hostSchedulerLogPath(label),
     });
-    await installFallbackAgent({ label, plist });
+    await installHostSchedulerAgent({ label, plist });
     const when =
       role === "primary"
         ? "dispatches the night directly on schedule"
@@ -208,33 +217,44 @@ export async function fallbackInstallCommand(
       `${repoFullName}: host scheduler installed, fires daily at ${fmtLocalTime(local)} local ` +
         `(${when}); next ${nextFireTime(local).toLocaleString()}`,
     );
-    log.info(`  logs: ${fallbackLogPath(label)}`);
+    log.info(`  logs: ${hostSchedulerLogPath(label)}`);
   }
 }
 
-export async function fallbackUninstallCommand(
+export async function hostSchedulerUninstallCommand(
   ctx: CliContext,
   repoArg: string | undefined,
 ): Promise<void> {
   for (const repoFullName of targetRepos(ctx.config, repoArg)) {
-    const removed = await uninstallFallbackAgent(fallbackLabel(repoFullName));
+    const removed = await uninstallHostSchedulerAgent(hostSchedulerLabel(repoFullName));
+    // Also clean a pre-rename agent on a host that has not re-provisioned yet, so
+    // it is never stranded (its old-label agent would keep firing otherwise).
+    const removedLegacy = await uninstallHostSchedulerAgent(legacyHostSchedulerLabel(repoFullName));
     log.info(
-      removed
-        ? `${repoFullName}: fallback uninstalled`
-        : `${repoFullName}: no fallback was installed`,
+      removed || removedLegacy
+        ? `${repoFullName}: host scheduler uninstalled${removedLegacy ? " (including legacy agent)" : ""}`
+        : `${repoFullName}: no host scheduler was installed`,
     );
   }
 }
 
-export async function fallbackStatusCommand(
+export async function hostSchedulerStatusCommand(
   ctx: CliContext,
   repoArg: string | undefined,
 ): Promise<void> {
   for (const repoFullName of targetRepos(ctx.config, repoArg)) {
     log.info(`\n${repoFullName}`);
     const role = hostSchedulerRole(resolveRepoSettings(ctx.config, repoFullName).scheduleTrigger);
-    const label = fallbackLabel(repoFullName);
-    if (!isFallbackInstalled(label)) {
+    const label = hostSchedulerLabel(repoFullName);
+    // During the transition, a host provisioned before the rename still has the
+    // old-label agent; recognize it so status is not falsely "not installed".
+    const legacyLabel = legacyHostSchedulerLabel(repoFullName);
+    const activeLabel = isHostSchedulerInstalled(label)
+      ? label
+      : isHostSchedulerInstalled(legacyLabel)
+        ? legacyLabel
+        : undefined;
+    if (activeLabel === undefined) {
       log.info(
         role === "none"
           ? "  host scheduler: not installed (schedule_trigger: github-cron)"
@@ -242,13 +262,15 @@ export async function fallbackStatusCommand(
       );
       continue;
     }
-    const loaded = await isFallbackLoaded(label);
-    const local = readPlistLocalTime(label) ?? repoLocalTime(ctx, repoFullName);
+    const loaded = await isHostSchedulerLoaded(activeLabel);
+    const local = readPlistLocalTime(activeLabel) ?? repoLocalTime(ctx, repoFullName);
     const mode = role === "primary" ? "primary dispatch" : "cron fallback";
+    const legacyNote =
+      activeLabel === legacyLabel ? ", legacy agent - re-run `fixowl provision`" : "";
     log.info(
-      `  host scheduler: installed${loaded ? "" : " (not loaded)"} (${mode}), fires daily at ` +
+      `  host scheduler: installed${loaded ? "" : " (not loaded)"} (${mode}${legacyNote}), fires daily at ` +
         `${fmtLocalTime(local)} local; next ${nextFireTime(local).toLocaleString()}`,
     );
-    log.info(`  plist: ${fallbackPlistPath(label)}`);
+    log.info(`  plist: ${hostSchedulerPlistPath(activeLabel)}`);
   }
 }

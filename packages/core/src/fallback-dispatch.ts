@@ -1,5 +1,5 @@
 /**
- * Pure decision logic for the local fallback trigger (`fixowl fallback`) and the
+ * Pure decision logic for the host scheduler (`fixowl host-scheduler`) and the
  * scheduled-slot budget guard that pairs with it.
  *
  * GitHub's `schedule` cron is best-effort: it silently drops or delays runs. The

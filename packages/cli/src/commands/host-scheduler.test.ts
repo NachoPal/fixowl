@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ScheduleTrigger, WorkflowRunLite } from "@fixowl/core";
 import type { CliContext } from "../context.ts";
-import { fallbackCheckCommand, type FallbackCheckDeps } from "./fallback.ts";
+import * as launchd from "../runner/host-scheduler-launchd.ts";
+import {
+  hostSchedulerCheckCommand,
+  hostSchedulerInstallCommand,
+  type HostSchedulerCheckDeps,
+} from "./host-scheduler.ts";
 
 function makeCtx(scheduleTrigger?: ScheduleTrigger): CliContext {
   return {
@@ -30,7 +35,7 @@ function scheduleRunToday(): WorkflowRunLite {
   };
 }
 
-function stubDeps(overrides: Partial<FallbackCheckDeps> = {}): FallbackCheckDeps {
+function stubDeps(overrides: Partial<HostSchedulerCheckDeps> = {}): HostSchedulerCheckDeps {
   return {
     listRecentRuns: vi.fn(async () => []),
     getDefaultBranch: vi.fn(async () => "main"),
@@ -40,14 +45,14 @@ function stubDeps(overrides: Partial<FallbackCheckDeps> = {}): FallbackCheckDeps
   };
 }
 
-describe("fixowl fallback check", () => {
+describe("fixowl host-scheduler check", () => {
   afterEach(() => vi.restoreAllMocks());
 
   it("dispatches (tagged) when today's cron run is missing", async () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
     const deps = stubDeps({ listRecentRuns: vi.fn(async () => []) });
 
-    await fallbackCheckCommand(makeCtx(), "acme/widgets", deps);
+    await hostSchedulerCheckCommand(makeCtx(), "acme/widgets", deps);
 
     expect(deps.getDefaultBranch).toHaveBeenCalledTimes(1);
     expect(deps.dispatch).toHaveBeenCalledWith({ owner: "acme", repo: "widgets" }, "main");
@@ -57,7 +62,7 @@ describe("fixowl fallback check", () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
     const deps = stubDeps({ listRecentRuns: vi.fn(async () => [scheduleRunToday()]) });
 
-    await fallbackCheckCommand(makeCtx(), "acme/widgets", deps);
+    await hostSchedulerCheckCommand(makeCtx(), "acme/widgets", deps);
 
     expect(deps.dispatch).not.toHaveBeenCalled();
     expect(deps.getDefaultBranch).not.toHaveBeenCalled();
@@ -75,7 +80,7 @@ describe("fixowl fallback check", () => {
     };
     const deps = stubDeps({ listRecentRuns: vi.fn(async () => [manual]) });
 
-    await fallbackCheckCommand(makeCtx(), "acme/widgets", deps);
+    await hostSchedulerCheckCommand(makeCtx(), "acme/widgets", deps);
 
     expect(deps.dispatch).toHaveBeenCalledTimes(1);
   });
@@ -84,7 +89,7 @@ describe("fixowl fallback check", () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
     const deps = stubDeps({ listRecentRuns: vi.fn(async () => []) });
 
-    await fallbackCheckCommand(makeCtx("github-cron"), "acme/widgets", deps);
+    await hostSchedulerCheckCommand(makeCtx("github-cron"), "acme/widgets", deps);
 
     expect(deps.listRecentRuns).not.toHaveBeenCalled();
     expect(deps.dispatch).not.toHaveBeenCalled();
@@ -94,7 +99,7 @@ describe("fixowl fallback check", () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
     const deps = stubDeps({ listRecentRuns: vi.fn(async () => []) });
 
-    await fallbackCheckCommand(makeCtx("host-scheduler"), "acme/widgets", deps);
+    await hostSchedulerCheckCommand(makeCtx("host-scheduler"), "acme/widgets", deps);
 
     expect(deps.dispatch).toHaveBeenCalledWith({ owner: "acme", repo: "widgets" }, "main");
   });
@@ -111,8 +116,41 @@ describe("fixowl fallback check", () => {
     };
     const deps = stubDeps({ listRecentRuns: vi.fn(async () => [tagged]) });
 
-    await fallbackCheckCommand(makeCtx("host-scheduler"), "acme/widgets", deps);
+    await hostSchedulerCheckCommand(makeCtx("host-scheduler"), "acme/widgets", deps);
 
     expect(deps.dispatch).not.toHaveBeenCalled();
+  });
+});
+
+describe("fixowl host-scheduler install (legacy migration)", () => {
+  const realPlatform = process.platform;
+  afterEach(() => {
+    vi.restoreAllMocks();
+    Object.defineProperty(process, "platform", { value: realPlatform });
+  });
+
+  it("removes a pre-existing com.fixowl.fallback.<repo> agent before installing the new one", async () => {
+    // launchd install is macOS-only; pretend we are on it so the test is portable.
+    Object.defineProperty(process, "platform", { value: "darwin" });
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const install = vi
+      .spyOn(launchd, "installHostSchedulerAgent")
+      .mockImplementation(async () => {});
+    // Return true so the command reports it migrated a legacy agent.
+    const uninstall = vi
+      .spyOn(launchd, "uninstallHostSchedulerAgent")
+      .mockImplementation(async () => true);
+
+    await hostSchedulerInstallCommand(makeCtx(), "acme/widgets", undefined);
+
+    // The old-label agent is booted out/removed via uninstall before install,
+    // and the new agent is installed under the new label.
+    expect(uninstall).toHaveBeenCalledWith("com.fixowl.fallback.acme-widgets");
+    expect(install).toHaveBeenCalledTimes(1);
+    expect(install.mock.calls[0]?.[0]?.label).toBe("com.fixowl.host-scheduler.acme-widgets");
+    // Migration happened before the install.
+    expect(uninstall.mock.invocationCallOrder[0]).toBeLessThan(
+      install.mock.invocationCallOrder[0] ?? 0,
+    );
   });
 });

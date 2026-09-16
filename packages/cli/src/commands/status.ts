@@ -6,12 +6,13 @@ import { splitRepoFullName } from "../github/repo-provisioning.ts";
 import { findRunner, runnerNameFor } from "../github/runner-registration.ts";
 import { log } from "../log.ts";
 import {
-  fallbackLabel,
-  isFallbackInstalled,
-  isFallbackLoaded,
+  hostSchedulerLabel,
+  isHostSchedulerInstalled,
+  isHostSchedulerLoaded,
+  legacyHostSchedulerLabel,
   nextFireTime,
   readPlistLocalTime,
-} from "../runner/fallback-launchd.ts";
+} from "../runner/host-scheduler-launchd.ts";
 import { runnerDirFor } from "../runner/install.ts";
 import { svcStatus } from "../runner/launchd.ts";
 
@@ -28,15 +29,20 @@ export async function statusCommand(ctx: CliContext, repoArg: string | undefined
       log.info(`  service: ${await svcStatus(dir)} (${dir})`);
     }
 
-    // Local fallback trigger (opt-in). Report installed state and next fire.
-    const label = fallbackLabel(repoFullName);
-    if (!isFallbackInstalled(label)) {
-      log.info(`  fallback: not installed`);
+    // Local host scheduler (opt-in). Report installed state and next fire. A host
+    // provisioned before the rename still has the old-label agent; recognize it.
+    const label = isHostSchedulerInstalled(hostSchedulerLabel(repoFullName))
+      ? hostSchedulerLabel(repoFullName)
+      : isHostSchedulerInstalled(legacyHostSchedulerLabel(repoFullName))
+        ? legacyHostSchedulerLabel(repoFullName)
+        : undefined;
+    if (label === undefined) {
+      log.info(`  host scheduler: not installed`);
     } else {
       const local = readPlistLocalTime(label);
       const when = local !== undefined ? `; next ${nextFireTime(local).toLocaleString()}` : "";
       log.info(
-        `  fallback: installed${(await isFallbackLoaded(label)) ? "" : " (not loaded)"}${when}`,
+        `  host scheduler: installed${(await isHostSchedulerLoaded(label)) ? "" : " (not loaded)"}${when}`,
       );
     }
 

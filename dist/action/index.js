@@ -86012,7 +86012,7 @@ var globalConfigSchema = external_exports.object({
   runner: external_exports.object({
     dir: external_exports.string().min(1).optional()
   }).optional(),
-  /** The optional host-local fallback trigger (`fixowl fallback`). */
+  /** The host scheduler's cron-fallback tuning (`fixowl host-scheduler`, `both` mode). */
   fallback: external_exports.object({
     /** Minutes after each repo's cron to run the local backup check. */
     gap_minutes: external_exports.number().int().positive().optional()
@@ -86149,7 +86149,7 @@ var FIXOWL_DEFAULTS = {
    * Minutes after the cron the local fallback fires. Generous on purpose:
    * GitHub schedules also arrive late, and the check-then-dispatch logic makes
    * exact timing non-critical as long as the fallback is reliably after the cron
-   * window. See docs/local-fallback.md.
+   * window. See docs/host-scheduler.md.
    */
   fallbackGapMinutes: 30
 };

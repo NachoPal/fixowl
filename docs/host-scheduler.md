@@ -23,9 +23,9 @@ still need a `schedule:` cron time in config - it is the *when*; the mode decide
 
 - **`github-cron`** relies entirely on GitHub's cron. Simple, no host token
   needed, but the timing is unreliable - mainly worth it on a GitHub-hosted
-  runner. No host agent is installed, and `fixowl fallback install` / `check`
-  skip a `github-cron` repo (a host agent for it would dispatch unwanted nights,
-  [issue #81](https://github.com/NachoPal/fixowl/issues/81)).
+  runner. No host agent is installed, and `fixowl host-scheduler install` /
+  `check` skip a `github-cron` repo (a host agent for it would dispatch unwanted
+  nights, [issue #81](https://github.com/NachoPal/fixowl/issues/81)).
 - **`host-scheduler`** (recommended for self-hosted) renders a **dispatch-only**
   workflow (`workflow_dispatch` only, no cron) and lets the host launchd agent
   dispatch the night **directly on schedule** - reliable local timing with no
@@ -151,7 +151,7 @@ that local time land *before* the cron for half the year, defeating the point.
 
 fixowl schedules the agent at the local time of
 `cronUTC + gap + the zone's larger (summer) UTC offset`
-(`fallbackLocalTime`, `packages/cli/src/runner/fallback-launchd.ts`). Converted
+(`hostSchedulerLocalTime`, `packages/cli/src/runner/host-scheduler-launchd.ts`). Converted
 back to UTC at either seasonal offset, the fire always lands between `gap` and
 `gap + (DST swing)` after the cron - **never before it**, in any season. Because
 the "already ran?" decision keys on the [occurrence window](#the-occurrence-window)
@@ -180,23 +180,27 @@ re-run `fixowl provision` so the workflow's `on.schedule:` matches, then:
 # 2. Bring the workflow in line with the chosen mode (adds/removes the cron; the
 #    host agent needs the `source` input and the budget guard):
 fixowl provision
-# 3. Install the host agent(s). A `github-cron` repo is skipped automatically:
-fixowl fallback install            # all repos; or: fixowl fallback install owner/repo
+# 3. Install the host agent(s). A `github-cron` repo is skipped automatically.
+#    Installing also migrates a pre-rename agent (com.fixowl.fallback.<repo>):
+fixowl host-scheduler install            # all repos; or: fixowl host-scheduler install owner/repo
 
-fixowl fallback status             # installed? primary or fallback? next fire time?
-fixowl status                      # also shows the host-scheduler line per repo
-fixowl fallback check owner/repo   # run the check-then-dispatch now (what launchd runs)
-fixowl fallback uninstall          # remove the agent(s)
+fixowl host-scheduler status             # installed? primary or fallback? next fire time?
+fixowl status                            # also shows the host-scheduler line per repo
+fixowl host-scheduler check owner/repo   # run the check-then-dispatch now (what launchd runs)
+fixowl host-scheduler uninstall          # remove the agent(s)
 ```
 
+> `fixowl fallback …` still works as a hidden, deprecated alias for one release
+> (it prints a notice pointing at `fixowl host-scheduler`); prefer the new name.
+
 The agent logs each decision (fired vs skipped, with the reason) to
-`~/.fixowl/logs/com.fixowl.fallback.<owner>-<repo>.log`.
+`~/.fixowl/logs/com.fixowl.host-scheduler.<owner>-<repo>.log`.
 
 ## Platform support
 
 Implemented for **macOS (launchd)**, the current host. The decision logic and
 the check-then-dispatch command are platform-independent; only the scheduler is
 macOS-specific. On Linux, add a `cron` entry or a systemd timer that runs
-`fixowl fallback check <repo>` shortly after the cron - the same command the
-launchd agent invokes. `fixowl fallback install` refuses cleanly on non-macOS
-rather than pretending to work.
+`fixowl host-scheduler check <repo>` shortly after the cron - the same command
+the launchd agent invokes. `fixowl host-scheduler install` refuses cleanly on
+non-macOS rather than pretending to work.
