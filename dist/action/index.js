@@ -86149,7 +86149,7 @@ var FIXOWL_DEFAULTS = {
    * Minutes after the cron the local fallback fires. Generous on purpose:
    * GitHub schedules also arrive late, and the check-then-dispatch logic makes
    * exact timing non-critical as long as the fallback is reliably after the cron
-   * window. See docs/local-fallback.md.
+   * window. See docs/host-scheduler.md.
    */
   fallbackGapMinutes: 30
 };

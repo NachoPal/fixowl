@@ -1837,7 +1837,7 @@ FIXOWL_APP_PRIVATE_KEY=
 CLAUDE_CODE_OAUTH_TOKEN=
 # FIXOWL_APP_PRIVATE_KEY is the base64 of the downloaded App .pem, on ONE line
 # (base64 -i app.pem | tr -d '\\n'); see docs/app-auth.md.
-# FIXOWL_FALLBACK_TOKEN=   # optional; fine-grained PAT, Actions: write only (see docs/local-fallback.md)
+# FIXOWL_FALLBACK_TOKEN=   # optional; fine-grained PAT, Actions: write only (see docs/host-scheduler.md)
 `;
 
 function scaffoldOnly(configPath: string, secretsPath: string): void {
