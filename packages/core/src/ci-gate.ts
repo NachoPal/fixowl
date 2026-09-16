@@ -62,10 +62,12 @@ export function isFailureConclusion(conclusion: CheckStatusLite["conclusion"]): 
 }
 
 /**
- * The result of reading a ref's checks. `readable` is false only when the read
- * itself failed because the runtime credential cannot access the check-runs
- * API - an App installation missing "Checks: read" is refused with HTTP 403
- * (`fixowl validate` catches that before the night). An unreadable
+ * The result of reading a ref's checks. `readable` is false only when BOTH the
+ * check-runs API is inaccessible - an App installation missing "Checks: read"
+ * is refused with HTTP 403 (`fixowl validate` catches that before the night) -
+ * AND the legacy commit-statuses API has nothing to offer either; a check-runs
+ * 403 with at least one readable commit status still counts as readable, gated
+ * off that status alone (issue #84). An unreadable
  * result shares the unreadable-required-set fallback's *behaviour* - the poll
  * loop warns loudly that CI could not be verified and flips the draft PR to
  * ready after the settle window, rather than failing the issue (captain 7.2) -

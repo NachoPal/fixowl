@@ -207,8 +207,8 @@ export function makeGitHubApi(
           if (isNotAccessibleError(error)) return undefined;
           throw error;
         });
-      if (runs === undefined) return { readable: false, checks: [] };
-      for (const checkRun of runs) {
+      const checkRunsReadable = runs !== undefined;
+      for (const checkRun of runs ?? []) {
         byName.set(checkRun.name, {
           name: checkRun.name,
           status:
@@ -219,8 +219,14 @@ export function makeGitHubApi(
         });
       }
       // Legacy commit statuses only fill contexts not already covered by a check run.
+      // getCombinedStatusForRef is not paginated here (it returns at most the
+      // most-recent 30 statuses per context) - fine in practice since we only
+      // care about the latest state per context, but worth noting if a ref ever
+      // legitimately carries more than 30 distinct status contexts.
+      let hasStatuses = false;
       try {
         const { data } = await octokit.repos.getCombinedStatusForRef({ owner, repo, ref: sha });
+        hasStatuses = data.statuses.length > 0;
         for (const status of data.statuses) {
           if (byName.has(status.context)) continue;
           byName.set(status.context, {
@@ -237,8 +243,13 @@ export function makeGitHubApi(
           });
         }
       } catch {
-        // combined status is best-effort; check runs alone are enough to gate
+        // combined status is best-effort: unreadable here just means this
+        // source contributes nothing (mirrors getRequiredChecks above).
       }
+      // Unreadable only when check runs 403'd AND there is no commit status to
+      // fall back on; a check-runs 403 with at least one commit status still
+      // gates correctly off that status alone (issue #84).
+      if (!checkRunsReadable && !hasStatuses) return { readable: false, checks: [] };
       return { readable: true, checks: [...byName.values()] };
     },
     async getFailedCheckLogs(check): Promise<string | undefined> {
