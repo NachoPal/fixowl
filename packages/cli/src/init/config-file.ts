@@ -292,9 +292,9 @@ ${cronLine("  ", base)}
 ${scheduleTriggerLine("  ", base.scheduleTrigger)}${runnerModeBlock}
   labels: ${labelRule(base.labels)}
   agent: ${answers.agent}
-  # Layered run-budget (issue #21): the night stops on the first condition that
-  # trips. Each is optional; delete a line to opt that axis out.
-  max_issues_per_run: ${base.maxIssuesPerRun}   # secondary cap: at most this many PRs ship
+  # Selection cap + layered run-budget (issue #21): the night stops on the first
+  # condition that trips. Each budget is optional; delete a line to opt that axis out.
+  max_issues_per_run: ${base.maxIssuesPerRun}   # selection cap: at most this many issues are worked per run
 ${budgetLine("usage_budget_percent", base.usageBudgetPercent, FIXOWL_DEFAULTS.usageBudgetPercent, "subscription agents: stop before a new issue once the usage window hits this %")}
 ${budgetLine("total_token_budget", base.totalTokenBudget, FIXOWL_DEFAULTS.totalTokenBudget, "API-credit agents: stop before a new issue once total token spend hits this")}
 ${budgetLine("run_budget_minutes", base.runBudgetMinutes, FIXOWL_DEFAULTS.runBudgetMinutes, "graceful wall-clock: don't start a new issue after this many minutes")}

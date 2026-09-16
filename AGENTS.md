@@ -349,8 +349,10 @@ See [docs/releasing.md](docs/releasing.md).
   `usage_budget_percent`, `total_token_budget`, and `run_budget_minutes`
   have no built-in resolution fallback (unset == opted out), so a pre-#21 config
   is unchanged; the starter values in `FIXOWL_DEFAULTS` are only what `fixowl
-  init` writes. `max_issues_per_run` stays the count cap and still bounds how many
-  issues are selected/classified. NOTE (open verification): `parseCodexUsage`
+  init` writes. `max_issues_per_run` is NOT a stop condition (issue #82: a
+  `shipped >= cap` gate could never trip, since selection has already sliced the
+  set to the cap); it is the SELECTION cap, enforced once where the candidate set
+  is sliced, and still bounds how many issues are selected/classified. NOTE (open verification): `parseCodexUsage`
   was built to the documented `codex exec --json` output shape; a live codex
   transcript was not captured, so the parser abstains defensively on any
   unexpected shape - confirm the exact envelope against a real run before relying

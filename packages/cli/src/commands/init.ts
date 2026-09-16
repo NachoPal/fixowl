@@ -967,7 +967,7 @@ Step 3/4  Repositories
 For each repo: which one, when the nightly run fires, which labels mark an
 issue as fixowl's, the run budgets that stop the night (a spend cap - usage %
 for subscription agents or a token total for API-credit agents - plus
-wall-clock and an optional issue-count cap), the per-issue timeout, the
+wall-clock), the per-run issue cap, the per-issue timeout, the
 CI-gated fix loop budget, and which model the coding agent runs with.`);
 
   const repos: RepoAnswers[] = [];
@@ -1158,13 +1158,10 @@ export async function promptRepoSettings(
           : "enter a positive whole number of minutes, or leave blank",
     },
   );
-  const maxIssuesAnswer = await prompter.ask(
-    "  Optional hard cap - max issues per night (secondary count cap)",
-    {
-      default: String(prefill.maxIssuesPerRun),
-      validate: (value) => (/^[1-9]\d*$/.test(value) ? undefined : "enter a positive whole number"),
-    },
-  );
+  const maxIssuesAnswer = await prompter.ask("  Max issues worked per night (selection cap)", {
+    default: String(prefill.maxIssuesPerRun),
+    validate: (value) => (/^[1-9]\d*$/.test(value) ? undefined : "enter a positive whole number"),
+  });
   const issueTimeoutAnswer = await prompter.ask(
     "  Per-issue timeout in minutes (a stuck agent is killed after this)",
     {
@@ -1803,9 +1800,9 @@ defaults:
                                 #   this machine; pair with schedule_trigger: github-cron). Default: self-hosted.
   labels: { any: [overnight] }
   agent: claude
-  # Layered run-budget (issue #21): the night stops on the first condition that
-  # trips. Each is optional; delete/omit a line to opt that axis out.
-  max_issues_per_run: 4        # secondary cap: at most this many PRs ship
+  # Selection cap + layered run-budget (issue #21): the night stops on the first
+  # condition that trips. Each budget is optional; delete/omit a line to opt that axis out.
+  max_issues_per_run: 4        # selection cap: at most this many issues are worked per run
   # usage_budget_percent: 85       # subscription agents: stop once the usage window hits this %
   # total_token_budget: 3000000    # API-credit agents (codex, or claude on an API key): stop once total token spend hits this
   # run_budget_minutes: 240        # graceful wall-clock: don't start a new issue after this long
