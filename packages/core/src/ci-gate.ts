@@ -86,12 +86,24 @@ export interface GatingChecks {
 }
 
 /**
+ * `readable` is documented to imply a non-empty `contexts` (the edge only sets
+ * it when at least one context was found - packages/action/src/github-api.ts).
+ * A test fake or future caller can still construct `{ readable: true, contexts:
+ * [] }`; treating it as "readable" would gate on zero named contexts and settle
+ * vacuously green with no settle window. Instead this collapses that shape to
+ * the same "fall back to every check" treatment as unreadable.
+ */
+function hasReadableContexts(required: RequiredChecks): boolean {
+  return required.readable && required.contexts.length > 0;
+}
+
+/**
  * Which checks gate readiness. When the required set is readable, gate strictly
  * on the checks whose name matches a required context; otherwise fall back to
  * every check on the ref (captain 7.2).
  */
 export function gatingChecks(all: CheckStatusLite[], required: RequiredChecks): GatingChecks {
-  if (required.readable) {
+  if (hasReadableContexts(required)) {
     const wanted = new Set(required.contexts);
     return { checks: all.filter((check) => wanted.has(check.name)), usedFallback: false };
   }
@@ -117,7 +129,7 @@ export type GateDecision = "green" | "failed" | "pending";
  * reports the vacuous result.
  */
 export function evaluateGate(gating: GatingChecks, required: RequiredChecks): GateDecision {
-  if (required.readable) {
+  if (hasReadableContexts(required)) {
     const present = new Map(gating.checks.map((check) => [check.name, check]));
     const matched = required.contexts.map((context) => present.get(context));
     if (matched.some((check) => check === undefined || check.status !== "completed")) {
@@ -149,7 +161,7 @@ export function evaluateGate(gating: GatingChecks, required: RequiredChecks): Ga
  * matched check is still running (real progress is being made).
  */
 export function requiredContextsStalled(gating: GatingChecks, required: RequiredChecks): boolean {
-  if (!required.readable) return false;
+  if (!hasReadableContexts(required)) return false;
   const present = new Map(gating.checks.map((check) => [check.name, check]));
   const matched = required.contexts.map((context) => present.get(context));
   const anyMissing = matched.some((check) => check === undefined);
