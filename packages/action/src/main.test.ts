@@ -117,6 +117,7 @@ function makeEngine(options: {
   failCheck?: boolean;
   classifyOutput?: string;
 }): FakeEngine {
+  const passesByIssue = new Map<number, number>();
   return new FakeEngine((spec): ExecResult | undefined => {
     if (spec.name.includes("-classify-")) {
       return ok(options.classifyOutput ?? "");
@@ -127,9 +128,14 @@ function makeEngine(options: {
         return { code: 1, stdout: "", stderr: "agent exploded", timedOut: false };
       }
       if (!options.silentAgentFor?.includes(issueNumber)) {
+        // A distinct write per pass, so a retried attempt is a genuine diff over
+        // the last push (as a real agent acting on fresh feedback would produce)
+        // rather than a no-op the CI-gated loop now short-circuits on.
+        const pass = (passesByIssue.get(issueNumber) ?? 0) + 1;
+        passesByIssue.set(issueNumber, pass);
         writeFileSync(
           join(options.workspaceDir, `fix-${issueNumber}.txt`),
-          `fixed ${issueNumber}\n`,
+          `fixed ${issueNumber} (pass ${pass})\n`,
         );
       }
       return ok("done");
@@ -1623,6 +1629,82 @@ describe("runNight", () => {
       expect(body).toContain("CI could not be verified");
       expect(body).not.toContain("All completed checks passed");
       expect(body).not.toContain("required checks are green");
+    });
+
+    it("keeps the earlier CI failure context when a later attempt fails the local pre-check", async () => {
+      const { workspaceDir, tempDir, inputs } = await setup();
+      const github = new FakeGitHub([issue(1, "Fix header", "x")]);
+      github.requiredChecks = { readable: true, contexts: ["ci"] };
+      github.checksForRef = () => [
+        { name: "ci", status: "completed", conclusion: "failure", summary: "bundle is stale" },
+      ];
+      github.failedLogs = () => "dist/ is stale; run pnpm build";
+      let agentCalls = 0;
+      const engine = new FakeEngine((spec): ExecResult | undefined => {
+        if (issueNumberOfAgentRun(spec) === 1) {
+          agentCalls++;
+          writeFileSync(join(workspaceDir, "fix-1.txt"), `pass ${agentCalls}\n`);
+          return ok("done");
+        }
+        // Local verification passes on attempt 1 (so it pushes and hits red CI),
+        // then fails on attempt 2's pre-check.
+        return agentCalls === 2
+          ? { code: 1, stdout: "", stderr: "lint failed", timedOut: false }
+          : ok();
+      });
+
+      await runNight(
+        { github, engine, exec: realExec, log: silentLog, clock: instantClock() },
+        { ...inputs, ciMaxTries: 3 },
+      );
+
+      // Attempt 3's prompt (the last one written) carries BOTH the earlier CI
+      // failure and attempt 2's local pre-check failure, not just the latter.
+      const prompt = readFileSync(join(tempDir, "fixowl-prompts", "issue-1.md"), "utf8");
+      expect(prompt).toContain("dist/ is stale");
+      expect(prompt).toContain("lint failed");
+      expect(agentCalls).toBe(3);
+    });
+
+    it("stops early when a later agent pass makes no further changes since the last push", async () => {
+      const { workspaceDir, inputs } = await setup();
+      const github = new FakeGitHub([issue(1, "Fix header", "x")]);
+      github.requiredChecks = { readable: true, contexts: ["ci"] };
+      let ciCalls = 0;
+      github.checksForRef = () => {
+        ciCalls++;
+        return [
+          { name: "ci", status: "completed", conclusion: "failure", summary: "still failing" },
+        ];
+      };
+      let agentCalls = 0;
+      const engine = new FakeEngine((spec): ExecResult | undefined => {
+        if (issueNumberOfAgentRun(spec) === 1) {
+          agentCalls++;
+          // Only the first pass produces a change; later passes reproduce the
+          // same tree (the agent judged its own prior fix already correct).
+          if (agentCalls === 1) {
+            writeFileSync(join(workspaceDir, "fix-1.txt"), "fixed 1\n");
+          }
+          return ok("done");
+        }
+        return ok();
+      });
+
+      const summary = await runNight(
+        { github, engine, exec: realExec, log: silentLog, clock: instantClock() },
+        { ...inputs, ciMaxTries: 3 },
+      );
+
+      expect(summary.results[0]?.status).toBe("pr-opened");
+      expect(summary.results[0]?.draft).toBe(true);
+      // CI is consulted only once: the second pass produced no diff over the last
+      // push, so the loop stops instead of re-pushing and re-polling the same SHA.
+      expect(ciCalls).toBe(1);
+      // The agent still ran twice: the no-op is only detected after the pass runs.
+      expect(agentCalls).toBe(2);
+      expect(github.pulls).toHaveLength(1);
+      expect(github.pulls[0]?.body).toContain("still red");
     });
 
     it("gates only on required checks; a failing non-required check does not block", async () => {
