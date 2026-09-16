@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   CONTAINER_NAME_MAX_LENGTH,
+  CONTAINER_REPO_SLUG_MAX_LENGTH,
   containerName,
   containerNamePrefix,
   parseContainerName,
@@ -20,6 +21,25 @@ describe("containerName", () => {
     expect(containerName("a/one", 7, "agent")).not.toBe(containerName("a/two", 7, "agent"));
   });
 
+  it("budgets the repo slug so a long repo never eats the issue and purpose", () => {
+    const longRepo = "very-long-engineering-org/the-extremely-verbose-service-name";
+    expect(longRepo.length).toBeGreaterThanOrEqual(52); // a 52+ char slug
+    const agent = containerName(longRepo, 4321, "agent");
+    const check = containerName(longRepo, 4321, "check-lint");
+    expect(agent.length).toBeLessThanOrEqual(CONTAINER_NAME_MAX_LENGTH);
+    expect(agent).toContain("-4321-agent");
+    expect(check).toContain("-4321-check-lint");
+    expect(agent).not.toBe(check);
+    expect(containerName(longRepo, 99, "agent")).not.toBe(agent);
+  });
+
+  it("keeps long repo slugs distinct even when they share a head", () => {
+    const head = "very-long-engineering-org/the-extremely-verbose-service";
+    expect(containerName(`${head}-one`, 7, "agent")).not.toBe(
+      containerName(`${head}-two`, 7, "agent"),
+    );
+  });
+
   it("clips to docker's 63-char name limit", () => {
     const longRepo = "acme/widget-service";
     const name = containerName(longRepo, 12345, "check-a-very-descriptive-verification-step-here");
@@ -28,6 +48,16 @@ describe("containerName", () => {
 });
 
 describe("containerNamePrefix", () => {
+  it("stays within the slug budget and prefixes long repos' names (fixowl watch)", () => {
+    const longRepo = "very-long-engineering-org/the-extremely-verbose-service-name";
+    const prefix = containerNamePrefix(longRepo);
+    expect(prefix.length).toBeLessThanOrEqual(CONTAINER_REPO_SLUG_MAX_LENGTH + "fixowl--".length);
+    for (const purpose of ["agent", "check-lint"]) {
+      expect(containerName(longRepo, 4321, purpose).startsWith(prefix)).toBe(true);
+    }
+    expect(containerName(longRepo, "classify", "claude").startsWith(prefix)).toBe(true);
+  });
+
   it("is the shared discovery prefix and is itself a prefix of the full name", () => {
     const prefix = containerNamePrefix("Acme/Web.App");
     expect(prefix).toBe("fixowl-acme-web-app-");
@@ -70,6 +100,15 @@ describe("parseContainerName", () => {
 
   it("returns undefined when the name is not a fixowl container", () => {
     expect(parseContainerName("some-other-container", "a/one")).toBeUndefined();
+  });
+
+  it("reads back the issue and purpose for a long repo slug", () => {
+    const longRepo = "very-long-engineering-org/the-extremely-verbose-service-name";
+    expect(parseContainerName(containerName(longRepo, 4321, "check-lint"), longRepo)).toEqual({
+      issue: 4321,
+      purpose: "check-lint",
+      truncated: false,
+    });
   });
 
   it("still yields the issue number when the 63-char cap truncated the purpose", () => {
