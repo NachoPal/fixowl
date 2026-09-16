@@ -85662,17 +85662,6 @@ function getSpendMeter(agentName) {
 // packages/core/src/run-budget.ts
 function buildStopConditions(limits) {
   const conditions = [];
-  if (limits.maxIssues !== void 0) {
-    const cap = limits.maxIssues;
-    conditions.push({
-      name: "count",
-      evaluate: (state3) => state3.shipped >= cap ? {
-        stop: true,
-        condition: "count",
-        reason: `count budget reached: ${state3.shipped} issue(s) shipped (cap ${cap})`
-      } : { stop: false }
-    });
-  }
   if (limits.usagePercent !== void 0) {
     const budget = limits.usagePercent;
     conditions.push({
@@ -85917,11 +85906,15 @@ var repoEntrySchema = external_exports.object({
   labels: labelRuleSchema.optional(),
   agent: external_exports.string().optional(),
   /**
-   * Run-budget stop conditions (issue #21), each optional. The night stops on
-   * the first that trips; leaving one unset opts that axis out.
-   * `max_issues_per_run` is the kept secondary count cap.
+   * The per-run SELECTION cap (issue #82): at most this many issues are picked
+   * to work tonight. Not one of the run-budget stop conditions below - it is
+   * applied once, where the candidate set is sliced.
    */
   max_issues_per_run: external_exports.number().int().positive().optional(),
+  /**
+   * Run-budget stop conditions (issue #21), each optional. The night stops on
+   * the first that trips; leaving one unset opts that axis out.
+   */
   /** Stop before starting a new issue once the agent's usage window hits this % (0..100). */
   usage_budget_percent: external_exports.number().min(0).max(100).optional(),
   /**
@@ -127361,7 +127354,6 @@ async function runNightWithGit(deps, inputs, git) {
   const agentEnv = resolveAgentEnv(adapter.env, inputs.env, warnings);
   const runStart = Date.now();
   const budgetLimits = {
-    maxIssues: inputs.maxIssues,
     usagePercent: inputs.usageBudgetPercent,
     totalTokens: inputs.totalTokenBudget,
     runMinutes: inputs.runBudgetMinutes
@@ -127373,7 +127365,7 @@ async function runNightWithGit(deps, inputs, git) {
   let tokensUsed = 0;
   let tokensMeasured = false;
   let tokensWarned = false;
-  const assembleBudgetState = async (shipped2) => {
+  const assembleBudgetState = async () => {
     let usage;
     if (inputs.usageBudgetPercent !== void 0 && usageBudgetObservable && deps.httpJson !== void 0) {
       usage = await usageReader.read({ env: agentEnv, fetchJson: deps.httpJson });
@@ -127385,7 +127377,7 @@ async function runNightWithGit(deps, inputs, git) {
       }
     }
     const tokens = inputs.totalTokenBudget !== void 0 && tokensMeasured ? tokensUsed : void 0;
-    return { shipped: shipped2, elapsedMs: Date.now() - runStart, usage, tokensUsed: tokens };
+    return { elapsedMs: Date.now() - runStart, usage, tokensUsed: tokens };
   };
   const skipAlreadyFixed = inputs.skipAlreadyFixed ?? FIXOWL_DEFAULTS.skipAlreadyFixed;
   const skipDuplicates = inputs.skipDuplicates ?? FIXOWL_DEFAULTS.skipDuplicates;
@@ -127465,7 +127457,7 @@ async function runNightWithGit(deps, inputs, git) {
     log3.info("nothing to do tonight");
     return { results: [], skipped, triaged, deferred: [], warnings };
   }
-  const preRunVerdict = evaluateBudget(stopConditions, await assembleBudgetState(0));
+  const preRunVerdict = evaluateBudget(stopConditions, await assembleBudgetState());
   if (preRunVerdict.stop) {
     log3.info(`\u{1F989} fixowl: standing down before starting any issue - ${preRunVerdict.reason}`);
     return {
@@ -127532,7 +127524,7 @@ async function runNightWithGit(deps, inputs, git) {
     let stackedOn;
     for (const issue3 of chain) {
       if (budgetStop === void 0) {
-        const verdict = evaluateBudget(stopConditions, await assembleBudgetState(shipped.size));
+        const verdict = evaluateBudget(stopConditions, await assembleBudgetState());
         if (verdict.stop) {
           budgetStop = { condition: verdict.condition, reason: verdict.reason };
           log3.info(`\u{1F989} fixowl: stopping the run - ${verdict.reason}`);

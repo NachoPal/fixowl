@@ -49,9 +49,9 @@ and share with a team.
 - **One PR per issue.** Each issue becomes its own isolated, reviewable branch
   and PR, with dependent work stacked in the right order. You review and merge
   each in the morning instead of untangling one giant overnight diff.
-- **Bounded cost.** Run budgets - issue count, token budget, and wall-clock -
-  cap what a run can spend, so an unattended night cannot blow through your API
-  credits or usage window.
+- **Bounded cost.** A per-run issue cap, plus run budgets - usage %, token
+  budget, and wall-clock - cap what a run can spend, so an unattended night
+  cannot blow through your API credits or usage window.
 - **No wasted spend re-solving done work.** A triage gate skips issues GitHub
   already records as fixed (a closing-keyword-linked merged PR) or as duplicates
   before spending an agent on them, and has the agent verify against the current
@@ -249,7 +249,7 @@ defaults:
                                           #   default self-hosted. Nothing runs on your machine.
   labels: { any: [overnight] }            # any/all combinations supported
   agent: claude
-  max_issues_per_run: 4                   # run budget: at most this many PRs ship
+  max_issues_per_run: 4                   # selection cap: at most this many issues are worked per run
   # usage_budget_percent: 85              # run budget (subscription agents): stop at this % of the usage window
   # total_token_budget: 3000000           # run budget (API-credit agents): stop once total token spend hits this
   # run_budget_minutes: 240               # run budget: don't start a new issue after this long
@@ -354,14 +354,17 @@ the catalog).
 
 ### Run budgets
 
-A night is bounded by a small set of **independent, each-optional stop
-conditions**, evaluated at two gates - once before starting (pre-run) and again
-before each issue (between-issues). The run stops on the **first** condition
-that trips, and the night summary names which:
+A night is bounded first by `max_issues_per_run` - a **selection cap**: fixowl
+picks at most this many issues to work tonight (the rest wait for the next run),
+so it bounds the night whatever the agent is and whether or not its usage is
+observable. Defaults to 4. It is not a stop condition: the cap is applied once,
+where the candidate set is sliced.
 
-- **`max_issues_per_run`** - a count cap: at most this many PRs ship in one run.
-  The secondary cap, and the only budget that works for agents whose usage is
-  not observable. Defaults to 4.
+On top of it, a night is bounded by a small set of **independent, each-optional
+stop conditions**, evaluated at two gates - once before starting (pre-run) and
+again before each issue (between-issues). The run stops on the **first**
+condition that trips, and the night summary names which:
+
 - **`usage_budget_percent`** - for **subscription-billed** agents (`claude`):
   stop before starting a new issue once the agent's rolling usage window is at or
   above this percent. Read out-of-band on the host from the provider (for
@@ -388,13 +391,13 @@ that trips, and the night summary names which:
   > claude's per-run usage needs `claude -p --output-format json`, and that JSON
   > wrapper breaks the plain-text verdict the verify-before-fix triage parses from
   > claude's fix output, so the claude meter abstains fail-open (a documented
-  > follow-up). Such a run is still bounded by count and wall-clock.
+  > follow-up). Such a run is still bounded by the selection cap and wall-clock.
 - **`run_budget_minutes`** - a graceful wall-clock cap: don't *start* a new issue
   after this many minutes. Distinct from the workflow's blunt `timeout-minutes`
   hard-kill ceiling. Opted out when unset.
 
 Each is set in `defaults` and overridable per repo; leave one unset (or delete
-its line) to opt that axis out. `fixowl init` prompts for the spend cap that fits
+its line) to opt that axis out (`max_issues_per_run` always applies). `fixowl init` prompts for the spend cap that fits
 the chosen agent's billing (usage % for subscription, token total for
 API-credit) plus wall-clock, count, and the per-issue timeout. The pure gate
 logic lives in `packages/core/src/run-budget.ts`; the out-of-band usage read is

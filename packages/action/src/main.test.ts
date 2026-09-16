@@ -927,6 +927,12 @@ describe("runNight", () => {
     );
     expect(summary.results.map((r) => r.issue.number)).toEqual([1, 2]);
     expect(github.pulls).toHaveLength(2);
+    // The cap is a SELECTION cap, not a run-budget stop condition (issue #82):
+    // the third issue is never selected, so the night is a normal full run - no
+    // budget stop, no not-started list, and no "stopped early" summary section.
+    expect(summary.budgetStop).toBeUndefined();
+    expect(summary.notStarted).toBeUndefined();
+    expect(renderSummary("test/repo", summary)).not.toContain("## Run stopped early");
   });
 
   it("the agent container gets only allowlisted env and the workspace mount", async () => {
