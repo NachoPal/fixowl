@@ -1,11 +1,11 @@
 import { Command } from "commander";
 import { editCommand } from "./commands/edit.ts";
 import {
-  fallbackCheckCommand,
-  fallbackInstallCommand,
-  fallbackStatusCommand,
-  fallbackUninstallCommand,
-} from "./commands/fallback.ts";
+  hostSchedulerCheckCommand,
+  hostSchedulerInstallCommand,
+  hostSchedulerStatusCommand,
+  hostSchedulerUninstallCommand,
+} from "./commands/host-scheduler.ts";
 import { initCommand } from "./commands/init.ts";
 import { logsCommand } from "./commands/logs.ts";
 import { provisionCommand } from "./commands/provision.ts";
@@ -17,6 +17,7 @@ import { validateCommand } from "./commands/validate.ts";
 import { watchCommand } from "./commands/watch.ts";
 import { makeContext } from "./context.ts";
 import { parseActionVersionFlag } from "./github/action-version.ts";
+import { log } from "./log.ts";
 import { createPrompter } from "./prompt.ts";
 import { version } from "./version.ts";
 
@@ -144,39 +145,63 @@ export function createProgram(): Command {
       await runCommand(makeContext(configPath()), repo);
     });
 
-  const fallback = program
-    .command("fallback")
+  // The local scheduler command group. Registered on both the canonical
+  // `host-scheduler` name and a hidden, deprecated `fallback` alias that warns
+  // and points at the new name (kept one release for existing muscle memory and
+  // launchd agents that still invoke `fixowl fallback check`).
+  const addHostSchedulerCommands = (parent: Command, deprecated: boolean): void => {
+    const warn = (): void => {
+      if (deprecated) {
+        log.warn("`fixowl fallback` is deprecated; use `fixowl host-scheduler` instead");
+      }
+    };
+
+    parent
+      .command("install [repo]")
+      .description(
+        "install the launchd agent(s) that trigger the night on this host (macOS); migrates a pre-rename agent",
+      )
+      .action(async (repo: string | undefined) => {
+        warn();
+        await hostSchedulerInstallCommand(makeContext(configPath()), repo, configPath());
+      });
+
+    parent
+      .command("uninstall [repo]")
+      .description("remove the host scheduler launchd agent(s) from this host")
+      .action(async (repo: string | undefined) => {
+        warn();
+        await hostSchedulerUninstallCommand(makeContext(configPath()), repo);
+      });
+
+    parent
+      .command("status [repo]")
+      .description("show whether the host scheduler is installed and its next fire time")
+      .action(async (repo: string | undefined) => {
+        warn();
+        await hostSchedulerStatusCommand(makeContext(configPath()), repo);
+      });
+
+    parent
+      .command("check [repo]")
+      .description("run the check-then-dispatch now (what the launchd agent invokes)")
+      .action(async (repo: string | undefined) => {
+        warn();
+        await hostSchedulerCheckCommand(makeContext(configPath()), repo);
+      });
+  };
+
+  const hostScheduler = program
+    .command("host-scheduler")
     .description(
-      "opt-in local backup for GitHub's unreliable cron: dispatches the night run only if the cron missed",
+      "local scheduler that triggers the night on this host: primary dispatch, or a backup for GitHub's unreliable cron",
     );
+  addHostSchedulerCommands(hostScheduler, false);
 
-  fallback
-    .command("install [repo]")
-    .description("install the launchd agent(s) that back up the cron on this host (macOS)")
-    .action(async (repo: string | undefined) => {
-      await fallbackInstallCommand(makeContext(configPath()), repo, configPath());
-    });
-
-  fallback
-    .command("uninstall [repo]")
-    .description("remove the fallback launchd agent(s) from this host")
-    .action(async (repo: string | undefined) => {
-      await fallbackUninstallCommand(makeContext(configPath()), repo);
-    });
-
-  fallback
-    .command("status [repo]")
-    .description("show whether the fallback is installed and its next fire time")
-    .action(async (repo: string | undefined) => {
-      await fallbackStatusCommand(makeContext(configPath()), repo);
-    });
-
-  fallback
-    .command("check [repo]")
-    .description("run the check-then-dispatch now (what the launchd agent invokes)")
-    .action(async (repo: string | undefined) => {
-      await fallbackCheckCommand(makeContext(configPath()), repo);
-    });
+  const fallbackAlias = program
+    .command("fallback", { hidden: true })
+    .description("deprecated alias for `host-scheduler`");
+  addHostSchedulerCommands(fallbackAlias, true);
 
   program
     .command("logs <repo>")

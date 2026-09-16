@@ -59,7 +59,7 @@ import {
 import { log } from "../log.ts";
 import { createPrompter, maskSecret, type Prompter } from "../prompt.ts";
 import { runnerPlatformSupported } from "../runner/install.ts";
-import { fallbackInstallCommand } from "./fallback.ts";
+import { hostSchedulerInstallCommand } from "./host-scheduler.ts";
 import { provisionCommand, type ProvisionResult } from "./provision.ts";
 import { startCommand } from "./start.ts";
 import { fetchJson, validateCommand } from "./validate.ts";
@@ -240,7 +240,7 @@ every answer is stored in ${dirname(configPath)}.`);
   chmodSync(secretsPath, 0o600);
   log.ok(`wrote ${secretsPath} (mode 600)`);
 
-  await validateAndProvision(prompter, configPath, { installFallback: wantFallback });
+  await validateAndProvision(prompter, configPath, { installHostScheduler: wantFallback });
 }
 
 // ---------------------------------------------------------------------------
@@ -273,7 +273,7 @@ can still revoke or downgrade the admin token after provisioning.
 Mint it at ${PAT_URL}`);
   if (!(await prompter.confirm("\nSet up the host scheduler token now?", true))) {
     log.info(
-      "Skipped. The host scheduler will not run until you add FIXOWL_FALLBACK_TOKEN and run: fixowl fallback install",
+      "Skipped. The host scheduler will not run until you add FIXOWL_FALLBACK_TOKEN and run: fixowl host-scheduler install",
     );
     return false;
   }
@@ -1644,7 +1644,7 @@ export function renderActionsNeeded(result: ProvisionResult): ActionsNeeded {
 async function validateAndProvision(
   prompter: Prompter,
   configPath: string,
-  options: { installFallback?: boolean } = {},
+  options: { installHostScheduler?: boolean } = {},
 ): Promise<void> {
   log.info(`
 Step 4/4  Validate and provision
@@ -1731,16 +1731,16 @@ Fix that and re-run:
     log.info("\nSkipped. Start it whenever you like with: fixowl start");
   }
 
-  if (options.installFallback === true) {
-    log.info("\n$ fixowl fallback install");
+  if (options.installHostScheduler === true) {
+    log.info("\n$ fixowl host-scheduler install");
     if (process.platform !== "darwin") {
       log.warn(
         "the host scheduler is macOS-only for now; on Linux add a cron/systemd-timer\n" +
-          "  that runs `fixowl fallback check` on schedule.",
+          "  that runs `fixowl host-scheduler check` on schedule.",
       );
     } else {
       try {
-        await fallbackInstallCommand(
+        await hostSchedulerInstallCommand(
           ctx,
           undefined,
           configPath === CONFIG_PATH ? undefined : configPath,
@@ -1748,7 +1748,7 @@ Fix that and re-run:
       } catch (error) {
         log.error(describeError(error));
         log.info(
-          "\nThe host scheduler did not install. Fix the problem above and re-run: fixowl fallback install",
+          "\nThe host scheduler did not install. Fix the problem above and re-run: fixowl host-scheduler install",
         );
         process.exitCode = 1;
         return;
@@ -1767,8 +1767,8 @@ Fix that and re-run:
   fixowl status              # runner, last run, open fixowl PRs
   fixowl run owner/repo      # do not wait for the cron; run a night now
   fixowl logs owner/repo     # what happened last night${
-    options.installFallback === true
-      ? "\n  fixowl fallback status     # host scheduler: installed? mode? next fire?"
+    options.installHostScheduler === true
+      ? "\n  fixowl host-scheduler status  # host scheduler: installed? mode? next fire?"
       : ""
   }`);
 }
@@ -1886,7 +1886,7 @@ Next steps (or re-run \`fixowl init\` on a terminal for the guided setup):
      (cron + host fallback). For host-scheduler or both, mint a SECOND
      fine-grained PAT with ONLY Actions: write on your repos, put it in
      ${secretsPath} as FIXOWL_FALLBACK_TOKEN, uncomment github.fallback_token in
-     the config, then run \`fixowl fallback install\` (macOS). See docs/local-fallback.md.`);
+     the config, then run \`fixowl host-scheduler install\` (macOS). See docs/host-scheduler.md.`);
 }
 
 // ---------------------------------------------------------------------------

@@ -6,10 +6,11 @@ import { statusCommand } from "./status.ts";
 // degradation logic, not launchd state. The runner dir does not exist, so the
 // service is reported "not installed" and svcStatus is never reached.
 vi.mock("../runner/launchd.ts", () => ({ svcStatus: async () => "running" }));
-vi.mock("../runner/fallback-launchd.ts", () => ({
-  fallbackLabel: () => "com.fixowl.acme-widgets",
-  isFallbackInstalled: () => false,
-  isFallbackLoaded: async () => false,
+vi.mock("../runner/host-scheduler-launchd.ts", () => ({
+  hostSchedulerLabel: () => "com.fixowl.host-scheduler.acme-widgets",
+  legacyHostSchedulerLabel: () => "com.fixowl.fallback.acme-widgets",
+  isHostSchedulerInstalled: () => false,
+  isHostSchedulerLoaded: async () => false,
   nextFireTime: () => new Date(),
   readPlistLocalTime: () => undefined,
 }));

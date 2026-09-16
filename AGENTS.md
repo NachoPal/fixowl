@@ -45,7 +45,7 @@ See [docs/releasing.md](docs/releasing.md).
   (`packages/cli/src/runner/register.ts`). `admin_token` is **optional at config
   load** (a present-but-empty value is still rejected) and the admin Octokit is
   built lazily (`makeContext`), so routine commands (`fixowl start`,
-  `fixowl status`, `fixowl fallback check`) load and run with **no** admin token,
+  `fixowl status`, `fixowl host-scheduler check`) load and run with **no** admin token,
   soft-failing the admin-backed reads (e.g. the online-runner check); only the
   setup-only paths (`fixowl provision`, `fixowl start --register`) need it and
   fail clearly via `requireAdmin` (`packages/cli/src/context.ts`,
@@ -198,16 +198,22 @@ See [docs/releasing.md](docs/releasing.md).
   `provision.ts` threads the mode into `renderFixowlWorkflow`'s nullable
   `schedule` (via `workflowHasSchedule`; the legacy `--no-schedule` flag still
   forces omit). The host agent's per-repo decision is role-driven in
-  `fallback.ts`: primary -> `decidePrimaryDispatch`, fallback ->
+  `host-scheduler.ts`: primary -> `decidePrimaryDispatch`, fallback ->
   `decideFallbackDispatch`, `github-cron` -> never dispatch / never install
   (issue #81); pure decisions plus the once-a-day slot guard `guardScheduledSlot`
   (the action runs at night start) live in
   `packages/core/src/fallback-dispatch.ts`, launchd/plist + DST-safe timing in
-  `packages/cli/src/runner/fallback-launchd.ts`. Modes 2/3 use the
+  `packages/cli/src/runner/host-scheduler-launchd.ts`. Modes 2/3 use the
   least-privilege `FIXOWL_FALLBACK_TOKEN` (Actions: write only) so the admin
-  token stays setup-only and revocable. The `promptScheduleTrigger` helper
+  token stays setup-only and revocable. The user-facing CLI group is `fixowl
+  host-scheduler install|uninstall|status|check` (`commands/host-scheduler.ts`);
+  `fixowl fallback …` stays as a hidden, deprecated alias for one release, and
+  the launchd label is `com.fixowl.host-scheduler.<repo>` (install migrates any
+  old `com.fixowl.fallback.<repo>` agent via `legacyHostSchedulerLabel`). The
+  `FIXOWL_FALLBACK_TOKEN` secret and `github.fallback_token` key keep their names
+  (deployed per-host credential). The `promptScheduleTrigger` helper
   (`init.ts`) takes a current-value prefill so the future `fixowl edit` command
-  reuses it. See [docs/local-fallback.md](docs/local-fallback.md).
+  reuses it. See [docs/host-scheduler.md](docs/host-scheduler.md).
 - Night planning is two layers of pure logic between selection and the stacking
   loop in `main.ts`. Layer 1 (`packages/action/src/prereq-planner.ts`) enforces
   native `blocked-by` edges - fetched read-only via `GitHubApi.getIssueDependencies`

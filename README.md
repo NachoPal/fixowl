@@ -442,7 +442,7 @@ should be triggered (`schedule_trigger` in the config):
 
 The `host-scheduler` and `both` modes use a dedicated, least-privilege dispatch
 token and never start a duplicate run or mask whether the cron works. See
-[docs/local-fallback.md](docs/local-fallback.md).
+[docs/host-scheduler.md](docs/host-scheduler.md).
 
 ## Runner host
 

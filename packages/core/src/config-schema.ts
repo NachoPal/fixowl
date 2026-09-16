@@ -227,7 +227,7 @@ export const globalConfigSchema = z.object({
       dir: z.string().min(1).optional(),
     })
     .optional(),
-  /** The optional host-local fallback trigger (`fixowl fallback`). */
+  /** The host scheduler's cron-fallback tuning (`fixowl host-scheduler`, `both` mode). */
   fallback: z
     .object({
       /** Minutes after each repo's cron to run the local backup check. */

@@ -144,7 +144,7 @@ loop could never verify check runs on one. A config that still sets the old
 - The App's installation token (not `GITHUB_TOKEN`) authors PRs so the target
   repo's own CI triggers on them.
 - **The fallback token is optional and least-privilege.** The host scheduler
-  ([local-fallback.md](local-fallback.md)) needs **Actions: write** to dispatch
+  ([host-scheduler.md](host-scheduler.md)) needs **Actions: write** to dispatch
   the workflow - on schedule in `host-scheduler` mode, or when the cron misses in
   `both` mode - which the admin token (setup-only, meant to be revoked/downgraded)
   and the App (in-repo, least privilege) deliberately do not provide for an

@@ -3,13 +3,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  fallbackLabel,
-  fallbackLocalTime,
+  hostSchedulerLabel,
+  hostSchedulerLocalTime,
+  legacyHostSchedulerLabel,
   nextFireTime,
   parseDailyCron,
   readPlistLocalTime,
-  renderFallbackPlist,
-} from "./fallback-launchd.ts";
+  renderHostSchedulerPlist,
+} from "./host-scheduler-launchd.ts";
 
 describe("parseDailyCron", () => {
   it("parses a daily cron's hour and minute (UTC)", () => {
@@ -28,11 +29,11 @@ describe("parseDailyCron", () => {
   });
 });
 
-describe("fallbackLocalTime (DST-safe scheduling)", () => {
+describe("hostSchedulerLocalTime (DST-safe scheduling)", () => {
   it("schedules at cronUTC + gap + the zone's summer offset", () => {
     // cron 05:18 UTC, +30 min, zone UTC+2 (summer) => 05:18 + 0:30 + 2:00 = 07:48 local.
     expect(
-      fallbackLocalTime({
+      hostSchedulerLocalTime({
         cron: { hourUtc: 5, minuteUtc: 18 },
         gapMinutes: 30,
         maxOffsetMinutes: 120,
@@ -45,7 +46,7 @@ describe("fallbackLocalTime (DST-safe scheduling)", () => {
     // back to UTC at each seasonal offset, must land at or after cron+gap.
     const cron = { hourUtc: 5, minuteUtc: 18 };
     const gapMinutes = 30;
-    const local = fallbackLocalTime({ cron, gapMinutes, maxOffsetMinutes: 120 });
+    const local = hostSchedulerLocalTime({ cron, gapMinutes, maxOffsetMinutes: 120 });
     const localMinutes = local.hour * 60 + local.minute;
     const cronPlusGap = cron.hourUtc * 60 + cron.minuteUtc + gapMinutes;
     for (const offset of [60, 120]) {
@@ -57,7 +58,7 @@ describe("fallbackLocalTime (DST-safe scheduling)", () => {
   it("handles a zone with no DST (both offsets equal) as an exact gap", () => {
     // cron 01:37 UTC, +30, UTC+0 => 02:07 local, which is exactly cron+gap in UTC.
     expect(
-      fallbackLocalTime({
+      hostSchedulerLocalTime({
         cron: { hourUtc: 1, minuteUtc: 37 },
         gapMinutes: 30,
         maxOffsetMinutes: 0,
@@ -67,7 +68,7 @@ describe("fallbackLocalTime (DST-safe scheduling)", () => {
 
   it("wraps past midnight correctly", () => {
     expect(
-      fallbackLocalTime({
+      hostSchedulerLocalTime({
         cron: { hourUtc: 23, minuteUtc: 50 },
         gapMinutes: 30,
         maxOffsetMinutes: 0,
@@ -76,10 +77,17 @@ describe("fallbackLocalTime (DST-safe scheduling)", () => {
   });
 });
 
-describe("fallbackLabel", () => {
+describe("hostSchedulerLabel", () => {
   it("builds a reverse-DNS launchd label from the repo", () => {
-    expect(fallbackLabel("Acme/Widgets")).toBe("com.fixowl.fallback.acme-widgets");
-    expect(fallbackLabel("a/b.c_d")).toBe("com.fixowl.fallback.a-b-c-d");
+    expect(hostSchedulerLabel("Acme/Widgets")).toBe("com.fixowl.host-scheduler.acme-widgets");
+    expect(hostSchedulerLabel("a/b.c_d")).toBe("com.fixowl.host-scheduler.a-b-c-d");
+  });
+});
+
+describe("legacyHostSchedulerLabel", () => {
+  it("builds the pre-rename label so a deployed host can be migrated", () => {
+    expect(legacyHostSchedulerLabel("Acme/Widgets")).toBe("com.fixowl.fallback.acme-widgets");
+    expect(legacyHostSchedulerLabel("a/b.c_d")).toBe("com.fixowl.fallback.a-b-c-d");
   });
 });
 
@@ -96,13 +104,13 @@ describe("nextFireTime", () => {
   });
 });
 
-describe("renderFallbackPlist", () => {
-  const plist = renderFallbackPlist({
-    label: "com.fixowl.fallback.acme-widgets",
+describe("renderHostSchedulerPlist", () => {
+  const plist = renderHostSchedulerPlist({
+    label: "com.fixowl.host-scheduler.acme-widgets",
     programArguments: [
       "/usr/bin/node",
       "/opt/fixowl/index.js",
-      "fallback",
+      "host-scheduler",
       "check",
       "acme/widgets",
     ],
@@ -113,8 +121,8 @@ describe("renderFallbackPlist", () => {
   });
 
   it("renders the label, argv, and the calendar interval", () => {
-    expect(plist).toContain("<string>com.fixowl.fallback.acme-widgets</string>");
-    expect(plist).toContain("<string>fallback</string>");
+    expect(plist).toContain("<string>com.fixowl.host-scheduler.acme-widgets</string>");
+    expect(plist).toContain("<string>host-scheduler</string>");
     expect(plist).toContain("<string>acme/widgets</string>");
     expect(plist).toContain("<key>Hour</key>\n    <integer>7</integer>");
     expect(plist).toContain("<key>Minute</key>\n    <integer>48</integer>");
@@ -131,6 +139,6 @@ describe("renderFallbackPlist", () => {
     expect(Number(hour?.[1])).toBe(7);
     expect(Number(minute?.[1])).toBe(48);
     // readPlistLocalTime returns undefined for a label with no installed plist.
-    expect(readPlistLocalTime("com.fixowl.fallback.does-not-exist-xyz")).toBeUndefined();
+    expect(readPlistLocalTime("com.fixowl.host-scheduler.does-not-exist-xyz")).toBeUndefined();
   });
 });
