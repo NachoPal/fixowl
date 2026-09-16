@@ -10,6 +10,25 @@
 /** Docker's own limit on a `--name`; longer names are rejected, so we clip to it. */
 export const CONTAINER_NAME_MAX_LENGTH = 63;
 
+/**
+ * The `<issue>-<purpose>` tail that always survives the 63-char cap. The repo
+ * slug is budgeted around it (see {@link CONTAINER_REPO_SLUG_MAX_LENGTH}), so a
+ * long repo name can never eat the issue token and leave every step of every
+ * issue sharing one `--name`.
+ */
+const RESERVED_TAIL_LENGTH = 24;
+
+/**
+ * The longest repo slug a container name - and so {@link containerNamePrefix} -
+ * may carry: what is left of the 63 chars after `fixowl-`, the separating dash
+ * and the reserved `<issue>-<purpose>` tail.
+ */
+export const CONTAINER_REPO_SLUG_MAX_LENGTH =
+  CONTAINER_NAME_MAX_LENGTH - "fixowl-".length - 1 - RESERVED_TAIL_LENGTH;
+
+/** Chars of hash appended when a repo slug is too long to keep whole. */
+const SLUG_HASH_LENGTH = 6;
+
 /** The `classify` step has no issue number of its own. */
 export type ContainerIssue = number | "classify";
 
@@ -36,6 +55,31 @@ function nameSlug(text: string): string {
     .replace(/^-+|-+$/g, "");
 }
 
+/** FNV-1a in base36 - a short stable discriminator, not a security hash. */
+function slugHash(text: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i += 1) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return (hash % 36 ** SLUG_HASH_LENGTH).toString(36).padStart(SLUG_HASH_LENGTH, "0");
+}
+
+/**
+ * The repo's slug, budgeted to {@link CONTAINER_REPO_SLUG_MAX_LENGTH}. An
+ * over-budget slug keeps its readable head and gains a hash of the whole slug,
+ * so two long repo names sharing a head still get distinct names - a timeout's
+ * `docker rm -f` must never reach across repos.
+ */
+function repoSlug(repoFullName: string): string {
+  const slug = nameSlug(repoFullName);
+  if (slug.length <= CONTAINER_REPO_SLUG_MAX_LENGTH) return slug;
+  const head = slug
+    .slice(0, CONTAINER_REPO_SLUG_MAX_LENGTH - SLUG_HASH_LENGTH - 1)
+    .replace(/-+$/g, "");
+  return `${head}-${slugHash(slug)}`;
+}
+
 /**
  * Container names include the repo so two runners for different repos on one
  * host can never collide on `docker run --name` - or worse, have one repo's
@@ -46,7 +90,7 @@ export function containerName(
   issueNumber: ContainerIssue,
   purpose: string,
 ): string {
-  return `fixowl-${nameSlug(repoFullName)}-${issueNumber}-${nameSlug(purpose)}`.slice(
+  return `${containerNamePrefix(repoFullName)}${issueNumber}-${nameSlug(purpose)}`.slice(
     0,
     CONTAINER_NAME_MAX_LENGTH,
   );
@@ -58,7 +102,7 @@ export function containerName(
  * off a name leaves `<issue>-<purpose>` for {@link parseContainerName}.
  */
 export function containerNamePrefix(repoFullName: string): string {
-  return `fixowl-${nameSlug(repoFullName)}-`;
+  return `fixowl-${repoSlug(repoFullName)}-`;
 }
 
 function parseIssueToken(token: string): ContainerIssue | undefined {
