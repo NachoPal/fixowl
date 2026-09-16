@@ -86236,15 +86236,18 @@ var REPO_CONFIG_PATH = ".fixowl.yml";
 function isFailureConclusion(conclusion) {
   return conclusion === "failure" || conclusion === "cancelled" || conclusion === "timed_out" || conclusion === "action_required" || conclusion === "stale" || conclusion === "startup_failure";
 }
+function hasReadableContexts(required2) {
+  return required2.readable && required2.contexts.length > 0;
+}
 function gatingChecks(all, required2) {
-  if (required2.readable) {
+  if (hasReadableContexts(required2)) {
     const wanted = new Set(required2.contexts);
     return { checks: all.filter((check2) => wanted.has(check2.name)), usedFallback: false };
   }
   return { checks: all, usedFallback: true };
 }
 function evaluateGate(gating, required2) {
-  if (required2.readable) {
+  if (hasReadableContexts(required2)) {
     const present = new Map(gating.checks.map((check2) => [check2.name, check2]));
     const matched = required2.contexts.map((context5) => present.get(context5));
     if (matched.some((check2) => check2 === void 0 || check2.status !== "completed")) {
@@ -86256,7 +86259,7 @@ function evaluateGate(gating, required2) {
   return gating.checks.some((check2) => isFailureConclusion(check2.conclusion)) ? "failed" : "green";
 }
 function requiredContextsStalled(gating, required2) {
-  if (!required2.readable) return false;
+  if (!hasReadableContexts(required2)) return false;
   const present = new Map(gating.checks.map((check2) => [check2.name, check2]));
   const matched = required2.contexts.map((context5) => present.get(context5));
   const anyMissing = matched.some((check2) => check2 === void 0);
