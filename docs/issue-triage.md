@@ -70,8 +70,8 @@ fixowl's only cross-run triage state, and it lives on GitHub.
 
 ## Reporting
 
-Triaged-out issues appear under `## Triaged out (not worked)` in the run summary,
-disjoint from the branch-exists `## Skipped` section (Layer A runs on the
+Triaged-out issues appear under `## Triaged out — no PR needed (already handled)`
+in the run summary, disjoint from the branch-exists `## Skipped` section (Layer A runs on the
 already-branch-filtered set; Layer B skips got past the gate). See
 `NightSummary.triaged` and `renderSummary`.
 

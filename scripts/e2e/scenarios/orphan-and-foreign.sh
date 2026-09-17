@@ -50,7 +50,7 @@ scenario_assert() {
   tip_after="$(e2e_branch_tip "$OF_Z_BRANCH")"
   [ "$tip_after" = "$OF_Z_TIP_BEFORE" ] \
     || { echo "ASSERT FAILED: foreign branch tip changed ($OF_Z_TIP_BEFORE -> $tip_after)" >&2; rc=1; }
-  e2e_assert_summary_contains "$summary_file" "## Skipped (branch already exists)" || rc=1
+  e2e_assert_summary_contains "$summary_file" "## Skipped — a PR is already in flight (branch already exists)" || rc=1
   e2e_assert_log_contains "$run_log" "is not fixowl's" || rc=1
   return $rc
 }

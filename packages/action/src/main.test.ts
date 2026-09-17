@@ -1075,7 +1075,8 @@ describe("runNight", () => {
     );
     const markdown = renderSummary("test/repo", summary);
     expect(markdown).toContain("# 🦉 fixowl night run: test/repo");
-    expect(markdown).toContain("#1 Fix header");
+    // The results-table issue column is a markdown link, not a bare #N.
+    expect(markdown).toContain("[#1](https://github.com/test/repo/issues/1) Fix header");
     expect(markdown).toContain("agent-failed");
     expect(markdown).toContain("tests: passed");
   });
@@ -1794,14 +1795,34 @@ describe("pre-work triage gate", () => {
           layer: "gate",
           category: "already-fixed",
           ref: { number: 51, url: "https://github.com/test/repo/pull/51" },
+          explanation: "the fix already landed in a merged PR",
         },
       ],
       deferred: [],
       warnings: [],
     });
-    expect(markdown).toContain("## Triaged out (not worked)");
-    expect(markdown).toContain("#1");
-    expect(markdown).toContain("pull/51");
+    // Heading reads as intentional "no PR needed", never "not worked".
+    expect(markdown).toContain("## Triaged out — no PR needed (already handled)");
+    expect(markdown).not.toContain("not worked");
+    // The issue number is a markdown link.
+    expect(markdown).toContain("[#1](https://github.com/test/repo/issues/1)");
+    // The per-issue explanation is behind an explicit Explanation label.
+    expect(markdown).toContain("**Explanation:** the fix already landed in a merged PR");
+    // The ref renders as a markdown link, not a bare URL in parentheses.
+    expect(markdown).toContain("[#51](https://github.com/test/repo/pull/51)");
+  });
+
+  it("renderSummary's Skipped section reads as intentional and links the issue", () => {
+    const markdown = renderSummary("test/repo", {
+      results: [],
+      skipped: [{ issue: issue(7, "Already in flight"), branch: "issue/7-already-in-flight" }],
+      deferred: [],
+      warnings: [],
+    });
+    // Heading reads as idempotency (a PR is already in flight), not an error.
+    expect(markdown).toContain("## Skipped — a PR is already in flight (branch already exists)");
+    expect(markdown).not.toContain("not worked");
+    expect(markdown).toContain("[#7](https://github.com/test/repo/issues/7)");
   });
 });
 
