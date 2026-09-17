@@ -2,7 +2,7 @@
 # second-run scenario (T1-standdown, skip half): running the night twice on the same
 # fixtures is idempotent. The first run ships the issue (branch + PR); the second run finds
 # the branch already attempted and stands down honestly - its summary reports the issue
-# under `## Skipped (branch already exists)`, NOT the false "No open issues matched".
+# under `## Skipped — a PR is already in flight (branch already exists)`, NOT the false "No open issues matched".
 #
 # (The scheduled-slot `Stood down:` half of T1-standdown depends on listing the sandbox's
 # own workflow runs with the E2E run id, which do not exist there, so it stays unit-level.)
@@ -48,7 +48,7 @@ scenario_assert() {
   # The first run's PR is still there; the second run touched nothing.
   e2e_load_prs
   e2e_assert_pr_for "$SR_ISSUE" || rc=1
-  e2e_assert_summary_contains "$summary_file" "## Skipped (branch already exists)" || rc=1
+  e2e_assert_summary_contains "$summary_file" "## Skipped — a PR is already in flight (branch already exists)" || rc=1
   e2e_assert_summary_absent "$summary_file" "No open issues matched" || rc=1
   return $rc
 }

@@ -2,7 +2,7 @@
 # triage-b scenario (T5-triage, Layer B): verify-before-fix. The agent verifies against the
 # current code first and emits a verdict to stdout while making NO change. The host reads
 # the verdict + the (empty) diff, opens NO PR, comments once, labels the issue
-# `fixowl:triaged`, and reports it under `## Triaged out (not worked)`.
+# `fixowl:triaged`, and reports it under `## Triaged out — no PR needed (already handled)`.
 #
 # (Layer A - the already-fixed/duplicate pre-gate - is covered by the sibling `triage-a`
 # scenario, which builds + merges + reopens its own fixtures per run; this covers Layer B.)
@@ -28,7 +28,7 @@ scenario_assert() {
   [ "$run_rc" = "0" ] || { echo "ASSERT FAILED: bundle exited $run_rc" >&2; rc=1; }
   e2e_load_prs
   e2e_assert_no_pr_for "$TB_ISSUE" || rc=1
-  e2e_assert_summary_contains "$summary_file" "## Triaged out (not worked)" || rc=1
+  e2e_assert_summary_contains "$summary_file" "## Triaged out — no PR needed (already handled)" || rc=1
   # The issue is labeled fixowl:triaged (the cross-run, comment-once marker).
   local labels
   labels="$(gh issue view "$TB_ISSUE" -R "$R" --json labels --jq '.labels[].name' | tr '\n' ' ')"

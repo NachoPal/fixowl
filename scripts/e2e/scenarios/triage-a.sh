@@ -2,7 +2,7 @@
 # triage-a scenario (T5-triage, Layer A): the deterministic pre-gate skips an issue on
 # GitHub's own high-precision signals BEFORE any agent runs - so no agent is spent, no PR
 # is opened, the issue is commented once + labeled `fixowl:triaged`, and it is reported
-# under `## Triaged out (not worked)` (main.ts applyTriageSkip / renderSummary). Two signals:
+# under `## Triaged out — no PR needed (already handled)` (main.ts applyTriageSkip / renderSummary). Two signals:
 #   Fixture 1 (already-fixed): an issue closed by a MERGED closing-keyword PR ("Fixes #N")
 #     and then reopened - the `closedByPullRequestsReferences` merged link that
 #     reduceTriageNode reads (packages/action/src/github-api.ts).
@@ -142,7 +142,7 @@ scenario_assert() {
   e2e_assert_no_pr_for "$TA_DUP" || rc=1
 
   # Both are reported under the Triaged-out heading, each with the right reason.
-  e2e_assert_summary_contains "$summary_file" "## Triaged out (not worked)" || rc=1
+  e2e_assert_summary_contains "$summary_file" "## Triaged out — no PR needed (already handled)" || rc=1
   e2e_assert_summary_contains "$summary_file" "already fixed by a merged PR" || rc=1
   e2e_assert_summary_contains "$summary_file" "duplicate" || rc=1
 
