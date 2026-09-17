@@ -85574,22 +85574,30 @@ function readResetsAt(value) {
 var claudeUsageReader = {
   async read(probe) {
     const token = probe.env[CLAUDE_TOKEN_ENV];
-    if (token === void 0 || token === "") return void 0;
+    if (token === void 0 || token === "") {
+      return { reason: `no ${CLAUDE_TOKEN_ENV} on host` };
+    }
+    let raw;
     try {
-      const raw = await probe.fetchJson(CLAUDE_USAGE_URL, {
+      raw = await probe.fetchJson(CLAUDE_USAGE_URL, {
         Authorization: `Bearer ${token}`,
         // The OAuth flow beta header Claude Code sends for this endpoint.
         "anthropic-beta": "oauth-2025-04-20"
       });
-      return parseClaudeUsage(raw);
-    } catch {
-      return void 0;
+    } catch (error62) {
+      const detail = error62 instanceof Error ? error62.message : String(error62);
+      return { reason: `usage read failed: ${detail}` };
     }
+    const snapshot2 = parseClaudeUsage(raw);
+    if (snapshot2 === void 0) {
+      return { reason: "usage read: unexpected response shape" };
+    }
+    return { snapshot: snapshot2 };
   }
 };
 var noUsageReader = {
   async read() {
-    return void 0;
+    return { reason: "no observable usage window for this agent" };
   }
 };
 var USAGE_READERS = { claude: claudeUsageReader };
@@ -127376,10 +127384,12 @@ async function runNightWithGit(deps, inputs, git) {
   const assembleBudgetState = async (shipped2) => {
     let usage;
     if (inputs.usageBudgetPercent !== void 0 && usageBudgetObservable && deps.httpJson !== void 0) {
-      usage = await usageReader.read({ env: agentEnv, fetchJson: deps.httpJson });
+      const result = await usageReader.read({ env: agentEnv, fetchJson: deps.httpJson });
+      usage = result.snapshot;
       if (usage === void 0 && !usageWarned) {
         usageWarned = true;
-        const warning2 = `usage budget set (${inputs.usageBudgetPercent}%) but ${inputs.agentName} usage is unobservable this run; falling through to count + wall-clock budgets`;
+        const reason = result.reason ?? "usage unobservable";
+        const warning2 = `usage budget set (${inputs.usageBudgetPercent}%) but ${inputs.agentName} usage is unobservable this run (${reason}); falling through to count + wall-clock budgets`;
         warnings.push(warning2);
         log3.warn(warning2);
       }
@@ -129345,7 +129355,7 @@ function optionalPercentInput(name) {
 async function fetchJson(url3, headers) {
   const response = await fetch(url3, { headers });
   if (!response.ok) {
-    throw new Error(`usage read failed: HTTP ${response.status}`);
+    throw new Error(`HTTP ${response.status}`);
   }
   return response.json();
 }

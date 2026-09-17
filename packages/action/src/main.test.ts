@@ -862,7 +862,11 @@ describe("runNight", () => {
 
       expect(summary.results.map((r) => r.status)).toEqual(["pr-opened", "pr-opened", "pr-opened"]);
       expect(summary.budgetStop).toBeUndefined();
-      expect(summary.warnings.filter((w) => w.includes("unobservable"))).toHaveLength(1);
+      const unobservable = summary.warnings.filter((w) => w.includes("unobservable"));
+      expect(unobservable).toHaveLength(1);
+      // The concrete cause is surfaced, not swallowed - the injected edge threw
+      // "usage endpoint down" and it must reach the run log.
+      expect(unobservable[0]).toContain("usage read failed: usage endpoint down");
     });
 
     it("api-credit agent: usage budget is not read and never warns (structurally unobservable)", async () => {

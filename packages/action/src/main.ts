@@ -352,12 +352,17 @@ async function runNightWithGit(
       usageBudgetObservable &&
       deps.httpJson !== undefined
     ) {
-      usage = await usageReader.read({ env: agentEnv, fetchJson: deps.httpJson });
+      const result = await usageReader.read({ env: agentEnv, fetchJson: deps.httpJson });
+      usage = result.snapshot;
       if (usage === undefined && !usageWarned) {
         usageWarned = true;
+        // Surface the concrete reason the reader gives (missing token / non-2xx
+        // status / unexpected shape) instead of a bare "unobservable", so the
+        // next night run is diagnosable. Still advisory: never aborts the night.
+        const reason = result.reason ?? "usage unobservable";
         const warning =
           `usage budget set (${inputs.usageBudgetPercent}%) but ${inputs.agentName} usage is ` +
-          `unobservable this run; falling through to count + wall-clock budgets`;
+          `unobservable this run (${reason}); falling through to count + wall-clock budgets`;
         warnings.push(warning);
         log.warn(warning);
       }

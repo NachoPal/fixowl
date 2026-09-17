@@ -101,7 +101,9 @@ function optionalPercentInput(name: string): number | undefined {
 async function fetchJson(url: string, headers: Record<string, string>): Promise<unknown> {
   const response = await fetch(url, { headers });
   if (!response.ok) {
-    throw new Error(`usage read failed: HTTP ${response.status}`);
+    // The reader composes the final "usage read failed: <detail>" reason, so keep
+    // this message to just the status to avoid a doubled prefix.
+    throw new Error(`HTTP ${response.status}`);
   }
   return response.json();
 }
