@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -280,6 +280,108 @@ function makeCtx(text: string): CliContext {
     admin: fakeAdmin(),
   };
 }
+
+// ---------------------------------------------------------------------------
+// Keep-everything (press Enter through every prompt) is a true no-op
+// ---------------------------------------------------------------------------
+
+/** A config where the edited repo carries model, effort, label_models and a budget. */
+const RICH = `# rich fixowl config
+version: 1
+
+github:
+  admin_token: \${FIXOWL_ADMIN_TOKEN}
+  app:
+    app_id: 123456
+    installation_id: 7890123
+    private_key: \${FIXOWL_APP_PRIVATE_KEY}
+
+defaults:
+  schedule: "37 1 * * *"
+  labels: { any: [overnight] }
+  agent: claude
+
+agents:
+  claude: { env: [CLAUDE_CODE_OAUTH_TOKEN] }
+
+repos:
+  - name: NachoPal/withmodels
+    schedule: "20 2 * * *"   # UTC - custom slot
+    usage_budget_percent: 70
+    model: sonnet
+    effort: high
+    label_models:
+      heavy: { model: opus, effort: max }
+  - name: NachoPal/bare
+`;
+
+/**
+ * A prompter that presses Enter on every prompt: `ask`/`secret` keep the shown
+ * default, `confirm` accepts its default, `choose` picks the highlighted (first)
+ * option, and `multiChoose` keeps exactly the pre-selected rows. This is the
+ * literal "keep everything" walk-through the edit contract promises is a no-op.
+ */
+function keepAllPrompter(): Prompter {
+  return {
+    ask: vi.fn(async (_q: string, options?: { default?: string }) => options?.default ?? ""),
+    secret: vi.fn(async (_q: string, options?: { existing?: string }) => options?.existing ?? ""),
+    confirm: vi.fn(async (_q: string, defaultYes: boolean) => defaultYes),
+    choose: vi.fn(
+      async (_q: string, choices: ReadonlyArray<{ value: unknown }>) => choices[0]?.value,
+    ),
+    multiChoose: vi.fn(
+      async (
+        _q: string,
+        choices: ReadonlyArray<{ value: unknown }>,
+        options?: { preselected?: readonly number[] },
+      ) => (options?.preselected ?? []).map((index) => choices[index]?.value),
+    ),
+    pause: vi.fn(async () => {}),
+    say: vi.fn(),
+    close: vi.fn(),
+  } as unknown as Prompter;
+}
+
+describe("editCommand - pressing Enter through every prompt keeps everything", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.mocked(provisionCommand).mockClear();
+  });
+
+  async function runKeepAll(configText: string, repo: string): Promise<string> {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const dir = mkdtempSync(join(tmpdir(), "fixowl-edit-keep-"));
+    const configPath = join(dir, "config.yaml");
+    writeFileSync(configPath, configText);
+    writeFileSync(
+      join(dir, "secrets.env"),
+      "FIXOWL_ADMIN_TOKEN=admin\nFIXOWL_APP_PRIVATE_KEY=base64pem\nCLAUDE_CODE_OAUTH_TOKEN=oauth\n",
+      { mode: 0o600 },
+    );
+    await editCommand(makeCtx(configText), repo, { configPath, prompter: keepAllPrompter() });
+    return readFileSync(configPath, "utf8");
+  }
+
+  it("leaves a model/effort/label_models repo byte-for-byte unchanged", async () => {
+    const after = await runKeepAll(RICH, "NachoPal/withmodels");
+    expect(after).toBe(RICH);
+  });
+
+  it("does not add a model to a repo that had none", async () => {
+    const after = await runKeepAll(RICH, "NachoPal/bare");
+    expect(after).toBe(RICH);
+    const bare = loadConfig(after).repos.find((r) => r.name === "NachoPal/bare");
+    expect(bare?.model).toBeUndefined();
+    expect(bare?.effort).toBeUndefined();
+    expect(bare?.label_models).toBeUndefined();
+  });
+
+  it("leaves the hand-authored config unchanged on a full keep-all walk-through", async () => {
+    const after = await runKeepAll(HAND_AUTHORED, "NachoPal/storyengine");
+    expect(after).toBe(HAND_AUTHORED);
+  });
+});
 
 describe("editCommand", () => {
   afterEach(() => {

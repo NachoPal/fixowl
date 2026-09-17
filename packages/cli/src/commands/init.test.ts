@@ -616,6 +616,114 @@ describe("promptRepoSettings live model picker", () => {
   });
 });
 
+/**
+ * A prompter that presses Enter on every prompt: `confirm` accepts its default,
+ * `choose` picks the highlighted (first) option and records whether any chooser
+ * ran, `multiChoose` keeps exactly the pre-selected rows, `ask`/`secret` keep
+ * the default/existing. This is the "keep everything" walk-through the edit
+ * contract promises is a no-op.
+ */
+function keepAllModelPrompter(): { prompter: Prompter; choseModel: () => boolean } {
+  let choseModel = false;
+  const prompter = {
+    ask: async (_q: string, options?: { default?: string }) => options?.default ?? "",
+    secret: async (_q: string, options?: { existing?: string }) => options?.existing ?? "",
+    confirm: async (_q: string, defaultYes: boolean) => defaultYes,
+    choose: async (q: string, choices: ReadonlyArray<{ value: unknown }>) => {
+      if (
+        q.includes("model") ||
+        q.includes("effort") ||
+        q.includes("Model") ||
+        q.includes("Effort")
+      )
+        choseModel = true;
+      return choices[0]?.value;
+    },
+    multiChoose: async (
+      _q: string,
+      choices: ReadonlyArray<{ value: unknown }>,
+      options?: { preselected?: readonly number[] },
+    ) => (options?.preselected ?? []).map((index) => choices[index]?.value),
+    pause: async () => {},
+    say: () => {},
+    close: () => {},
+  } as unknown as Prompter;
+  return { prompter, choseModel: () => choseModel };
+}
+
+describe("promptRepoSettings model keep-or-change (edit path)", () => {
+  const admin = {} as unknown as Octokit;
+  const editPrefill: RepoSettingsPrefill = {
+    schedule: "02:37",
+    scheduleTrigger: "host-scheduler",
+    labels: "overnight",
+    maxIssuesPerRun: 4,
+    usageBudgetPercent: 85,
+    totalTokenBudget: undefined,
+    runBudgetMinutes: undefined,
+    issueTimeoutMinutes: 45,
+    ciMaxTries: 3,
+    ciTimeoutMinutes: 60,
+    heuristicConflictOrdering: false,
+    editing: true,
+  };
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("keeps the current model, effort and label_models when the user keeps everything", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const { prompter, choseModel } = keepAllModelPrompter();
+    const answers = await promptRepoSettings(prompter, admin, "claude", "acme/widgets", {
+      ...editPrefill,
+      defaultModel: "sonnet",
+      defaultEffort: "high",
+      labelModels: { heavy: { model: "opus", effort: "max" } },
+    });
+    expect(answers.defaultModel).toBe("sonnet");
+    expect(answers.defaultEffort).toBe("high");
+    expect(answers.labelModels).toEqual({ heavy: { model: "opus", effort: "max" } });
+    // Every value was kept via a confirm; no chooser was opened.
+    expect(choseModel()).toBe(false);
+  });
+
+  it("adds no model when an edited repo has none and the user keeps everything", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const { prompter, choseModel } = keepAllModelPrompter();
+    const answers = await promptRepoSettings(
+      prompter,
+      admin,
+      "claude",
+      "acme/widgets",
+      editPrefill,
+    );
+    expect(answers.defaultModel).toBeUndefined();
+    expect(answers.defaultEffort).toBeUndefined();
+    expect(answers.labelModels).toBeUndefined();
+    expect(choseModel()).toBe(false);
+  });
+
+  it("opens a fresh model pick on the agent-switch reset (editing off, no model prefill)", async () => {
+    // edit.ts clears the model prefills AND `editing` on an agent switch, so the
+    // model step runs init's fresh path: a default is picked from scratch for the
+    // NEW agent rather than a stale value being kept.
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const { prompter, choseModel } = keepAllModelPrompter();
+    const answers = await promptRepoSettings(prompter, admin, "claude", "acme/widgets", {
+      ...editPrefill,
+      editing: false,
+      defaultModel: undefined,
+      defaultEffort: undefined,
+      labelModels: undefined,
+    });
+    // The fresh chooser ran and picked the first catalog model/effort for claude.
+    expect(choseModel()).toBe(true);
+    expect(answers.defaultModel).toBe("opus");
+    expect(answers.defaultEffort).toBe("low");
+  });
+});
+
 /** A prompter whose `choose` returns the value at `pick`, counting its calls. */
 function choosePrompter(pick: number): { prompter: Prompter; calls: () => number } {
   let calls = 0;

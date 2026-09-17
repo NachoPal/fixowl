@@ -104,6 +104,16 @@ See [docs/releasing.md](docs/releasing.md).
   exported `promptRepoSettings`/`stepModelSelection` (`init.ts`) - `init` passes
   sticky-last prefills, `edit` passes `resolveRepoSettings`; `stepModelSelection`
   is byte-for-byte unchanged when its `current` arg is undefined (init's path).
+  **Every prompt prefills the current resolved value so an all-Enter walk-through
+  is a true no-op** (nothing is rewritten): the `RepoSettingsPrefill.editing`
+  flag (set by `edit`, not `init`) makes `promptRepoSettings` build a defined
+  `current` for the model step even when the repo has no model configured, so
+  keep-all never force-picks a fresh default; selector labels are pre-ticked via
+  `multiChoose`'s `preselected` option (and pre-filled in the offline
+  type-them-in fallback). The ONE prefill-clearing case is a coding-agent switch
+  (`edit.ts` drops the model prefills AND `editing`), which reruns the fresh init
+  model pick for the new agent. Regression guard: `edit.test.ts`'s keep-all
+  editCommand tests assert byte-for-byte no-op.
   Write-back is **surgical**: it mutates a `parseDocument` Document so comments
   and untouched keys survive, writes only changed fields, drops a per-repo key
   when the new value equals the resolved default, and re-validates before
