@@ -55,6 +55,7 @@ export {
   parseClaudeUsage,
   type UsageProbe,
   type UsageReader,
+  type UsageReadResult,
   type UsageSnapshot,
 } from "./agent-usage.ts";
 export {

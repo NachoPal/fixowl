@@ -39,13 +39,28 @@ export interface UsageProbe {
 }
 
 /**
- * Per-adapter usage reader. Returns `undefined` when usage is not observable for
- * this agent/auth mode (the run loop then skips the usage stop-condition). Never
- * throws for a transient read failure: it returns `undefined` and lets the caller
- * log once and fall through to the remaining conditions (count + wall-clock).
+ * The outcome of one usage read. Exactly one of `snapshot`/`reason` is set:
+ * a successful read carries the `snapshot`; any abstain carries a concise,
+ * log-worthy `reason` (missing token / non-2xx endpoint / unexpected shape) so
+ * the caller can surface *why* the usage budget went unobserved instead of
+ * emitting a bare "unobservable" warning. The read never throws for a transient
+ * failure - it abstains with a `reason` and the run falls through to the
+ * remaining conditions (count + wall-clock), preserving the fail-open contract.
+ */
+export interface UsageReadResult {
+  snapshot?: UsageSnapshot;
+  /** Set iff `snapshot` is absent: a short reason the caller logs at warn level. */
+  reason?: string;
+}
+
+/**
+ * Per-adapter usage reader. Abstains (a `UsageReadResult` with a `reason` and no
+ * `snapshot`) when usage is not observable for this agent/auth mode or the read
+ * fails; the run loop then skips the usage stop-condition and logs the reason.
+ * Never throws for a transient read failure.
  */
 export interface UsageReader {
-  read(probe: UsageProbe): Promise<UsageSnapshot | undefined>;
+  read(probe: UsageProbe): Promise<UsageReadResult>;
 }
 
 /** The non-billing OAuth usage endpoint Claude Code itself seeds from. */
@@ -116,30 +131,44 @@ function readResetsAt(value: unknown): number {
 }
 
 const claudeUsageReader: UsageReader = {
-  async read(probe: UsageProbe): Promise<UsageSnapshot | undefined> {
+  async read(probe: UsageProbe): Promise<UsageReadResult> {
     const token = probe.env[CLAUDE_TOKEN_ENV];
-    // No OAuth token (API-key auth, or the var is absent) means no observable
-    // rolling window: abstain rather than guessing.
-    if (token === undefined || token === "") return undefined;
+    // No OAuth token on the host (the var never reached the action's env, or the
+    // agent is on API-key auth) means no observable rolling window. The run loop
+    // only invokes this reader on the subscription path, so a missing token here
+    // is a genuine wiring gap worth surfacing, not a quiet structural opt-out.
+    if (token === undefined || token === "") {
+      return { reason: `no ${CLAUDE_TOKEN_ENV} on host` };
+    }
+    let raw: unknown;
     try {
-      const raw = await probe.fetchJson(CLAUDE_USAGE_URL, {
+      raw = await probe.fetchJson(CLAUDE_USAGE_URL, {
         Authorization: `Bearer ${token}`,
         // The OAuth flow beta header Claude Code sends for this endpoint.
         "anthropic-beta": "oauth-2025-04-20",
       });
-      return parseClaudeUsage(raw);
-    } catch {
-      // Advisory infrastructure: a transient read failure must never abort the
-      // night; abstain and let count + wall-clock carry the run.
-      return undefined;
+    } catch (error) {
+      // Advisory infrastructure: a transient read failure (non-2xx surfaced by
+      // the injected edge as a throw, or a transport error) must never abort the
+      // night. Abstain with the concrete cause so the next run is diagnosable,
+      // and let count + wall-clock carry the run.
+      const detail = error instanceof Error ? error.message : String(error);
+      return { reason: `usage read failed: ${detail}` };
     }
+    const snapshot = parseClaudeUsage(raw);
+    if (snapshot === undefined) {
+      // A 200 whose body no longer matches the expected window shape (a provider
+      // field rename) - surface it distinctly from a network/HTTP failure.
+      return { reason: "usage read: unexpected response shape" };
+    }
+    return { snapshot };
   },
 };
 
 /** A reader for agents whose usage is not observable; always abstains. */
 const noUsageReader: UsageReader = {
-  async read(): Promise<UsageSnapshot | undefined> {
-    return undefined;
+  async read(): Promise<UsageReadResult> {
+    return { reason: "no observable usage window for this agent" };
   },
 };
 

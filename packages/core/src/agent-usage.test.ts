@@ -53,7 +53,7 @@ function probe(
 }
 
 describe("claude usage reader", () => {
-  it("abstains (undefined) when no OAuth token is present", async () => {
+  it("abstains with a missing-token reason when no OAuth token is present", async () => {
     let called = false;
     const reader = getUsageReader("claude");
     const result = await reader.read(
@@ -62,7 +62,9 @@ describe("claude usage reader", () => {
         return {};
       }),
     );
-    expect(result).toBeUndefined();
+    expect(result.snapshot).toBeUndefined();
+    expect(result.reason).toContain("CLAUDE_CODE_OAUTH_TOKEN");
+    // No token means no network read - abstain before touching the edge.
     expect(called).toBe(false);
   });
 
@@ -75,19 +77,32 @@ describe("claude usage reader", () => {
         return { five_hour: { utilization: 0.9, resets_at: 1 } };
       }),
     );
-    expect(result?.usedPercent).toBeCloseTo(90);
+    expect(result.snapshot?.usedPercent).toBeCloseTo(90);
+    expect(result.reason).toBeUndefined();
     expect(calls[0]?.url).toBe(CLAUDE_USAGE_URL);
     expect(calls[0]?.headers.Authorization).toBe("Bearer tok");
+    expect(calls[0]?.headers["anthropic-beta"]).toBe("oauth-2025-04-20");
   });
 
-  it("abstains when the fetch rejects (advisory, never fatal)", async () => {
+  it("abstains with the concrete cause when the fetch rejects (non-2xx surfaces as a throw)", async () => {
     const reader = getUsageReader("claude");
     const result = await reader.read(
       probe({ CLAUDE_CODE_OAUTH_TOKEN: "tok" }, async () => {
-        throw new Error("network down");
+        // The injected edge throws `HTTP <status>` on a non-2xx.
+        throw new Error("HTTP 401");
       }),
     );
-    expect(result).toBeUndefined();
+    expect(result.snapshot).toBeUndefined();
+    expect(result.reason).toBe("usage read failed: HTTP 401");
+  });
+
+  it("abstains with a shape reason on a 200 whose body no longer matches", async () => {
+    const reader = getUsageReader("claude");
+    const result = await reader.read(
+      probe({ CLAUDE_CODE_OAUTH_TOKEN: "tok" }, async () => ({ unexpected: true })),
+    );
+    expect(result.snapshot).toBeUndefined();
+    expect(result.reason).toBe("usage read: unexpected response shape");
   });
 });
 
@@ -99,7 +114,8 @@ describe("getUsageReader (model-agnostic)", () => {
         env: { CLAUDE_CODE_OAUTH_TOKEN: "tok", ANTHROPIC_API_KEY: "x" },
         fetchJson: async () => ({ five_hour: { utilization: 0.99 } }),
       });
-      expect(result).toBeUndefined();
+      expect(result.snapshot).toBeUndefined();
+      expect(result.reason).toBeDefined();
     }
   });
 });
