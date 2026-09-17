@@ -127824,6 +127824,9 @@ var TRIAGE_REASON = {
   "not-applicable": "no longer applicable (agent verified against current code)",
   "no-change": "agent produced no change"
 };
+function issueLink(repoFullName, number4) {
+  return `[#${number4}](https://github.com/${repoFullName}/issues/${number4})`;
+}
 function renderSummary(repoFullName, summary2) {
   const lines = [`# \u{1F989} fixowl night run: ${repoFullName}`, ""];
   if (summary2.standDown !== void 0) {
@@ -127838,7 +127841,7 @@ function renderSummary(repoFullName, summary2) {
       const verification = result.verification.length > 0 ? result.verification.map((check2) => `${check2.name}: ${check2.status}`).join("<br>") : "-";
       const status = result.error !== void 0 ? `${result.status} (${markdownCell(result.error)})` : result.status;
       lines.push(
-        `| #${result.issue.number} ${markdownCell(result.issue.title)} | ${status} | ${pr} | ${verification} |`
+        `| ${issueLink(repoFullName, result.issue.number)} ${markdownCell(result.issue.title)} | ${status} | ${pr} | ${verification} |`
       );
     }
     lines.push("");
@@ -127853,27 +127856,31 @@ function renderSummary(repoFullName, summary2) {
     if ((summary2.notStarted?.length ?? 0) > 0) {
       lines.push("Not started tonight:", "");
       for (const issue3 of summary2.notStarted ?? []) {
-        lines.push(`- #${issue3.number} ${markdownCell(issue3.title)}`);
+        lines.push(`- ${issueLink(repoFullName, issue3.number)} ${markdownCell(issue3.title)}`);
       }
       lines.push("");
     }
   }
   if (summary2.skipped.length > 0) {
-    lines.push(`## Skipped (branch already exists)`, "");
+    lines.push(`## Skipped \u2014 a PR is already in flight (branch already exists)`, "");
     for (const skip of summary2.skipped) {
-      lines.push(`- #${skip.issue.number} ${markdownCell(skip.issue.title)}: \`${skip.branch}\``);
+      lines.push(
+        `- ${issueLink(repoFullName, skip.issue.number)} ${markdownCell(skip.issue.title)}: \`${skip.branch}\``
+      );
     }
     lines.push("");
   }
   if ((summary2.triaged?.length ?? 0) > 0) {
-    lines.push(`## Triaged out (not worked)`, "");
+    lines.push(`## Triaged out \u2014 no PR needed (already handled)`, "");
     for (const item of summary2.triaged ?? []) {
       const reason = TRIAGE_REASON[item.category];
-      const ref = item.ref !== void 0 ? ` (${item.ref.url})` : "";
-      const why = item.explanation !== void 0 ? ` - ${markdownCell(item.explanation)}` : "";
+      const ref = item.ref !== void 0 ? ` (see [#${item.ref.number}](${item.ref.url}))` : "";
       lines.push(
-        `- #${item.issue.number} ${markdownCell(item.issue.title)}: ${reason}${ref}${why}`
+        `- ${issueLink(repoFullName, item.issue.number)} ${markdownCell(item.issue.title)}: ${reason}${ref}`
       );
+      if (item.explanation !== void 0) {
+        lines.push(`  - **Explanation:** ${markdownCell(item.explanation)}`);
+      }
     }
     lines.push("");
   }
@@ -127881,7 +127888,7 @@ function renderSummary(repoFullName, summary2) {
     lines.push(`## Deferred (blocked by an unshipped prerequisite)`, "");
     for (const item of summary2.deferred) {
       lines.push(
-        `- #${item.issue.number} ${markdownCell(item.issue.title)}: ${markdownCell(item.reason)}`
+        `- ${issueLink(repoFullName, item.issue.number)} ${markdownCell(item.issue.title)}: ${markdownCell(item.reason)}`
       );
     }
     lines.push("");
@@ -127892,7 +127899,7 @@ function renderSummary(repoFullName, summary2) {
     for (const result of needsRebase) {
       const pr = result.prUrl !== void 0 ? `[#${result.prNumber}](${result.prUrl})` : "-";
       lines.push(
-        `- #${result.issue.number} ${markdownCell(result.issue.title)}: ${pr} - rebase and resolve conflicts, then re-run fixowl`
+        `- ${issueLink(repoFullName, result.issue.number)} ${markdownCell(result.issue.title)}: ${pr} - rebase and resolve conflicts, then re-run fixowl`
       );
     }
     lines.push("");
