@@ -112,7 +112,7 @@ describe("fixowl host-scheduler check", () => {
       status: "in_progress",
       conclusion: null,
       createdAt: "2026-09-05T05:40:00Z",
-      displayTitle: "fixowl night run [scheduled-fallback]",
+      displayTitle: "fixowl night run [host-scheduler]",
     };
     const deps = stubDeps({ listRecentRuns: vi.fn(async () => [tagged]) });
 

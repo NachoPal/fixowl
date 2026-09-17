@@ -81,12 +81,17 @@ never both - while manual runs stay unrestricted. Two pure, unit-tested pieces
    crashed at job setup would wrongly consume the slot and stand the real cron
    down, skipping the whole night.)
 
-The fallback tags its dispatch with the `source: scheduled-fallback`
-workflow input, surfaced in the run-name as `[scheduled-fallback]`, so:
+The host scheduler tags its dispatch with the `source: host-scheduler`
+workflow input, surfaced in the run-name as `[host-scheduler]`, so:
 
 - a **cron** run is `event: schedule`,
-- a **fallback** run is `event: workflow_dispatch` named `… [scheduled-fallback]`,
+- a **host-scheduler** run is `event: workflow_dispatch` named `… [host-scheduler]`,
 - a **manual** run is a plain `event: workflow_dispatch`.
+
+(A host provisioned before this rename still sends the legacy
+`source: scheduled-fallback` / `[scheduled-fallback]` value until you re-provision
+and reinstall the host-scheduler agent; the once-a-day slot guard keeps
+recognising the legacy value during that transition.)
 
 You can always tell the three apart in the Actions runs list and keep auditing
 cron health - the fallback never masks a broken cron.
