@@ -1054,6 +1054,15 @@ export interface RepoSettingsPrefill {
   defaultModel?: string;
   defaultEffort?: string;
   labelModels?: Record<string, { model: string; effort: string }>;
+  /**
+   * True for `fixowl edit`: the model/effort/label-model step runs its
+   * keep-or-change path (each choice prefilled, Enter keeps) EVEN when the repo
+   * currently has no model configured - so an all-keep edit stays a no-op rather
+   * than being forced to pick a fresh default. Omitted/false is `init`'s flow,
+   * where model selection opens fresh (byte-for-byte unchanged; see
+   * `stepModelSelection`).
+   */
+  editing?: boolean;
 }
 
 /** All per-repo answers, minus `name`. Shared by `init` and `edit`. */
@@ -1192,10 +1201,12 @@ export async function promptRepoSettings(
   );
 
   const labels = parseLabels(labelsAnswer);
+  // In `edit` (prefill.editing) the model step ALWAYS runs keep-or-change from
+  // the repo's current values - even when they are all undefined, so an all-keep
+  // edit adds no model - by passing a defined `current`. In `init` this stays
+  // undefined, so `stepModelSelection` opens fresh (byte-for-byte unchanged).
   const current =
-    prefill.defaultModel !== undefined ||
-    prefill.defaultEffort !== undefined ||
-    (prefill.labelModels !== undefined && Object.keys(prefill.labelModels).length > 0)
+    prefill.editing === true
       ? {
           defaultModel: prefill.defaultModel,
           defaultEffort: prefill.defaultEffort,
@@ -1343,7 +1354,17 @@ async function stepModelSelection(
   );
   if (wantsLabels) {
     const labelModels: Record<string, { model: string; effort: string }> = {};
-    for (const label of await chooseSelectorLabels(prompter, admin, name, labelCandidates)) {
+    // The repo's currently-mapped labels, pre-ticked so Enter keeps them (edit);
+    // empty in init, so the selector opens with nothing selected as before.
+    const currentLabels =
+      current?.labelModels !== undefined ? Object.keys(current.labelModels) : [];
+    for (const label of await chooseSelectorLabels(
+      prompter,
+      admin,
+      name,
+      labelCandidates,
+      currentLabels,
+    )) {
       const currentChoice = current?.labelModels?.[label];
       const model = await keepOrChange(prompter, `model for "${label}"`, currentChoice?.model, () =>
         chooseModel(prompter, catalog, `  Model for "${label}"`),
@@ -1393,25 +1414,34 @@ async function chooseSelectorLabels(
   admin: Octokit,
   name: string,
   candidates: readonly string[],
+  currentLabels: readonly string[] = [],
 ): Promise<string[]> {
-  const chosen = await pickSelectorLabels(prompter, candidates);
-  await offerToCreateSelectorLabels(prompter, admin, name, chosen, candidates);
+  // Offer every currently-mapped label as a checkbox row (pre-ticked), even the
+  // ones the repo's label listing didn't return, so `edit` never forces a
+  // re-type. In init `currentLabels` is empty, so this is just `candidates`.
+  const options = [...new Set([...candidates, ...currentLabels])];
+  const chosen = await pickSelectorLabels(prompter, options, currentLabels);
+  await offerToCreateSelectorLabels(prompter, admin, name, chosen, options);
   return chosen;
 }
 
 async function pickSelectorLabels(
   prompter: Prompter,
   candidates: readonly string[],
+  currentLabels: readonly string[] = [],
 ): Promise<string[]> {
-  if (candidates.length === 0) return await askSelectorLabelNames(prompter);
+  if (candidates.length === 0) return await askSelectorLabelNames(prompter, currentLabels);
 
+  const preselected = candidates.flatMap((name, index) =>
+    currentLabels.includes(name) ? [index] : [],
+  );
   const picks = await prompter.multiChoose<LabelPick>(
     "\n  Which labels pick a model + effort?",
     [
       ...candidates.map((name) => ({ value: { kind: "label" as const, name }, label: name })),
       { value: { kind: "other" }, label: "Other…", hint: "type label names yourself" },
     ],
-    { min: 1 },
+    { min: 1, preselected },
   );
 
   const chosen = picks.flatMap((pick) => (pick.kind === "label" ? [pick.name] : []));
@@ -1463,10 +1493,16 @@ export async function offerToCreateSelectorLabels(
   }
 }
 
-async function askSelectorLabelNames(prompter: Prompter): Promise<string[]> {
+async function askSelectorLabelNames(
+  prompter: Prompter,
+  currentLabels: readonly string[] = [],
+): Promise<string[]> {
   const answer = await prompter.ask(
     "  Selector label names (comma-separated; one model+effort each)",
     {
+      // Prefill the repo's current selector labels so Enter keeps them (edit);
+      // undefined in init, where there is nothing to keep.
+      default: currentLabels.length > 0 ? currentLabels.join(", ") : undefined,
       validate: (value) => (parseLabels(value).length > 0 ? undefined : "enter at least one label"),
     },
   );

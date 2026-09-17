@@ -47,6 +47,12 @@ export interface Choice<T> {
 export interface MultiChooseOptions {
   /** Refuse to submit below this many selections. Defaults to 0 (any, including none). */
   min?: number;
+  /**
+   * Choice indices that start out ticked, so pressing Enter keeps exactly them.
+   * Used by `fixowl edit` to pre-select a repo's currently-mapped labels; omitted
+   * (init's fresh flow) starts with nothing selected.
+   */
+  preselected?: readonly number[];
 }
 
 export interface Prompter {
@@ -259,6 +265,7 @@ export function createPrompter(): Prompter {
     choices: ReadonlyArray<Choice<T>>,
     multi: boolean,
     min: number,
+    preselected: readonly number[] = [],
   ): Promise<number[]> {
     const stdin = process.stdin;
     const stdout = process.stdout;
@@ -267,7 +274,12 @@ export function createPrompter(): Prompter {
     rl.resume(); // nothing may have read a line yet, so make sure input flows
 
     return await new Promise<number[]>((resolve) => {
-      let state: SelectState = { cursor: 0, selected: new Set<number>() };
+      let state: SelectState = {
+        cursor: 0,
+        selected: new Set<number>(
+          multi ? preselected.filter((index) => index >= 0 && index < choices.length) : [],
+        ),
+      };
       let notice: string | undefined;
       let painted = 0;
 
@@ -352,6 +364,7 @@ export function createPrompter(): Prompter {
     question: string,
     choices: ReadonlyArray<Choice<T>>,
     min: number,
+    preselected: readonly number[] = [],
   ): Promise<number[]> {
     write(`${question}\n`);
     for (const [index, choice] of choices.entries()) {
@@ -359,8 +372,14 @@ export function createPrompter(): Prompter {
         `  ${index + 1}) ${choice.label}${choice.hint !== undefined ? ` - ${choice.hint}` : ""}\n`,
       );
     }
+    // Offer the pre-selected rows (1-based) as the default so Enter keeps them.
+    const preselectDefault = preselected
+      .filter((index) => index >= 0 && index < choices.length)
+      .map((index) => index + 1)
+      .join(", ");
+    const fallbackDefault = min === 0 ? "none" : undefined;
     const answer = await ask(`Choices (numbers, comma-separated${min === 0 ? "; or none" : ""})`, {
-      default: min === 0 ? "none" : undefined,
+      default: preselectDefault !== "" ? preselectDefault : fallbackDefault,
       validate: (value) => {
         const parsed = parseIndexList(value, choices.length, min);
         return "problem" in parsed ? parsed.problem : undefined;
@@ -387,9 +406,10 @@ export function createPrompter(): Prompter {
   ): Promise<T[]> {
     if (choices.length === 0) return [];
     const min = Math.min(options.min ?? 0, choices.length);
+    const preselected = options.preselected ?? [];
     const indices = keyboardDriven()
-      ? await runSelector(question, choices, true, min)
-      : await multiChooseTyped(question, choices, min);
+      ? await runSelector(question, choices, true, min, preselected)
+      : await multiChooseTyped(question, choices, min, preselected);
     return valuesOf(choices, indices);
   }
 

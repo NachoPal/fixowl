@@ -123,8 +123,16 @@ Nothing is written until you're done, and the file's comments are preserved.`);
 
     // A switched agent has its own model catalog, so start model selection fresh
     // rather than offering to keep a model/effort that may be invalid for it.
+    // This is the ONE case that clears the keep-or-change prefills: dropping the
+    // model values AND `editing` makes `promptRepoSettings` run the fresh init
+    // path, so the user picks models for the NEW agent from scratch.
     const prefill = toPrefill(current);
     if (agentSwitch !== undefined) {
+      log.info(
+        `\nSwitched agent to "${agent}" - its model/effort/label choices don't carry over, ` +
+          "so model selection starts fresh for the new agent.",
+      );
+      prefill.editing = false;
       prefill.defaultModel = undefined;
       prefill.defaultEffort = undefined;
       prefill.labelModels = undefined;
@@ -177,6 +185,9 @@ async function chooseRepo(prompter: Prompter, config: GlobalConfig): Promise<str
 /** The current resolved settings, as the keep-or-change prefill for the prompts. */
 function toPrefill(current: ResolvedRepoSettings): RepoSettingsPrefill {
   return {
+    // `edit` runs the model/effort/label step as keep-or-change even for a repo
+    // with no model configured, so an all-keep walk-through stays a no-op.
+    editing: true,
     schedule: current.schedule,
     scheduleTrigger: current.scheduleTrigger,
     // Carry the resolved runner mode so a github-hosted repo keeps skipping the
