@@ -6,8 +6,8 @@
  * fallback is a host-local scheduled job that runs shortly after the cron and
  * dispatches the workflow only when the cron did not fire. It backs up the cron
  * without masking whether the cron itself works: a real cron run is recorded as
- * `event: schedule`, a fallback-triggered run is `event: workflow_dispatch`
- * carrying `source: scheduled-fallback` (surfaced in the run-name as the marker
+ * `event: schedule`, a host-scheduler-triggered run is `event: workflow_dispatch`
+ * carrying `source: host-scheduler` (surfaced in the run-name as the marker
  * below), and an ordinary manual run is an untagged `workflow_dispatch`. So an
  * operator can always tell the three apart and keep auditing cron health.
  *
@@ -44,15 +44,28 @@
  * pieces fall back to the UTC calendar day - the pre-anchoring behavior.
  */
 
-/** The `source` workflow_dispatch input value the fallback sends. */
-export const SCHEDULED_FALLBACK_SOURCE = "scheduled-fallback";
+/** The `source` workflow_dispatch input value the host scheduler sends. */
+export const HOST_SCHEDULER_SOURCE = "host-scheduler";
 
 /**
- * Marker the workflow's `run-name` appends for a fallback-tagged dispatch, so a
- * fallback run is recognisable in the runs list (via `display_title`) without a
- * per-run fetch of its inputs.
+ * Marker the workflow's `run-name` appends for a host-scheduler dispatch, so
+ * such a run is recognisable in the runs list (via `display_title`) without a
+ * per-run fetch of its inputs. Neutral by design: it reads correctly whether the
+ * host scheduler is the primary trigger or the `both`-mode cron backup.
  */
-export const SCHEDULED_FALLBACK_MARKER = "[scheduled-fallback]";
+export const HOST_SCHEDULER_MARKER = "[host-scheduler]";
+
+/**
+ * The pre-rename `source` value and run-name marker (before this was renamed
+ * from "scheduled-fallback" to "host-scheduler"). Deployed target-repo workflows
+ * and deployed host-scheduler launchd agents keep emitting these until the
+ * operator re-provisions and reinstalls, so the dispatch-detection and slot guard
+ * must keep recognising them for the transition. The run-name marker is cosmetic
+ * (a transition run may briefly show no marker), but the functional detection
+ * must not regress.
+ */
+export const LEGACY_HOST_SCHEDULER_SOURCE = "scheduled-fallback";
+export const LEGACY_HOST_SCHEDULER_MARKER = "[scheduled-fallback]";
 
 /** A workflow run reduced to what the fallback decision and slot guard need. */
 export interface WorkflowRunLite {
@@ -71,7 +84,7 @@ export interface WorkflowRunLite {
   conclusion: string | null;
   /** ISO 8601 creation timestamp; GitHub returns these in UTC (a trailing "Z"). */
   createdAt: string;
-  /** The run's display title (from `run-name`); carries the fallback marker. */
+  /** The run's display title (from `run-name`); carries the host-scheduler marker. */
   displayTitle: string;
 }
 
@@ -147,16 +160,23 @@ export function coversScheduledSlot(run: WorkflowRunLite): boolean {
 
 /**
  * Whether a run belongs to a scheduled slot - i.e. it is the nightly run,
- * delivered either by the cron (`event: schedule`) or by the fallback (a
- * `workflow_dispatch` whose run-name carries {@link SCHEDULED_FALLBACK_MARKER}).
+ * delivered either by the cron (`event: schedule`) or by the host scheduler (a
+ * `workflow_dispatch` whose run-name carries {@link HOST_SCHEDULER_MARKER}).
  * An ordinary manual dispatch is neither and returns false.
+ *
+ * For backward compatibility the legacy {@link LEGACY_HOST_SCHEDULER_MARKER} is
+ * also recognised: a not-yet-re-provisioned host still emits the old marker, and
+ * the slot guard must keep deduping its runs during the transition.
  */
 export function isScheduledSlotRun(
   run: WorkflowRunLite,
-  marker: string = SCHEDULED_FALLBACK_MARKER,
+  marker: string = HOST_SCHEDULER_MARKER,
 ): boolean {
   if (run.event === "schedule") return true;
-  return run.event === "workflow_dispatch" && run.displayTitle.includes(marker);
+  if (run.event !== "workflow_dispatch") return false;
+  return (
+    run.displayTitle.includes(marker) || run.displayTitle.includes(LEGACY_HOST_SCHEDULER_MARKER)
+  );
 }
 
 /**
@@ -258,7 +278,7 @@ export function decidePrimaryDispatch(
   runs: readonly WorkflowRunLite[],
   now: Date,
   cronSchedule?: string,
-  marker: string = SCHEDULED_FALLBACK_MARKER,
+  marker: string = HOST_SCHEDULER_MARKER,
 ): FallbackDecision {
   const cronTime = cronSchedule !== undefined ? tryParseDailyCron(cronSchedule) : undefined;
   const window = cronTime !== undefined ? "the current occurrence" : "today (UTC)";
@@ -340,7 +360,7 @@ export function guardScheduledSlot(params: SlotGuardParams): SlotGuardResult {
       reason: "not a scheduled-slot run (manual dispatch); never budget-limited",
     };
   }
-  const marker = params.marker ?? SCHEDULED_FALLBACK_MARKER;
+  const marker = params.marker ?? HOST_SCHEDULER_MARKER;
   const cronTime =
     params.cronSchedule !== undefined ? tryParseDailyCron(params.cronSchedule) : undefined;
   const anchor = cronTime !== undefined ? anchorOccurrence(cronTime, params.now) : undefined;

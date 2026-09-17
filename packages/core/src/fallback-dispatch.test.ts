@@ -9,7 +9,8 @@ import {
   isScheduledSlotRun,
   scheduledRunToday,
   tryParseDailyCron,
-  SCHEDULED_FALLBACK_MARKER,
+  HOST_SCHEDULER_MARKER,
+  LEGACY_HOST_SCHEDULER_MARKER,
   type WorkflowRunLite,
 } from "./fallback-dispatch.ts";
 
@@ -29,7 +30,7 @@ function run(overrides: Partial<WorkflowRunLite> = {}): WorkflowRunLite {
 function fallbackRun(overrides: Partial<WorkflowRunLite> = {}): WorkflowRunLite {
   return run({
     event: "workflow_dispatch",
-    displayTitle: `fixowl night run ${SCHEDULED_FALLBACK_MARKER}`,
+    displayTitle: `fixowl night run ${HOST_SCHEDULER_MARKER}`,
     ...overrides,
   });
 }
@@ -106,8 +107,19 @@ describe("isScheduledSlotRun", () => {
     expect(isScheduledSlotRun(run({ event: "schedule" }))).toBe(true);
   });
 
-  it("treats a fallback-tagged dispatch as a scheduled-slot run", () => {
+  it("treats a host-scheduler dispatch as a scheduled-slot run", () => {
     expect(isScheduledSlotRun(fallbackRun())).toBe(true);
+  });
+
+  it("still recognises a legacy scheduled-fallback marker (not-yet-re-provisioned host)", () => {
+    expect(
+      isScheduledSlotRun(
+        run({
+          event: "workflow_dispatch",
+          displayTitle: `fixowl night run ${LEGACY_HOST_SCHEDULER_MARKER}`,
+        }),
+      ),
+    ).toBe(true);
   });
 
   it("does not treat a plain manual dispatch as a scheduled-slot run", () => {
@@ -273,7 +285,7 @@ describe("coversScheduledSlot", () => {
 });
 
 describe("guardScheduledSlot", () => {
-  const base = { now: NOW, marker: SCHEDULED_FALLBACK_MARKER };
+  const base = { now: NOW, marker: HOST_SCHEDULER_MARKER };
 
   it("never blocks a run that is not itself a scheduled-slot run (manual dispatch)", () => {
     const result = guardScheduledSlot({
@@ -311,6 +323,26 @@ describe("guardScheduledSlot", () => {
     const result = guardScheduledSlot({
       ...base,
       runs: [run({ id: 100, event: "schedule" }), fallbackRun({ id: 200 })],
+      currentRunId: 200,
+      selfIsScheduledSlot: true,
+    });
+    expect(result.proceed).toBe(false);
+    expect(result.supersededBy?.id).toBe(100);
+  });
+
+  it("stands a run down for an earlier legacy scheduled-fallback dispatch (transition)", () => {
+    // A not-yet-re-provisioned host still emits the old [scheduled-fallback]
+    // marker; the guard must keep deduping its runs during the transition.
+    const legacyRun = run({
+      id: 100,
+      event: "workflow_dispatch",
+      status: "in_progress",
+      conclusion: null,
+      displayTitle: `fixowl night run ${LEGACY_HOST_SCHEDULER_MARKER}`,
+    });
+    const result = guardScheduledSlot({
+      ...base,
+      runs: [legacyRun, run({ id: 200, event: "schedule" })],
       currentRunId: 200,
       selfIsScheduledSlot: true,
     });

@@ -157,9 +157,10 @@ inputs:
     default: "true"
   source:
     description: >-
-      Internal. Set to "scheduled-fallback" by fixowl's local fallback trigger so
-      the run counts as the scheduled slot for the once-a-day budget guard. Left
-      blank for the cron and for manual runs.
+      Internal. Set to "host-scheduler" by fixowl's local host scheduler so
+      the run counts as the scheduled slot for the once-a-day budget guard. The
+      legacy "scheduled-fallback" value is still honoured for a not-yet-
+      re-provisioned host. Left blank for the cron and for manual runs.
     required: false
     default: ""
   schedule:

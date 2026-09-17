@@ -5,7 +5,7 @@ import {
   fallbackGapMinutes,
   hostSchedulerRole,
   resolveRepoSettings,
-  SCHEDULED_FALLBACK_SOURCE,
+  HOST_SCHEDULER_SOURCE,
   type FallbackDecision,
   type WorkflowRunLite,
 } from "@fixowl/core";
@@ -84,7 +84,7 @@ export function realHostSchedulerCheckDeps(ctx: CliContext): HostSchedulerCheckD
         ...ref,
         workflow_id: "fixowl.yml",
         ref: branch,
-        inputs: { source: SCHEDULED_FALLBACK_SOURCE },
+        inputs: { source: HOST_SCHEDULER_SOURCE },
       });
     },
     now: () => new Date(),

@@ -86320,8 +86320,10 @@ function parseId(raw, name) {
 }
 
 // packages/core/src/fallback-dispatch.ts
-var SCHEDULED_FALLBACK_SOURCE = "scheduled-fallback";
-var SCHEDULED_FALLBACK_MARKER = "[scheduled-fallback]";
+var HOST_SCHEDULER_SOURCE = "host-scheduler";
+var HOST_SCHEDULER_MARKER = "[host-scheduler]";
+var LEGACY_HOST_SCHEDULER_SOURCE = "scheduled-fallback";
+var LEGACY_HOST_SCHEDULER_MARKER = "[scheduled-fallback]";
 function isSameUtcDay(a, b) {
   return a.getUTCFullYear() === b.getUTCFullYear() && a.getUTCMonth() === b.getUTCMonth() && a.getUTCDate() === b.getUTCDate();
 }
@@ -86346,9 +86348,10 @@ function coversScheduledSlot(run2) {
   if (run2.status !== "completed") return true;
   return run2.conclusion === "success";
 }
-function isScheduledSlotRun(run2, marker2 = SCHEDULED_FALLBACK_MARKER) {
+function isScheduledSlotRun(run2, marker2 = HOST_SCHEDULER_MARKER) {
   if (run2.event === "schedule") return true;
-  return run2.event === "workflow_dispatch" && run2.displayTitle.includes(marker2);
+  if (run2.event !== "workflow_dispatch") return false;
+  return run2.displayTitle.includes(marker2) || run2.displayTitle.includes(LEGACY_HOST_SCHEDULER_MARKER);
 }
 function guardScheduledSlot(params) {
   if (!params.selfIsScheduledSlot) {
@@ -86357,7 +86360,7 @@ function guardScheduledSlot(params) {
       reason: "not a scheduled-slot run (manual dispatch); never budget-limited"
     };
   }
-  const marker2 = params.marker ?? SCHEDULED_FALLBACK_MARKER;
+  const marker2 = params.marker ?? HOST_SCHEDULER_MARKER;
   const cronTime = params.cronSchedule !== void 0 ? tryParseDailyCron(params.cronSchedule) : void 0;
   const anchor2 = cronTime !== void 0 ? anchorOccurrence(cronTime, params.now) : void 0;
   const coversOccurrence = (run2) => anchor2 !== void 0 ? new Date(run2.createdAt).getTime() >= anchor2.getTime() : isSameUtcDay(new Date(run2.createdAt), params.now);
@@ -129394,7 +129397,8 @@ async function run() {
   const { data: repoData } = await octokit.repos.get({ owner, repo });
   const guardToken = process.env.GITHUB_TOKEN;
   const runsOctokit = guardToken !== void 0 && guardToken !== "" ? new Octokit2({ auth: guardToken }) : void 0;
-  const scheduledSlot = process.env.GITHUB_EVENT_NAME === "schedule" || getInput("source") === SCHEDULED_FALLBACK_SOURCE;
+  const source = getInput("source");
+  const scheduledSlot = process.env.GITHUB_EVENT_NAME === "schedule" || source === HOST_SCHEDULER_SOURCE || source === LEGACY_HOST_SCHEDULER_SOURCE;
   const currentRunId = process.env.GITHUB_RUN_ID !== void 0 && process.env.GITHUB_RUN_ID !== "" ? Number(process.env.GITHUB_RUN_ID) : void 0;
   const runUrl = process.env.GITHUB_SERVER_URL !== void 0 && process.env.GITHUB_RUN_ID !== void 0 ? `${process.env.GITHUB_SERVER_URL}/${repoFullName}/actions/runs/${process.env.GITHUB_RUN_ID}` : void 0;
   const summary2 = await runNight(

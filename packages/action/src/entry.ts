@@ -3,7 +3,8 @@ import { Octokit } from "@octokit/rest";
 import {
   labelModelsSchema,
   resolveRuntimeCredentialFromEnv,
-  SCHEDULED_FALLBACK_SOURCE,
+  HOST_SCHEDULER_SOURCE,
+  LEGACY_HOST_SCHEDULER_SOURCE,
   type LabelModelMap,
   type LabelRule,
 } from "@fixowl/core";
@@ -159,12 +160,15 @@ async function run(): Promise<void> {
   const runsOctokit =
     guardToken !== undefined && guardToken !== "" ? new Octokit({ auth: guardToken }) : undefined;
 
-  // A scheduled-slot run is the cron (event: schedule) or a fallback-tagged
-  // dispatch (source: scheduled-fallback). A plain manual dispatch is neither
-  // and is never budget-limited.
+  // A scheduled-slot run is the cron (event: schedule) or a host-scheduler
+  // dispatch (source: host-scheduler). The legacy source value is still accepted
+  // so a not-yet-re-provisioned host keeps deduping during the transition. A
+  // plain manual dispatch is neither and is never budget-limited.
+  const source = core.getInput("source");
   const scheduledSlot =
     process.env.GITHUB_EVENT_NAME === "schedule" ||
-    core.getInput("source") === SCHEDULED_FALLBACK_SOURCE;
+    source === HOST_SCHEDULER_SOURCE ||
+    source === LEGACY_HOST_SCHEDULER_SOURCE;
   const currentRunId =
     process.env.GITHUB_RUN_ID !== undefined && process.env.GITHUB_RUN_ID !== ""
       ? Number(process.env.GITHUB_RUN_ID)
