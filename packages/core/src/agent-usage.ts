@@ -45,7 +45,7 @@ export interface UsageProbe {
  * the caller can surface *why* the usage budget went unobserved instead of
  * emitting a bare "unobservable" warning. The read never throws for a transient
  * failure - it abstains with a `reason` and the run falls through to the
- * remaining conditions (count + wall-clock), preserving the fail-open contract.
+ * remaining conditions (tokens + wall-clock), preserving the fail-open contract.
  */
 export interface UsageReadResult {
   snapshot?: UsageSnapshot;
@@ -151,7 +151,7 @@ const claudeUsageReader: UsageReader = {
       // Advisory infrastructure: a transient read failure (non-2xx surfaced by
       // the injected edge as a throw, or a transport error) must never abort the
       // night. Abstain with the concrete cause so the next run is diagnosable,
-      // and let count + wall-clock carry the run.
+      // and let the selection cap + wall-clock carry the run.
       const detail = error instanceof Error ? error.message : String(error);
       return { reason: `usage read failed: ${detail}` };
     }

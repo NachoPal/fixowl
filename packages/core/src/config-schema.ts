@@ -106,11 +106,15 @@ const repoEntrySchema = z.object({
   labels: labelRuleSchema.optional(),
   agent: z.string().optional(),
   /**
-   * Run-budget stop conditions (issue #21), each optional. The night stops on
-   * the first that trips; leaving one unset opts that axis out.
-   * `max_issues_per_run` is the kept secondary count cap.
+   * How many issues one night selects and works. A pure SELECTION cap, not a
+   * run-budget stop condition (issue #82): the night never works more issues
+   * than it selected, so a count stop condition could never trip.
    */
   max_issues_per_run: z.number().int().positive().optional(),
+  /**
+   * Run-budget stop conditions (issue #21), each optional. The night stops on
+   * the first that trips; leaving one unset opts that axis out.
+   */
   /** Stop before starting a new issue once the agent's usage window hits this % (0..100). */
   usage_budget_percent: z.number().min(0).max(100).optional(),
   /**

@@ -249,7 +249,7 @@ defaults:
                                           #   default self-hosted. Nothing runs on your machine.
   labels: { any: [overnight] }            # any/all combinations supported
   agent: claude
-  max_issues_per_run: 4                   # run budget: at most this many PRs ship
+  max_issues_per_run: 4                   # selection cap: at most this many issues are worked
   # usage_budget_percent: 85              # run budget (subscription agents): stop at this % of the usage window
   # total_token_budget: 3000000           # run budget (API-credit agents): stop once total token spend hits this
   # run_budget_minutes: 240               # run budget: don't start a new issue after this long
@@ -354,14 +354,19 @@ the catalog).
 
 ### Run budgets
 
-A night is bounded by a small set of **independent, each-optional stop
-conditions**, evaluated at two gates - once before starting (pre-run) and again
-before each issue (between-issues). The run stops on the **first** condition
-that trips, and the night summary names which:
+How much work a night takes on is set by **`max_issues_per_run`** - a
+**selection cap**: at most this many issues are selected and worked in one run
+(the rest wait for the next night). It is applied when the night picks its
+issues, *before* any agent runs, so it bounds the run by construction rather
+than stopping it part-way; a selected issue that is skipped, deferred or fails
+does **not** free its slot for another issue the same night. Defaults to 4.
 
-- **`max_issues_per_run`** - a count cap: at most this many PRs ship in one run.
-  The secondary cap, and the only budget that works for agents whose usage is
-  not observable. Defaults to 4.
+On top of that cap, a night is bounded by a small set of **independent,
+each-optional spend/time stop conditions**, evaluated at two gates - once before
+starting (pre-run) and again before each issue (between-issues). The run stops on
+the **first** condition that trips, leaves the remaining issues unstarted, and
+the night summary names which:
+
 - **`usage_budget_percent`** - for **subscription-billed** agents (`claude`):
   stop before starting a new issue once the agent's rolling usage window is at or
   above this percent. Read out-of-band on the host from the provider (for
@@ -388,7 +393,7 @@ that trips, and the night summary names which:
   > claude's per-run usage needs `claude -p --output-format json`, and that JSON
   > wrapper breaks the plain-text verdict the verify-before-fix triage parses from
   > claude's fix output, so the claude meter abstains fail-open (a documented
-  > follow-up). Such a run is still bounded by count and wall-clock.
+  > follow-up). Such a run is still bounded by the selection cap and wall-clock.
 - **`run_budget_minutes`** - a graceful wall-clock cap: don't *start* a new issue
   after this many minutes. Distinct from the workflow's blunt `timeout-minutes`
   hard-kill ceiling. Opted out when unset.
@@ -396,7 +401,7 @@ that trips, and the night summary names which:
 Each is set in `defaults` and overridable per repo; leave one unset (or delete
 its line) to opt that axis out. `fixowl init` prompts for the spend cap that fits
 the chosen agent's billing (usage % for subscription, token total for
-API-credit) plus wall-clock, count, and the per-issue timeout. The pure gate
+API-credit) plus wall-clock, the selection cap, and the per-issue timeout. The pure gate
 logic lives in `packages/core/src/run-budget.ts`; the out-of-band usage read is
 behind the model-agnostic `UsageReader` in `packages/core/src/agent-usage.ts`,
 and the in-band spend meter behind `SpendMeter`/`getSpendMeter` in

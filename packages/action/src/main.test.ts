@@ -406,7 +406,7 @@ describe("runNight", () => {
       expect(summary.results.find((r) => r.issue.number === 1)?.usage?.totalTokens).toBe(1000);
     });
 
-    it("abstains when the agent reports no usage, falling through to count + wall-clock", async () => {
+    it("abstains when the agent reports no usage, falling through to wall-clock", async () => {
       const { workspaceDir, inputs } = await setup();
       const github = new FakeGitHub(structuredClone(threeIssues));
       // codex agent whose output carries no usage: spend is unmeasurable, so the
@@ -920,7 +920,11 @@ describe("runNight", () => {
     });
   });
 
-  it("respects max_issues_per_run", async () => {
+  // Issue #82: `max_issues_per_run` is a SELECTION cap, not a run-budget stop
+  // condition. The night works exactly the capped issues and simply ends; there is
+  // no count condition to trip, so the summary reports no early stop and the
+  // uncapped issue is left for the next night rather than listed as not-started.
+  it("respects max_issues_per_run as a selection cap, with no budget stop", async () => {
     const { workspaceDir, inputs } = await setup();
     const github = new FakeGitHub(structuredClone(threeIssues));
     const engine = makeEngine({ workspaceDir, classifyOutput: '{"chains": [[1], [2]]}' });
@@ -931,6 +935,11 @@ describe("runNight", () => {
     );
     expect(summary.results.map((r) => r.issue.number)).toEqual([1, 2]);
     expect(github.pulls).toHaveLength(2);
+    // The cap is not a budget: nothing "stopped the run early", and #3 is not
+    // reported as not-started - it was simply never selected.
+    expect(summary.budgetStop).toBeUndefined();
+    expect(summary.notStarted).toBeUndefined();
+    expect(renderSummary("test/repo", summary)).not.toContain("Run stopped early");
   });
 
   it("the agent container gets only allowlisted env and the workspace mount", async () => {

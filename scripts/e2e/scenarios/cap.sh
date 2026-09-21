@@ -1,15 +1,12 @@
 #!/usr/bin/env bash
-# cap scenario (T1-budget): the per-run count cap bounds how many issues ship. Seed 4
+# cap scenario (T1-budget): the per-run selection cap bounds how many issues ship. Seed 4
 # independent issues, cap 3; exactly the three oldest ship and the fourth is left for the
 # next night, named in the run.
 #
-# NOTE on the heading: in the real action the selection cap and the count BUDGET share one
-# input (max-issues-per-run), so selection is capped to 3 BEFORE the between-issues count
-# budget can trip - the count budget is redundant with the selection cap and is never the
-# observable stopper here. The honest, reachable surface is the `capping to N` log line and
-# a missing 4th PR, which is what we assert. (The `## Run stopped early (count budget)`
-# heading only appears when a budget's count cap is lower than the selection cap, which no
-# single input can produce.) See the Phase 0 PR description.
+# NOTE on the heading: `max-issues-per-run` is a pure SELECTION cap, not a run-budget stop
+# condition (issue #82) - the night simply never selects a 4th issue, so no
+# `## Run stopped early` heading is rendered. The observable surface is the `capping to N`
+# log line and a missing 4th PR, which is what we assert.
 
 CAP_ISSUES=()
 

@@ -8,7 +8,7 @@ import {
 } from "./run-budget.ts";
 
 function state(partial: Partial<BudgetState> = {}): BudgetState {
-  return { shipped: 0, elapsedMs: 0, usage: undefined, tokensUsed: undefined, ...partial };
+  return { elapsedMs: 0, usage: undefined, tokensUsed: undefined, ...partial };
 }
 
 function usage(usedPercent: number, limiting = "five_hour"): UsageSnapshot {
@@ -26,34 +26,26 @@ function verdict(limits: BudgetLimits, s: BudgetState) {
 describe("buildStopConditions", () => {
   it("includes only the conditions whose limit is set", () => {
     expect(buildStopConditions({}).map((c) => c.name)).toEqual([]);
-    expect(buildStopConditions({ maxIssues: 4 }).map((c) => c.name)).toEqual(["count"]);
-    expect(
-      buildStopConditions({ maxIssues: 4, usagePercent: 85, runMinutes: 240 }).map((c) => c.name),
-    ).toEqual(["count", "usage", "wallclock"]);
+    expect(buildStopConditions({ usagePercent: 85 }).map((c) => c.name)).toEqual(["usage"]);
+    expect(buildStopConditions({ usagePercent: 85, runMinutes: 240 }).map((c) => c.name)).toEqual([
+      "usage",
+      "wallclock",
+    ]);
     expect(
       buildStopConditions({
-        maxIssues: 4,
         usagePercent: 85,
         totalTokens: 3_000_000,
         runMinutes: 240,
       }).map((c) => c.name),
-    ).toEqual(["count", "usage", "tokens", "wallclock"]);
-  });
-});
-
-describe("count condition", () => {
-  it("trips once shipped reaches the cap, not before", () => {
-    expect(verdict({ maxIssues: 2 }, state({ shipped: 1 })).stop).toBe(false);
-    const tripped = verdict({ maxIssues: 2 }, state({ shipped: 2 }));
-    expect(tripped.stop).toBe(true);
-    if (tripped.stop) {
-      expect(tripped.condition).toBe("count");
-      expect(tripped.reason).toContain("cap 2");
-    }
+    ).toEqual(["usage", "tokens", "wallclock"]);
   });
 
-  it("is opted out when maxIssues is undefined", () => {
-    expect(verdict({}, state({ shipped: 999 })).stop).toBe(false);
+  // Issue #82: `max_issues_per_run` is a selection cap, not a stop condition, so
+  // no count condition exists to build (the loop can never outrun the selection).
+  it("has no count condition", () => {
+    expect(
+      buildStopConditions({ usagePercent: 85, totalTokens: 1, runMinutes: 1 }).map((c) => c.name),
+    ).not.toContain("count");
   });
 });
 
@@ -120,12 +112,12 @@ describe("wall-clock condition", () => {
 });
 
 describe("first-to-trip ordering", () => {
-  it("reports count before usage before wall-clock when several trip at once", () => {
-    const all: BudgetLimits = { maxIssues: 1, usagePercent: 50, runMinutes: 1 };
-    const everything = state({ shipped: 5, usage: usage(90), elapsedMs: 60 * 60_000 });
+  it("reports usage before tokens before wall-clock when several trip at once", () => {
+    const all: BudgetLimits = { usagePercent: 50, totalTokens: 1_000, runMinutes: 1 };
+    const everything = state({ usage: usage(90), tokensUsed: 2_000, elapsedMs: 60 * 60_000 });
     const v = evaluateBudget(buildStopConditions(all), everything);
     expect(v.stop).toBe(true);
-    if (v.stop) expect(v.condition).toBe("count");
+    if (v.stop) expect(v.condition).toBe("usage");
   });
 
   it("skips an abstaining earlier condition and reports the next that trips", () => {
@@ -152,8 +144,8 @@ describe("first-to-trip ordering", () => {
   it("does not stop when no condition trips", () => {
     expect(
       verdict(
-        { maxIssues: 4, usagePercent: 85, totalTokens: 3_000_000, runMinutes: 240 },
-        state({ shipped: 1, usage: usage(10), tokensUsed: 1000, elapsedMs: 1000 }),
+        { usagePercent: 85, totalTokens: 3_000_000, runMinutes: 240 },
+        state({ usage: usage(10), tokensUsed: 1000, elapsedMs: 1000 }),
       ).stop,
     ).toBe(false);
   });

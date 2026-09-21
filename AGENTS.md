@@ -322,12 +322,14 @@ See [docs/releasing.md](docs/releasing.md).
   [docs/priority-selection.md](docs/priority-selection.md).
 
 - Run budgets (issue #21) bound the night with a set of independent,
-  each-optional stop conditions - count (`max_issues_per_run`), usage %
-  (`usage_budget_percent`), total tokens (`total_token_budget`), graceful
-  wall-clock (`run_budget_minutes`) - and the run stops on the first that trips.
+  each-optional stop conditions - usage % (`usage_budget_percent`), total tokens
+  (`total_token_budget`), graceful wall-clock (`run_budget_minutes`) - and the run
+  stops on the first that trips. There is deliberately NO count condition (#82):
+  `max_issues_per_run` is a pure SELECTION cap applied before the loop, so a count
+  condition could never trip (the loop never starts more issues than were
+  selected) - do not add one back.
   The trip/no-trip and first-trip-wins logic is pure in
-  `packages/core/src/run-budget.ts` (fixed order count -> usage -> tokens ->
-  wallclock); `main.ts` assembles the state snapshot and evaluates it at two
+  `packages/core/src/run-budget.ts` (fixed order usage -> tokens -> wallclock); `main.ts` assembles the state snapshot and evaluates it at two
   gates (pre-run, and between-issues at the top of the inner loop). Keep the
   conditions pure and keep state assembly the only I/O, so parallel chains (#36)
   only have to make the snapshot consistent. Two spend axes, split by billing:
@@ -347,7 +349,7 @@ See [docs/releasing.md](docs/releasing.md).
   JSON wrapper would break verify_before_fix's plain-text verdict parse (#143); a
   json-safe claude meter is a documented follow-up. Both spend axes abstain
   fail-open (subscription window unreadable, or spend unmeasurable) so they never
-  abort a night count + wall-clock would allow. Denomination is **tokens, not
+  abort a night the selection cap + wall-clock would allow. Denomination is **tokens, not
   dollars** - tokens are what every API-credit agent reports directly, with no
   per-model price table to drift; the `SpendSample` breakdown keeps cached-input
   and reasoning-output counts so a dollar layer could price them later without
@@ -359,8 +361,8 @@ See [docs/releasing.md](docs/releasing.md).
   `usage_budget_percent`, `total_token_budget`, and `run_budget_minutes`
   have no built-in resolution fallback (unset == opted out), so a pre-#21 config
   is unchanged; the starter values in `FIXOWL_DEFAULTS` are only what `fixowl
-  init` writes. `max_issues_per_run` stays the count cap and still bounds how many
-  issues are selected/classified. NOTE (open verification): `parseCodexUsage`
+  init` writes. `max_issues_per_run` stays the selection cap that bounds how many
+  issues are selected/classified (never a stop condition). NOTE (open verification): `parseCodexUsage`
   was built to the documented `codex exec --json` output shape; a live codex
   transcript was not captured, so the parser abstains defensively on any
   unexpected shape - confirm the exact envelope against a real run before relying
