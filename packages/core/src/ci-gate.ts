@@ -86,12 +86,23 @@ export interface GatingChecks {
 }
 
 /**
+ * True when the required set is readable AND names at least one context. A
+ * `{ readable: true, contexts: [] }` shape violates the documented "readable
+ * implies non-empty" invariant (no production edge builds it, but a test fake
+ * or future caller could) - treated as unreadable so it falls back to gating
+ * on all checks instead of vacuously passing with nothing to check.
+ */
+function hasRequiredContexts(required: RequiredChecks): boolean {
+  return required.readable && required.contexts.length > 0;
+}
+
+/**
  * Which checks gate readiness. When the required set is readable, gate strictly
  * on the checks whose name matches a required context; otherwise fall back to
  * every check on the ref (captain 7.2).
  */
 export function gatingChecks(all: CheckStatusLite[], required: RequiredChecks): GatingChecks {
-  if (required.readable) {
+  if (hasRequiredContexts(required)) {
     const wanted = new Set(required.contexts);
     return { checks: all.filter((check) => wanted.has(check.name)), usedFallback: false };
   }
@@ -117,7 +128,7 @@ export type GateDecision = "green" | "failed" | "pending";
  * reports the vacuous result.
  */
 export function evaluateGate(gating: GatingChecks, required: RequiredChecks): GateDecision {
-  if (required.readable) {
+  if (hasRequiredContexts(required)) {
     const present = new Map(gating.checks.map((check) => [check.name, check]));
     const matched = required.contexts.map((context) => present.get(context));
     if (matched.some((check) => check === undefined || check.status !== "completed")) {
@@ -149,7 +160,7 @@ export function evaluateGate(gating: GatingChecks, required: RequiredChecks): Ga
  * matched check is still running (real progress is being made).
  */
 export function requiredContextsStalled(gating: GatingChecks, required: RequiredChecks): boolean {
-  if (!required.readable) return false;
+  if (!hasRequiredContexts(required)) return false;
   const present = new Map(gating.checks.map((check) => [check.name, check]));
   const matched = required.contexts.map((context) => present.get(context));
   const anyMissing = matched.some((check) => check === undefined);
