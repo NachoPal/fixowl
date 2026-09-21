@@ -125476,7 +125476,22 @@ function makeGitHubApi(octokit, owner, repo, runsOctokit) {
         if (isNotAccessibleError(error62)) return void 0;
         throw error62;
       });
-      if (runs === void 0) return { readable: false, checks: [] };
+      if (runs === void 0) {
+        try {
+          const { data } = await octokit.repos.getCombinedStatusForRef({ owner, repo, ref: sha });
+          for (const status of data.statuses) {
+            byName.set(status.context, {
+              name: status.context,
+              status: status.state === "pending" ? "in_progress" : "completed",
+              conclusion: status.state === "success" ? "success" : status.state === "pending" ? null : "failure",
+              summary: status.description ?? void 0,
+              detailsUrl: status.target_url ?? void 0
+            });
+          }
+        } catch {
+        }
+        return { readable: byName.size > 0, checks: [...byName.values()] };
+      }
       for (const checkRun of runs) {
         byName.set(checkRun.name, {
           name: checkRun.name,
