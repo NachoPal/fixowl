@@ -1168,7 +1168,7 @@ export async function promptRepoSettings(
     },
   );
   const maxIssuesAnswer = await prompter.ask(
-    "  Optional hard cap - max issues per night (secondary count cap)",
+    "  Optional hard cap - max issues selected per night",
     {
       default: String(prefill.maxIssuesPerRun),
       validate: (value) => (/^[1-9]\d*$/.test(value) ? undefined : "enter a positive whole number"),
@@ -1839,9 +1839,9 @@ defaults:
                                 #   this machine; pair with schedule_trigger: github-cron). Default: self-hosted.
   labels: { any: [overnight] }
   agent: claude
+  max_issues_per_run: 4        # selection cap: at most this many issues are worked per night
   # Layered run-budget (issue #21): the night stops on the first condition that
   # trips. Each is optional; delete/omit a line to opt that axis out.
-  max_issues_per_run: 4        # secondary cap: at most this many PRs ship
   # usage_budget_percent: 85       # subscription agents: stop once the usage window hits this %
   # total_token_budget: 3000000    # API-credit agents (codex, or claude on an API key): stop once total token spend hits this
   # run_budget_minutes: 240        # graceful wall-clock: don't start a new issue after this long
