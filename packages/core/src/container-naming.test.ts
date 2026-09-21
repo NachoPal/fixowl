@@ -3,6 +3,7 @@ import {
   CONTAINER_NAME_MAX_LENGTH,
   containerName,
   containerNamePrefix,
+  CONTAINER_REPO_SLUG_MAX_LENGTH,
   parseContainerName,
 } from "./container-naming.ts";
 
@@ -90,5 +91,62 @@ describe("parseContainerName", () => {
       purpose: "",
       truncated: false,
     });
+  });
+});
+
+describe("long repo slugs (the issue and purpose tokens are budgeted, not clipped)", () => {
+  // 52+ chars of slug: long enough that clipping the assembled name would have
+  // eaten the `<issue>-<purpose>` tail entirely.
+  const longRepo = "acme-platform-engineering/widget-service-frontend-renderer";
+
+  it("keeps the issue and a purpose for a 52+ char slug", () => {
+    // "/" and "-" are 1:1 in the slug, so the repo length is the slug length.
+    expect(longRepo.length).toBeGreaterThanOrEqual(52);
+    const name = containerName(longRepo, 12345, "agent");
+    expect(name.length).toBeLessThanOrEqual(CONTAINER_NAME_MAX_LENGTH);
+    expect(parseContainerName(name, longRepo)).toEqual({
+      issue: 12345,
+      purpose: "agent",
+      truncated: false,
+    });
+  });
+
+  it("gives every (issue, purpose) of a long-slug repo its own name", () => {
+    const names = [
+      containerName(longRepo, 12345, "agent"),
+      containerName(longRepo, 12345, "check-lint"),
+      containerName(longRepo, 12346, "agent"),
+      containerName(longRepo, "classify", "claude"),
+    ];
+    expect(new Set(names).size).toBe(names.length);
+    for (const name of names) {
+      expect(name.length).toBeLessThanOrEqual(CONTAINER_NAME_MAX_LENGTH);
+    }
+  });
+
+  it("keeps the discovery prefix a real prefix of long-slug names (fixowl watch)", () => {
+    const prefix = containerNamePrefix(longRepo);
+    expect(prefix.length).toBeLessThanOrEqual(
+      CONTAINER_REPO_SLUG_MAX_LENGTH + "fixowl-".length + 1,
+    );
+    for (const purpose of ["agent", "check-lint"]) {
+      expect(containerName(longRepo, 7, purpose).startsWith(prefix)).toBe(true);
+    }
+  });
+
+  it("keeps two long repos sharing a head distinct", () => {
+    const sibling = "acme-platform-engineering/widget-service-frontend-renderer-v2";
+    expect(containerNamePrefix(longRepo)).not.toBe(containerNamePrefix(sibling));
+    expect(containerName(longRepo, 7, "agent")).not.toBe(containerName(sibling, 7, "agent"));
+    expect(parseContainerName(containerName(sibling, 7, "agent"), longRepo)).toBeUndefined();
+  });
+
+  it("still yields the issue when a long purpose is clipped on a long slug", () => {
+    const name = containerName(longRepo, 12345, "check-a-very-descriptive-verification-step-here");
+    expect(name.length).toBe(CONTAINER_NAME_MAX_LENGTH);
+    const parsed = parseContainerName(name, longRepo);
+    expect(parsed?.issue).toBe(12345);
+    expect(parsed?.purpose).not.toBe("");
+    expect(parsed?.truncated).toBe(true);
   });
 });
