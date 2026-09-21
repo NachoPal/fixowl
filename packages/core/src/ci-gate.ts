@@ -13,8 +13,14 @@
 export interface CheckStatusLite {
   /** Check-run name or status context. Matched against required contexts by exact string. */
   name: string;
-  /** Lifecycle phase; only "completed" checks carry a meaningful conclusion. */
-  status: "queued" | "in_progress" | "completed";
+  /**
+   * Lifecycle phase; only "completed" checks carry a meaningful conclusion.
+   * GitHub's check-run status is actually this six-value set (the REST docs
+   * list `waiting`/`requested`/`pending` alongside the three common ones);
+   * every non-"completed" value is treated as pending by both gate branches
+   * below, so the extra values need no special-casing, just honest typing.
+   */
+  status: "queued" | "in_progress" | "completed" | "waiting" | "requested" | "pending";
   /**
    * Terminal result of a completed check. null while still running. A failure
    * kind (see `isFailureConclusion`) turns the PR red; success/neutral/skipped
