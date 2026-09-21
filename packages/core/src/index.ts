@@ -35,6 +35,7 @@ export {
   containerName,
   containerNamePrefix,
   CONTAINER_NAME_MAX_LENGTH,
+  CONTAINER_REPO_SLUG_MAX_LENGTH,
   parseContainerName,
   type ContainerIssue,
   type ParsedContainerName,
