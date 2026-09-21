@@ -7,8 +7,11 @@ import { makeGitHubApi, reduceTriageNode } from "./github-api.ts";
  * missing Checks: read 403s when reading a ref's checks ("Resource not
  * accessible by integration"; GitHub words the same denial "by personal access
  * token" for a user token, and both are exercised here). `getChecksForRef` must
- * swallow that into `readable: false` (mirroring `getRequiredChecks`) instead
- * of throwing and failing the whole issue.
+ * swallow that into a fallback read of commit statuses (a separate
+ * permission, Commit statuses: read): `readable: true` with those statuses
+ * when at least one exists, `readable: false` (mirroring `getRequiredChecks`)
+ * only when both sources come up empty - instead of throwing and failing the
+ * whole issue.
  */
 describe("makeGitHubApi.getChecksForRef", () => {
   it("returns readable:false (never throws) when the check-runs read 403s", async () => {
@@ -44,6 +47,42 @@ describe("makeGitHubApi.getChecksForRef", () => {
 
     expect(result.readable).toBe(true);
     expect(result.checks.map((c) => c.name)).toEqual(["ci"]);
+  });
+
+  it("falls back to commit statuses when check runs 403 but statuses exist (issue #84)", async () => {
+    const notAccessible = Object.assign(
+      new Error("Resource not accessible by personal access token"),
+      { status: 403 },
+    );
+    const octokit = {
+      paginate: async () => {
+        throw notAccessible;
+      },
+      checks: { listForRef: () => {} },
+      repos: {
+        getCombinedStatusForRef: async () => ({
+          data: {
+            statuses: [
+              { context: "third-party-ci", state: "success", description: "ok", target_url: null },
+            ],
+          },
+        }),
+      },
+    } as unknown as Octokit;
+
+    const api = makeGitHubApi(octokit, "owner", "repo", undefined);
+    const result = await api.getChecksForRef("deadbeef");
+
+    expect(result.readable).toBe(true);
+    expect(result.checks).toEqual([
+      {
+        name: "third-party-ci",
+        status: "completed",
+        conclusion: "success",
+        summary: "ok",
+        detailsUrl: undefined,
+      },
+    ]);
   });
 
   it("re-throws a non-permission error (a transient failure still surfaces)", async () => {
