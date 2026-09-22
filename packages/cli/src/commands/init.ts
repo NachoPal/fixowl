@@ -965,10 +965,11 @@ async function stepRepos(
 Step 3/4  Repositories
 ----------------------
 For each repo: which one, when the nightly run fires, which labels mark an
-issue as fixowl's, the run budgets that stop the night (a spend cap - usage %
-for subscription agents or a token total for API-credit agents - plus
-wall-clock and an optional issue-count cap), the per-issue timeout, the
-CI-gated fix loop budget, and which model the coding agent runs with.`);
+issue as fixowl's, the run budgets that stop the night (a spend cap - a token
+total for API-credit agents; the subscription usage-% cap is not offered because
+it is unobservable on the claude subscription path - plus wall-clock and an
+optional issue-count cap), the per-issue timeout, the CI-gated fix loop budget,
+and which model the coding agent runs with.`);
 
   const repos: RepoAnswers[] = [];
   // The wizard's sticky-last-value defaults: the first repo starts from the
@@ -1124,26 +1125,27 @@ export async function promptRepoSettings(
   );
   // Layered run-budget (issue #21): the night stops on the first condition
   // that trips. Each is optional; a blank answer opts that axis out. The spend
-  // cap is billing-aware, and billing is auth-aware for claude: a subscription
-  // credential (claude on an OAuth token) is bounded by a % of its usage window;
-  // an API-credit credential (codex, or claude on an API key) is bounded by a
-  // total-token cap (there is no usage window to read); a zero-spend agent
-  // (script) gets no spend prompt at all.
+  // cap is billing-aware, and billing is auth-aware for claude: an API-credit
+  // credential (codex, or claude on an API key) is bounded by a total-token cap;
+  // a zero-spend agent (script) gets no spend prompt at all.
+  //
+  // The subscription usage window (`usage_budget_percent`) is NOT observable on
+  // the claude subscription path and so is no longer offered here: the only
+  // subscription agent is claude-on-OAuth, whose `CLAUDE_CODE_OAUTH_TOKEN` is
+  // inference-only by Anthropic's design and cannot read `/api/oauth/usage`
+  // (which requires the `user:profile` scope). A usage-% cap there would silently
+  // no-op, so init writes none and that path is bounded by count + wall-clock.
+  // The config key stays valid (see config-schema.ts): an existing value is
+  // preserved on `edit` for back-compat and the no-op-edit invariant, and a
+  // future subscription provider that exposes a readable window could use it.
   const billing = agentBilling(agent, agentEnv);
   let usageBudgetPercent: number | undefined;
   let totalTokenBudget: number | undefined;
   if (billing === "subscription") {
-    const usageBudgetAnswer = await prompter.ask(
-      "  Usage budget - stop the night at what % of the agent's usage window? (blank = no usage cap)",
-      {
-        default: prefill.usageBudgetPercent === undefined ? "" : String(prefill.usageBudgetPercent),
-        validate: (value) =>
-          value.trim() === "" || isPercent(value)
-            ? undefined
-            : "enter a percent 0-100, or leave blank for no usage cap",
-      },
-    );
-    usageBudgetPercent = usageBudgetAnswer.trim() === "" ? undefined : Number(usageBudgetAnswer);
+    // No prompt. On a fresh `init` this leaves usage_budget_percent unwritten; on
+    // `edit` it carries the repo's current value through unchanged so an all-keep
+    // walk-through stays a byte-for-byte no-op and an existing cap is not dropped.
+    usageBudgetPercent = prefill.editing === true ? prefill.usageBudgetPercent : undefined;
   } else if (billing === "api-credit") {
     const tokenBudgetAnswer = await prompter.ask(
       "  Token budget - stop the night once the agent has spent how many tokens? (blank = no token cap)",
@@ -1238,12 +1240,6 @@ export async function promptRepoSettings(
     heuristicConflictOrdering,
     ...modelSelection,
   };
-}
-
-/** True when the answer is a number in 0..100 (the usage-budget percent range). */
-function isPercent(value: string): boolean {
-  const parsed = Number(value.trim());
-  return Number.isFinite(parsed) && parsed >= 0 && parsed <= 100;
 }
 
 async function askRepoName(
@@ -1842,7 +1838,7 @@ defaults:
   # Layered run-budget (issue #21): the night stops on the first condition that
   # trips. Each is optional; delete/omit a line to opt that axis out.
   max_issues_per_run: 4        # secondary cap: at most this many PRs ship
-  # usage_budget_percent: 85       # subscription agents: stop once the usage window hits this %
+  # usage_budget_percent: 85       # NOT observable on the claude subscription path (CLAUDE_CODE_OAUTH_TOKEN is inference-only); kept for a future readable-window provider
   # total_token_budget: 3000000    # API-credit agents (codex, or claude on an API key): stop once total token spend hits this
   # run_budget_minutes: 240        # graceful wall-clock: don't start a new issue after this long
   issue_timeout_minutes: 45    # per-issue hard timeout (a stuck agent is killed)

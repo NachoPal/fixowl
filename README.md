@@ -250,7 +250,7 @@ defaults:
   labels: { any: [overnight] }            # any/all combinations supported
   agent: claude
   max_issues_per_run: 4                   # run budget: at most this many PRs ship
-  # usage_budget_percent: 85              # run budget (subscription agents): stop at this % of the usage window
+  # usage_budget_percent: 85              # NOT observable on the claude subscription path (inference-only token); kept for a future readable-window provider - see "Run budgets"
   # total_token_budget: 3000000           # run budget (API-credit agents): stop once total token spend hits this
   # run_budget_minutes: 240               # run budget: don't start a new issue after this long
   issue_timeout_minutes: 45               # per-issue safety net (a stuck agent is killed)
@@ -305,9 +305,12 @@ agents:
   claude: { env: [ANTHROPIC_API_KEY] }
 ```
 
-The choice also decides the run budget (see below): the **subscription** token
-bills against a rolling usage window, so it is bounded by `usage_budget_percent`;
-the **API key** bills per token, so it is bounded by `total_token_budget`.
+The choice also decides the run budget (see below): the **API key** bills per
+token, so it is bounded by `total_token_budget`. The **subscription** token bills
+against a rolling usage window, but that window is **not observable** to fixowl
+(`CLAUDE_CODE_OAUTH_TOKEN` is inference-only by Anthropic's design and cannot read
+the usage endpoint - see "Run budgets"), so the subscription path is bounded by
+the count and wall-clock budgets instead.
 
 > **Never both at once.** In headless (`claude -p`) mode Claude Code uses
 > `ANTHROPIC_API_KEY` in preference to `CLAUDE_CODE_OAUTH_TOKEN` when both are
@@ -362,16 +365,22 @@ that trips, and the night summary names which:
 - **`max_issues_per_run`** - a count cap: at most this many PRs ship in one run.
   The secondary cap, and the only budget that works for agents whose usage is
   not observable. Defaults to 4.
-- **`usage_budget_percent`** - for **subscription-billed** agents (`claude`):
-  stop before starting a new issue once the agent's rolling usage window is at or
-  above this percent. Read out-of-band on the host from the provider (for
-  `claude`, the non-billing OAuth usage endpoint, using the token the host
-  already holds - nothing new enters the agent container). A read failure is
-  *advisory*: it abstains and falls through to the other budgets rather than
-  aborting the night. Opted out when unset. No-ops for an API-credit agent,
-  which has no such window - `fixowl validate` warns once when it is set for
-  such an agent (pointing you at `total_token_budget`), and the night run then
-  skips the read entirely instead of re-warning every run.
+- **`usage_budget_percent`** - a subscription rolling-usage cap that is **not
+  observable on the claude subscription path**, so `fixowl init` no longer offers
+  it and a subscription run is bounded by the count + wall-clock budgets instead.
+  Why it cannot work: the read would hit Anthropic's non-billing OAuth usage
+  endpoint (`GET /api/oauth/usage`), which requires the `user:profile` scope, but
+  `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`, the only subscription
+  credential fixowl can hold headlessly) is **inference-only by Anthropic's
+  design** and cannot read it - the endpoint returns `403 oauth_scope_insufficient`.
+  Only an interactive full-scope login token carries `user:profile`, and that is
+  short-lived + interactive-refresh, unsuitable for an unattended multi-hour night.
+  The config key stays **valid** (back-compat; a future subscription provider that
+  exposes a readable window could use it): if set, the read still runs and, on the
+  403, **abstains fail-open** with a self-diagnosing reason (the bounded response
+  body naming the missing scope) and falls through to the other budgets - it never
+  aborts the night and never silently no-ops. `fixowl validate` still warns when it
+  is set for an API-credit agent (pointing you at `total_token_budget`).
 - **`total_token_budget`** - the API-credit counterpart, for **pay-per-token**
   agents (`codex` on `OPENAI_API_KEY`, or `claude` on `ANTHROPIC_API_KEY`): stop
   before starting a new issue once the night's accumulated token spend reaches
@@ -395,8 +404,9 @@ that trips, and the night summary names which:
 
 Each is set in `defaults` and overridable per repo; leave one unset (or delete
 its line) to opt that axis out. `fixowl init` prompts for the spend cap that fits
-the chosen agent's billing (usage % for subscription, token total for
-API-credit) plus wall-clock, count, and the per-issue timeout. The pure gate
+the chosen agent's billing (a token total for API-credit agents; the subscription
+usage-% cap is not offered, being unobservable on the claude path) plus
+wall-clock, count, and the per-issue timeout. The pure gate
 logic lives in `packages/core/src/run-budget.ts`; the out-of-band usage read is
 behind the model-agnostic `UsageReader` in `packages/core/src/agent-usage.ts`,
 and the in-band spend meter behind `SpendMeter`/`getSpendMeter` in

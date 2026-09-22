@@ -423,22 +423,48 @@ describe("promptRepoSettings billing-aware spend cap", () => {
     expect(answers.usageBudgetPercent).toBeUndefined();
   });
 
-  it("offers the usage-window budget for claude on a subscription token", async () => {
+  it("offers NO spend cap for claude on a subscription token (usage-% is unobservable there)", async () => {
+    // Option A: the usage window is not readable on the claude subscription path
+    // (CLAUDE_CODE_OAUTH_TOKEN is inference-only; /api/oauth/usage needs
+    // user:profile), so a fresh init must neither prompt for nor write
+    // usage_budget_percent. That path is bounded by count + wall-clock.
     const { prompter, questions } = scriptedRepoPrompter();
     const answers = await promptRepoSettings(prompter, admin, "claude", "acme/widgets", prefill, [
       "CLAUDE_CODE_OAUTH_TOKEN",
     ]);
-    expect(questions.some((q) => q.includes("Usage budget"))).toBe(true);
+    expect(questions.some((q) => q.includes("Usage budget"))).toBe(false);
     expect(questions.some((q) => q.includes("Token budget"))).toBe(false);
-    expect(answers.usageBudgetPercent).toBe(85);
+    expect(answers.usageBudgetPercent).toBeUndefined();
     expect(answers.totalTokenBudget).toBeUndefined();
   });
 
-  it("offers the usage-window budget for claude when no env is supplied (name default)", async () => {
+  it("offers NO spend cap for claude when no env is supplied (name default is subscription)", async () => {
     const { prompter, questions } = scriptedRepoPrompter();
     const answers = await promptRepoSettings(prompter, admin, "claude", "acme/widgets", prefill);
-    expect(questions.some((q) => q.includes("Usage budget"))).toBe(true);
-    expect(answers.usageBudgetPercent).toBe(85);
+    expect(questions.some((q) => q.includes("Usage budget"))).toBe(false);
+    expect(answers.usageBudgetPercent).toBeUndefined();
+  });
+
+  it("preserves an existing usage_budget_percent on `edit` without prompting (back-compat, no-op)", async () => {
+    // The config key stays valid: `edit` carries a repo's current value through
+    // unchanged (prefill.editing), so an existing subscription cap is neither
+    // dropped nor re-prompted and an all-keep edit stays a byte-for-byte no-op.
+    const { prompter, questions } = scriptedRepoPrompter();
+    const editingPrefill: RepoSettingsPrefill = {
+      ...prefill,
+      editing: true,
+      usageBudgetPercent: 70,
+    };
+    const answers = await promptRepoSettings(
+      prompter,
+      admin,
+      "claude",
+      "acme/widgets",
+      editingPrefill,
+      ["CLAUDE_CODE_OAUTH_TOKEN"],
+    );
+    expect(questions.some((q) => q.includes("Usage budget"))).toBe(false);
+    expect(answers.usageBudgetPercent).toBe(70);
   });
 
   it("offers the total-token budget for claude on an API key (api-credit auth)", async () => {

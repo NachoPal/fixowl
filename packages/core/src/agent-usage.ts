@@ -70,6 +70,32 @@ export const CLAUDE_USAGE_URL = "https://api.anthropic.com/api/oauth/usage?at_wa
 const CLAUDE_TOKEN_ENV = "CLAUDE_CODE_OAUTH_TOKEN";
 
 /**
+ * Max chars of a non-2xx response body echoed into a usage-read error. Bounded so
+ * a future endpoint change never spills an unbounded body into the run log.
+ */
+export const USAGE_ERROR_BODY_MAX = 300;
+
+/**
+ * Compose the detail string for a non-2xx usage read, folding a bounded slice of
+ * the response body into the message so the failure is self-diagnosing rather than
+ * a bare "HTTP 403". This is the guardrail that turned a multi-run mystery into a
+ * one-look answer: the `/api/oauth/usage` 403 body states the exact cause (e.g.
+ * "OAuth token does not meet scope requirement user:profile"), which the old
+ * `HTTP <status>`-only message threw away.
+ *
+ * Secret-safety: the usage endpoint's error body carries no credentials, and the
+ * caller (the `fetchJson` edge) never passes request headers here, so nothing
+ * secret can reach the log. Whitespace is collapsed to keep the reason single-line
+ * and the slice is length-capped at {@link USAGE_ERROR_BODY_MAX}.
+ */
+export function describeUsageHttpError(status: number, body: string): string {
+  const base = `HTTP ${status}`;
+  const trimmed = body.replace(/\s+/g, " ").trim();
+  if (trimmed === "") return base;
+  return `${base}: ${trimmed.slice(0, USAGE_ERROR_BODY_MAX)}`;
+}
+
+/**
  * Normalize the Claude usage payload to a `UsageSnapshot`. Defensive by design so
  * a provider-side field rename is contained here, never in the run loop:
  * - windows are read from `five_hour`/`seven_day` (top-level) or under `rate_limits`;
