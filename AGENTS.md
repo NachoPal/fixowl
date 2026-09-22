@@ -330,10 +330,23 @@ See [docs/releasing.md](docs/releasing.md).
   wallclock); `main.ts` assembles the state snapshot and evaluates it at two
   gates (pre-run, and between-issues at the top of the inner loop). Keep the
   conditions pure and keep state assembly the only I/O, so parallel chains (#36)
-  only have to make the snapshot consistent. Two spend axes, split by billing:
-  usage % is for **subscription** agents and is read **out-of-band** on the host
-  behind the model-agnostic `UsageReader` (`agent-usage.ts`, selected by
-  `getUsageReader(agentName)`); `total_token_budget` is for **API-credit** agents
+  only have to make the snapshot consistent. Two spend axes, split by billing.
+  `usage_budget_percent` is the subscription usage-window cap, read **out-of-band**
+  on the host behind the model-agnostic `UsageReader` (`agent-usage.ts`, selected
+  by `getUsageReader(agentName)`) - **but it is NOT observable on the claude
+  subscription path** (the only subscription agent today): `/api/oauth/usage`
+  requires the `user:profile` scope, and `CLAUDE_CODE_OAUTH_TOKEN` is inference-only
+  by Anthropic's design (403 `oauth_scope_insufficient`; only a short-lived
+  interactive login token carries `user:profile`, unusable headlessly). So `fixowl
+  init` **no longer offers a usage-% cap** on that path (`promptRepoSettings` skips
+  it for `billing === "subscription"`; `edit` still preserves an existing value for
+  back-compat) and the subscription path is bounded by count + wall-clock. The key
+  stays valid for a future readable-window provider; if set, the read runs and, on
+  the 403, abstains fail-open with a **self-diagnosing** reason - the edge folds a
+  bounded, secret-safe slice of the response body into it via
+  `describeUsageHttpError` (`agent-usage.ts`), turning a bare "HTTP 403" into the
+  scope error, so a future endpoint change is diagnosable in one look, not a
+  multi-run mystery. `total_token_budget` is for **API-credit** agents
   and is measured **in-band** - `main.ts`
   accumulates each finished
   issue's `IssueResult.usage`, parsed from the agent's own captured output by
@@ -353,9 +366,10 @@ See [docs/releasing.md](docs/releasing.md).
   and reasoning-output counts so a dollar layer could price them later without
   re-plumbing (deliberately not built). Billing type is **auth-aware**, resolved
   in `agent-catalog.ts` (`agentBilling(agent, env)`): claude-on-OAuth is
-  `subscription` (usage-% window), claude-on-API-key is `api-credit` (token cap),
-  so billing threads the resolved env allowlist, not just the agent name. It
-  drives which spend cap `fixowl init` offers.
+  `subscription`, claude-on-API-key is `api-credit` (token cap), so billing threads
+  the resolved env allowlist, not just the agent name. It drives which spend cap
+  `fixowl init` offers: `api-credit` -> token cap, `subscription` -> none (the
+  usage-% window is unobservable, see above), zero-spend (`script`) -> none.
   `usage_budget_percent`, `total_token_budget`, and `run_budget_minutes`
   have no built-in resolution fallback (unset == opted out), so a pre-#21 config
   is unchanged; the starter values in `FIXOWL_DEFAULTS` are only what `fixowl

@@ -295,7 +295,7 @@ ${scheduleTriggerLine("  ", base.scheduleTrigger)}${runnerModeBlock}
   # Layered run-budget (issue #21): the night stops on the first condition that
   # trips. Each is optional; delete a line to opt that axis out.
   max_issues_per_run: ${base.maxIssuesPerRun}   # secondary cap: at most this many PRs ship
-${budgetLine("usage_budget_percent", base.usageBudgetPercent, FIXOWL_DEFAULTS.usageBudgetPercent, "subscription agents: stop before a new issue once the usage window hits this %")}
+${budgetLine("usage_budget_percent", base.usageBudgetPercent, FIXOWL_DEFAULTS.usageBudgetPercent, "NOT observable on the claude subscription path (CLAUDE_CODE_OAUTH_TOKEN is inference-only); kept for a future readable-window provider - see README")}
 ${budgetLine("total_token_budget", base.totalTokenBudget, FIXOWL_DEFAULTS.totalTokenBudget, "API-credit agents: stop before a new issue once total token spend hits this")}
 ${budgetLine("run_budget_minutes", base.runBudgetMinutes, FIXOWL_DEFAULTS.runBudgetMinutes, "graceful wall-clock: don't start a new issue after this many minutes")}
   issue_timeout_minutes: ${base.issueTimeoutMinutes ?? FIXOWL_DEFAULTS.issueTimeoutMinutes}   # per-issue hard timeout (a stuck agent is killed)

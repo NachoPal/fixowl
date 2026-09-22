@@ -85530,6 +85530,13 @@ function getAgentAdapter(name, envOverride) {
 // packages/core/src/agent-usage.ts
 var CLAUDE_USAGE_URL = "https://api.anthropic.com/api/oauth/usage?at_wall=1&skip_spend=1";
 var CLAUDE_TOKEN_ENV = "CLAUDE_CODE_OAUTH_TOKEN";
+var USAGE_ERROR_BODY_MAX = 300;
+function describeUsageHttpError(status, body2) {
+  const base = `HTTP ${status}`;
+  const trimmed = body2.replace(/\s+/g, " ").trim();
+  if (trimmed === "") return base;
+  return `${base}: ${trimmed.slice(0, USAGE_ERROR_BODY_MAX)}`;
+}
 function parseClaudeUsage(raw) {
   if (raw === null || typeof raw !== "object") return void 0;
   const root = raw;
@@ -129365,7 +129372,8 @@ function optionalPercentInput(name) {
 async function fetchJson(url3, headers) {
   const response = await fetch(url3, { headers });
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
+    const body2 = await response.text().catch(() => "");
+    throw new Error(describeUsageHttpError(response.status, body2));
   }
   return response.json();
 }

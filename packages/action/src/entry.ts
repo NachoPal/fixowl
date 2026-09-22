@@ -1,6 +1,7 @@
 import * as core from "@actions/core";
 import { Octokit } from "@octokit/rest";
 import {
+  describeUsageHttpError,
   labelModelsSchema,
   resolveRuntimeCredentialFromEnv,
   HOST_SCHEDULER_SOURCE,
@@ -102,9 +103,13 @@ function optionalPercentInput(name: string): number | undefined {
 async function fetchJson(url: string, headers: Record<string, string>): Promise<unknown> {
   const response = await fetch(url, { headers });
   if (!response.ok) {
-    // The reader composes the final "usage read failed: <detail>" reason, so keep
-    // this message to just the status to avoid a doubled prefix.
-    throw new Error(`HTTP ${response.status}`);
+    // The reader composes the final "usage read failed: <detail>" reason. Fold a
+    // bounded, secret-safe slice of the response body into <detail> so a non-2xx
+    // is self-diagnosing (e.g. an OAuth scope error) instead of a bare "HTTP 403"
+    // that costs a multi-run investigation. See describeUsageHttpError for why the
+    // body is safe to echo (no credentials) and how it is bounded.
+    const body = await response.text().catch(() => "");
+    throw new Error(describeUsageHttpError(response.status, body));
   }
   return response.json();
 }

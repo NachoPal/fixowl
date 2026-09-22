@@ -51,8 +51,10 @@ export {
 } from "./agent-adapters.ts";
 export {
   CLAUDE_USAGE_URL,
+  describeUsageHttpError,
   getUsageReader,
   parseClaudeUsage,
+  USAGE_ERROR_BODY_MAX,
   type UsageProbe,
   type UsageReader,
   type UsageReadResult,
