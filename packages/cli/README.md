@@ -208,4 +208,4 @@ for the full security model.
 
 - **Repository:** https://github.com/NachoPal/fixowl
 - **Issues:** https://github.com/NachoPal/fixowl/issues
-- **License:** [MIT](https://github.com/NachoPal/fixowl/blob/main/LICENSE)
+- **License:** [Apache-2.0](https://github.com/NachoPal/fixowl/blob/main/LICENSE)

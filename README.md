@@ -1,5 +1,14 @@
 ![fixowl - the owl that fixes your issues while you sleep. You file and label issues during the day; a nightly cron picks them up on a self-hosted runner, runs a coding agent in a Docker container per issue, verifies the change, and opens exactly one pull request per issue with the evidence attached. fixowl never merges.](assets/readme-banner.png)
 
+<p align="center">
+  <a href="https://github.com/NachoPal/fixowl/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/NachoPal/fixowl/ci.yml?branch=main&style=flat&label=CI" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache--2.0-blue?style=flat" alt="License: Apache-2.0"></a>
+  <a href="CONTRIBUTING.md"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat" alt="PRs welcome"></a>
+  <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/Made%20with-TypeScript-3178C6?style=flat&logo=typescript&logoColor=white" alt="Made with TypeScript"></a>
+  <a href="https://github.com/NachoPal/fixowl/releases"><img src="https://img.shields.io/github/v/release/NachoPal/fixowl?style=flat" alt="Release"></a>
+  <a href="https://github.com/sponsors/NachoPal"><img src="https://img.shields.io/badge/Sponsor-%E2%9D%A4-ea4aaa?style=flat&logo=githubsponsors&logoColor=white" alt="GitHub Sponsors"></a>
+</p>
+
 # fixowl
 
 **The owl that fixes your issues while you sleep.**
@@ -502,4 +511,4 @@ and [`help wanted`](https://github.com/NachoPal/fixowl/labels/help%20wanted).
 
 ## License
 
-MIT
+Apache-2.0
