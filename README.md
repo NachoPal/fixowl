@@ -2,7 +2,7 @@
 
 <p align="center">
   <a href="https://github.com/NachoPal/fixowl/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/NachoPal/fixowl/ci.yml?branch=main&style=flat&label=CI" alt="CI"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue?style=flat" alt="License: MIT"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache--2.0-blue?style=flat" alt="License: Apache-2.0"></a>
   <a href="CONTRIBUTING.md"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat" alt="PRs welcome"></a>
   <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/Made%20with-TypeScript-3178C6?style=flat&logo=typescript&logoColor=white" alt="Made with TypeScript"></a>
   <a href="https://github.com/NachoPal/fixowl/releases"><img src="https://img.shields.io/github/v/release/NachoPal/fixowl?style=flat" alt="Release"></a>
@@ -511,4 +511,4 @@ and [`help wanted`](https://github.com/NachoPal/fixowl/labels/help%20wanted).
 
 ## License
 
-MIT
+Apache-2.0

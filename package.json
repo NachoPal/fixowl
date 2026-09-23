@@ -2,7 +2,7 @@
   "name": "fixowl-monorepo",
   "private": true,
   "description": "fixowl - the owl that fixes your GitHub issues while you sleep",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "type": "module",
   "packageManager": "pnpm@11.25.0",
   "engines": {
