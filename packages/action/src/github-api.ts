@@ -207,7 +207,33 @@ export function makeGitHubApi(
           if (isNotAccessibleError(error)) return undefined;
           throw error;
         });
-      if (runs === undefined) return { readable: false, checks: [] };
+      if (runs === undefined) {
+        // Check runs are unreadable (missing Checks: read). Fall back to legacy
+        // commit statuses (a separate permission, Commit statuses: read) so a
+        // repo whose CI reports via statuses - third-party CI, or Actions plus a
+        // status-posting app - can still be gated. Only declare CI unreadable
+        // when that fallback also comes up empty.
+        try {
+          const { data } = await octokit.repos.getCombinedStatusForRef({ owner, repo, ref: sha });
+          for (const status of data.statuses) {
+            byName.set(status.context, {
+              name: status.context,
+              status: status.state === "pending" ? "in_progress" : "completed",
+              conclusion:
+                status.state === "success"
+                  ? "success"
+                  : status.state === "pending"
+                    ? null
+                    : "failure",
+              summary: status.description ?? undefined,
+              detailsUrl: status.target_url ?? undefined,
+            });
+          }
+        } catch {
+          // both sources unavailable; fall through to the readable:false return below
+        }
+        return { readable: byName.size > 0, checks: [...byName.values()] };
+      }
       for (const checkRun of runs) {
         byName.set(checkRun.name, {
           name: checkRun.name,
@@ -218,7 +244,11 @@ export function makeGitHubApi(
           detailsUrl: checkRun.details_url ?? undefined,
         });
       }
-      // Legacy commit statuses only fill contexts not already covered by a check run.
+      // Legacy commit statuses only fill contexts not already covered by a check
+      // run, and are read best-effort here (check runs alone are enough to
+      // gate). getCombinedStatusForRef is not paginated - GitHub caps the
+      // `statuses` array at the 30 most recent - which is fine in practice
+      // since repos rarely report more than a handful of distinct contexts.
       try {
         const { data } = await octokit.repos.getCombinedStatusForRef({ owner, repo, ref: sha });
         for (const status of data.statuses) {
