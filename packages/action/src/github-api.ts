@@ -211,8 +211,7 @@ export function makeGitHubApi(
       for (const checkRun of runs) {
         byName.set(checkRun.name, {
           name: checkRun.name,
-          status:
-            checkRun.status === null ? "completed" : (checkRun.status as CheckStatusLite["status"]),
+          status: checkRun.status === null ? "completed" : checkRun.status,
           conclusion: checkRun.conclusion as CheckStatusLite["conclusion"],
           summary: checkRun.output?.summary ?? checkRun.output?.title ?? undefined,
           detailsUrl: checkRun.details_url ?? undefined,
