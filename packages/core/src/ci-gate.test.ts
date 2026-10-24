@@ -45,6 +45,13 @@ describe("gatingChecks", () => {
     expect(gating.usedFallback).toBe(true);
     expect(gating.checks.map((c) => c.name)).toEqual(["ci", "lint"]);
   });
+
+  it("falls back to all checks when readable but the context list is empty (invariant violation)", () => {
+    const all = [check({ name: "ci" }), check({ name: "lint" })];
+    const gating = gatingChecks(all, readable([]));
+    expect(gating.usedFallback).toBe(true);
+    expect(gating.checks.map((c) => c.name)).toEqual(["ci", "lint"]);
+  });
 });
 
 describe("evaluateGate (readable required set)", () => {
@@ -92,6 +99,12 @@ describe("evaluateGate (fallback / unreadable required set)", () => {
   it("is failed when any completed check is red", () => {
     const all = [check({ name: "ci" }), check({ name: "lint", conclusion: "failure" })];
     expect(evaluateGate(gatingChecks(all, unreadable), unreadable)).toBe("failed");
+  });
+
+  it("is not vacuously green when readable but the context list is empty - a red check still fails it", () => {
+    const required = readable([]);
+    const all = [check({ name: "ci" }), check({ name: "lint", conclusion: "failure" })];
+    expect(evaluateGate(gatingChecks(all, required), required)).toBe("failed");
   });
 });
 
