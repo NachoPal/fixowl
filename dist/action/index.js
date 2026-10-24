@@ -85396,11 +85396,30 @@ function comparePriority(a, b, settings) {
 
 // packages/core/src/container-naming.ts
 var CONTAINER_NAME_MAX_LENGTH = 63;
+var FIXED_PREFIX_LENGTH = "fixowl-".length + 1;
+var ISSUE_TOKEN_BUDGET = "classify".length;
+var PURPOSE_BUDGET = 1 + 8;
+var SLUG_HASH_LENGTH = 1 + 6;
+var CONTAINER_REPO_SLUG_MAX_LENGTH = CONTAINER_NAME_MAX_LENGTH - FIXED_PREFIX_LENGTH - ISSUE_TOKEN_BUDGET - PURPOSE_BUDGET;
 function nameSlug(text) {
   return text.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 }
+function shortHash(text) {
+  let hash2 = 2166136261;
+  for (let i = 0; i < text.length; i++) {
+    hash2 ^= text.charCodeAt(i);
+    hash2 = Math.imul(hash2, 16777619) >>> 0;
+  }
+  return hash2.toString(36).padStart(6, "0").slice(0, 6);
+}
+function repoNameSlug(repoFullName) {
+  const slug = nameSlug(repoFullName);
+  if (slug.length <= CONTAINER_REPO_SLUG_MAX_LENGTH) return slug;
+  const head = slug.slice(0, CONTAINER_REPO_SLUG_MAX_LENGTH - SLUG_HASH_LENGTH);
+  return `${head}-${shortHash(slug)}`;
+}
 function containerName(repoFullName, issueNumber, purpose) {
-  return `fixowl-${nameSlug(repoFullName)}-${issueNumber}-${nameSlug(purpose)}`.slice(
+  return `fixowl-${repoNameSlug(repoFullName)}-${issueNumber}-${nameSlug(purpose)}`.slice(
     0,
     CONTAINER_NAME_MAX_LENGTH
   );
