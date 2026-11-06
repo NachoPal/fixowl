@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { nameSlug, parseDailyCronResult, type DailyCron } from "@fixowl/core";
 import { run, runOrThrow } from "../exec.ts";
 
 /**
@@ -25,36 +26,18 @@ import { run, runOrThrow } from "../exec.ts";
 
 const MINUTES_PER_DAY = 24 * 60;
 
-export interface DailyCronTime {
-  hourUtc: number;
-  minuteUtc: number;
-}
+export type DailyCronTime = DailyCron;
 
 /**
- * Parses the hour/minute of a daily `M H * * *` cron (UTC). The host scheduler
- * needs a single daily fire time; anything more elaborate (ranges, steps, lists,
- * or a non-`*` day/month/weekday) is rejected with a clear message.
+ * Install-time wrapper over the shared daily-cron grammar
+ * (`parseDailyCronResult` in core): the host scheduler needs a single daily fire
+ * time, so anything more elaborate (ranges, steps, lists, or a non-`*`
+ * day/month/weekday) is rejected with core's per-field message.
  */
 export function parseDailyCron(cron: string): DailyCronTime {
-  const fields = cron.trim().split(/\s+/);
-  if (fields.length !== 5) {
-    throw new Error(`expected a 5-field cron, got "${cron}"`);
-  }
-  const [minute, hour, dom, month, dow] = fields;
-  if (dom !== "*" || month !== "*" || dow !== "*") {
-    throw new Error(
-      `the host scheduler needs a plain daily cron like "M H * * *"; "${cron}" is not daily`,
-    );
-  }
-  const minuteUtc = Number(minute);
-  const hourUtc = Number(hour);
-  if (!Number.isInteger(minuteUtc) || minuteUtc < 0 || minuteUtc > 59) {
-    throw new Error(`cron minute must be 0-59, got "${minute}"`);
-  }
-  if (!Number.isInteger(hourUtc) || hourUtc < 0 || hourUtc > 23) {
-    throw new Error(`cron hour must be 0-23, got "${hour}"`);
-  }
-  return { hourUtc, minuteUtc };
+  const parsed = parseDailyCronResult(cron);
+  if (!parsed.ok) throw new Error(parsed.message);
+  return parsed.cron;
 }
 
 export interface LocalTime {
@@ -105,17 +88,9 @@ export function nextFireTime(local: LocalTime, from: Date = new Date()): Date {
   return next;
 }
 
-/** The reverse-DNS slug of a repo full name, e.g. `Acme/Widgets` -> `acme-widgets`. */
-function repoLabelSlug(repoFullName: string): string {
-  return repoFullName
-    .toLowerCase()
-    .replaceAll(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "");
-}
-
 /** launchd label for a repo's host scheduler agent, e.g. com.fixowl.host-scheduler.owner-repo. */
 export function hostSchedulerLabel(repoFullName: string): string {
-  return `com.fixowl.host-scheduler.${repoLabelSlug(repoFullName)}`;
+  return `com.fixowl.host-scheduler.${nameSlug(repoFullName)}`;
 }
 
 /**
@@ -125,7 +100,7 @@ export function hostSchedulerLabel(repoFullName: string): string {
  * re-provisioned yet. Remove once no deployed host runs the old label.
  */
 export function legacyHostSchedulerLabel(repoFullName: string): string {
-  return `com.fixowl.fallback.${repoLabelSlug(repoFullName)}`;
+  return `com.fixowl.fallback.${nameSlug(repoFullName)}`;
 }
 
 function xmlEscape(value: string): string {
@@ -186,10 +161,6 @@ ${args}
 // ---------------------------------------------------------------------------
 // I/O: writing the plist and driving launchctl. Pure logic above stays testable.
 // ---------------------------------------------------------------------------
-
-/** Default PATH for the agent, covering Homebrew on Intel and Apple Silicon. */
-export const HOST_SCHEDULER_PATH_ENV =
-  "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
 
 export function launchAgentsDir(): string {
   return join(homedir(), "Library", "LaunchAgents");

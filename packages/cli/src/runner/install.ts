@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { runOrThrow } from "../exec.ts";
+import { LAUNCHD_PATH_ENV } from "./launchd.ts";
 
 /** Pinned actions/runner release; checksums from its release notes. */
 export const RUNNER_VERSION = "2.337.0";
@@ -130,12 +131,12 @@ export async function removeRunnerConfig(dir: string, removalToken: string): Pro
 
 /**
  * Env for the runner service process. DOCKER_HOST points jobs at the Colima
- * socket; PATH covers Homebrew on both Intel (/usr/local) and Apple Silicon
- * (/opt/homebrew). The runner reads `.env` at service start.
+ * socket; PATH is the shared {@link LAUNCHD_PATH_ENV}. The runner reads `.env`
+ * at service start.
  */
 export function writeRunnerEnvFile(dir: string, dockerHost?: string): void {
   const lines = [
-    `PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin`,
+    `PATH=${LAUNCHD_PATH_ENV}`,
     ...(dockerHost !== undefined ? [`DOCKER_HOST=${dockerHost}`] : []),
   ];
   writeFileSync(join(dir, ".env"), lines.join("\n") + "\n");

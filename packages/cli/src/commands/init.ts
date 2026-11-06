@@ -1255,9 +1255,8 @@ async function askRepoName(
         return undefined;
       },
     });
-    const [owner = "", repo = ""] = name.split("/");
     try {
-      const { data } = await admin.rest.repos.get({ owner, repo });
+      const { data } = await admin.rest.repos.get({ ...splitRepoFullName(name) });
       log.ok(
         `${name} reachable (${data.private ? "private" : "public"}, default branch ${data.default_branch})`,
       );
@@ -1515,9 +1514,11 @@ async function fetchLabelCandidates(
   name: string,
   exclude: readonly string[],
 ): Promise<string[]> {
-  const [owner = "", repo = ""] = name.split("/");
   try {
-    const { data } = await admin.rest.issues.listLabelsForRepo({ owner, repo, per_page: 100 });
+    const { data } = await admin.rest.issues.listLabelsForRepo({
+      ...splitRepoFullName(name),
+      per_page: 100,
+    });
     return data.map((label) => label.name).filter((label) => !exclude.includes(label));
   } catch {
     return [];

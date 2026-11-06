@@ -86331,19 +86331,44 @@ var HOST_SCHEDULER_SOURCE = "host-scheduler";
 var HOST_SCHEDULER_MARKER = "[host-scheduler]";
 var LEGACY_HOST_SCHEDULER_SOURCE = "scheduled-fallback";
 var LEGACY_HOST_SCHEDULER_MARKER = "[scheduled-fallback]";
+function toWorkflowRunLite(run2) {
+  return {
+    id: run2.id,
+    event: run2.event,
+    status: run2.status ?? null,
+    conclusion: run2.conclusion ?? null,
+    createdAt: run2.created_at,
+    displayTitle: run2.display_title ?? run2.name ?? ""
+  };
+}
 function isSameUtcDay(a, b) {
   return a.getUTCFullYear() === b.getUTCFullYear() && a.getUTCMonth() === b.getUTCMonth() && a.getUTCDate() === b.getUTCDate();
 }
-function tryParseDailyCron(cron) {
+function parseDailyCronResult(cron) {
   const fields = cron.trim().split(/\s+/);
-  if (fields.length !== 5) return void 0;
+  if (fields.length !== 5) {
+    return { ok: false, message: `expected a 5-field cron, got "${cron}"` };
+  }
   const [minute, hour, dom, month, dow] = fields;
-  if (dom !== "*" || month !== "*" || dow !== "*") return void 0;
+  if (dom !== "*" || month !== "*" || dow !== "*") {
+    return {
+      ok: false,
+      message: `the host scheduler needs a plain daily cron like "M H * * *"; "${cron}" is not daily`
+    };
+  }
   const minuteUtc = Number(minute);
   const hourUtc = Number(hour);
-  if (!Number.isInteger(minuteUtc) || minuteUtc < 0 || minuteUtc > 59) return void 0;
-  if (!Number.isInteger(hourUtc) || hourUtc < 0 || hourUtc > 23) return void 0;
-  return { hourUtc, minuteUtc };
+  if (!Number.isInteger(minuteUtc) || minuteUtc < 0 || minuteUtc > 59) {
+    return { ok: false, message: `cron minute must be 0-59, got "${minute}"` };
+  }
+  if (!Number.isInteger(hourUtc) || hourUtc < 0 || hourUtc > 23) {
+    return { ok: false, message: `cron hour must be 0-23, got "${hour}"` };
+  }
+  return { ok: true, cron: { hourUtc, minuteUtc } };
+}
+function tryParseDailyCron(cron) {
+  const parsed = parseDailyCronResult(cron);
+  return parsed.ok ? parsed.cron : void 0;
 }
 function anchorOccurrence(cron, now) {
   const anchor2 = new Date(now);
@@ -125561,14 +125586,7 @@ ${trimmed.slice(-CHECK_LOG_MAX)}`;
         workflow_id: "fixowl.yml",
         per_page: 50
       });
-      return data.workflow_runs.map((workflowRun) => ({
-        id: workflowRun.id,
-        event: workflowRun.event,
-        status: workflowRun.status ?? null,
-        conclusion: workflowRun.conclusion ?? null,
-        createdAt: workflowRun.created_at,
-        displayTitle: workflowRun.display_title ?? workflowRun.name ?? ""
-      }));
+      return data.workflow_runs.map(toWorkflowRunLite);
     },
     async getIssueDependencies(numbers) {
       const result = /* @__PURE__ */ new Map();
@@ -126752,7 +126770,7 @@ async function runVerification(params) {
       timeoutMs: CHECK_TIMEOUT_MS
     });
     writeFileSync(
-      join5(evidenceDir, `check-${sanitize(check2.name)}.log`),
+      join5(evidenceDir, `check-${nameSlug(check2.name)}.log`),
       `$ ${check2.run}
 
 ${result.stdout}
@@ -126770,9 +126788,6 @@ ${tailLog(result.stdout, result.stderr)}`
     });
   }
   return outcomes;
-}
-function sanitize(name) {
-  return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 }
 
 // packages/action/src/issue-pipeline.ts

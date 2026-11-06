@@ -1,5 +1,10 @@
 import type { Octokit } from "@octokit/rest";
-import type { CheckStatusLite, ChecksForRef, RequiredChecks } from "@fixowl/core";
+import {
+  toWorkflowRunLite,
+  type CheckStatusLite,
+  type ChecksForRef,
+  type RequiredChecks,
+} from "@fixowl/core";
 import type {
   GitHubApi,
   IssueDeps,
@@ -305,14 +310,7 @@ export function makeGitHubApi(
         workflow_id: "fixowl.yml",
         per_page: 50,
       });
-      return data.workflow_runs.map((workflowRun) => ({
-        id: workflowRun.id,
-        event: workflowRun.event,
-        status: workflowRun.status ?? null,
-        conclusion: workflowRun.conclusion ?? null,
-        createdAt: workflowRun.created_at,
-        displayTitle: workflowRun.display_title ?? workflowRun.name ?? "",
-      }));
+      return data.workflow_runs.map(toWorkflowRunLite);
     },
     async getIssueDependencies(numbers: readonly number[]): Promise<Map<number, IssueDeps>> {
       const result = new Map<number, IssueDeps>();

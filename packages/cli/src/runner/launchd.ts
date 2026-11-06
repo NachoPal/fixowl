@@ -6,6 +6,14 @@ import { run, runOrThrow } from "../exec.ts";
  * rather than writing plists ourselves.
  */
 
+/**
+ * PATH for the launchd-managed fixowl processes (the runner service via
+ * `svc.sh`, and the host-scheduler agent). launchd gives a process a bare PATH,
+ * so this spells out Homebrew on both Intel (/usr/local) and Apple Silicon
+ * (/opt/homebrew) alongside the system dirs, and both writers share the literal.
+ */
+export const LAUNCHD_PATH_ENV = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
+
 export type ServiceState = "running" | "stopped" | "not-installed";
 
 export async function svcStatus(dir: string): Promise<ServiceState> {
