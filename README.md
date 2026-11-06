@@ -366,14 +366,16 @@ the catalog).
 
 ### Run budgets
 
-A night is bounded by a small set of **independent, each-optional stop
+A night is bounded by **`max_issues_per_run`** - a count cap enforced where the
+issues are picked: at most this many issues are selected (and classified) per
+run, so at most this many PRs ship. It is the only bound that works for agents
+whose spend is not observable, and defaults to 4.
+
+On top of it sit a small set of **independent, each-optional spend/time stop
 conditions**, evaluated at two gates - once before starting (pre-run) and again
 before each issue (between-issues). The run stops on the **first** condition
 that trips, and the night summary names which:
 
-- **`max_issues_per_run`** - a count cap: at most this many PRs ship in one run.
-  The secondary cap, and the only budget that works for agents whose usage is
-  not observable. Defaults to 4.
 - **`usage_budget_percent`** - a subscription rolling-usage cap that is **not
   observable on the claude subscription path**, so `fixowl init` no longer offers
   it and a subscription run is bounded by the count + wall-clock budgets instead.

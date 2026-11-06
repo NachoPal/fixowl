@@ -61,11 +61,14 @@ export interface NightInputs {
   agentName: string;
   /** Overrides the adapter's built-in env allowlist when non-empty. */
   agentEnvNames?: string[];
+  /**
+   * The count cap: at most this many issues are selected (and classified) per run.
+   * Enforced at selection, not as a run-budget stop condition - see run-budget.ts.
+   */
   maxIssues: number;
   /**
    * Run-budget stop conditions (issue #21), each optional. The run stops on the
-   * first that trips, at the pre-run and between-issues gates. `maxIssues` is the
-   * kept secondary count cap (and bounds how many issues are selected/classified).
+   * first that trips, at the pre-run and between-issues gates.
    */
   usageBudgetPercent?: number;
   /**
@@ -315,7 +318,6 @@ async function runNightWithGit(
   // here - assembling a consistent snapshot (shipped/elapsed/usage) at each gate.
   const runStart = Date.now();
   const budgetLimits: BudgetLimits = {
-    maxIssues: inputs.maxIssues,
     usagePercent: inputs.usageBudgetPercent,
     totalTokens: inputs.totalTokenBudget,
     runMinutes: inputs.runBudgetMinutes,
@@ -343,7 +345,7 @@ async function runNightWithGit(
   let tokensUsed = 0;
   let tokensMeasured = false;
   let tokensWarned = false;
-  const assembleBudgetState = async (shipped: number): Promise<BudgetState> => {
+  const assembleBudgetState = async (): Promise<BudgetState> => {
     let usage: UsageSnapshot | undefined;
     // Only read usage when a usage budget is set AND a network edge is injected;
     // the in-process tests inject none, so usage stays undefined (abstain).
@@ -371,7 +373,7 @@ async function runNightWithGit(
     // pass reported measurable usage; otherwise abstain (undefined), so the token
     // condition fails open exactly like usage.
     const tokens = inputs.totalTokenBudget !== undefined && tokensMeasured ? tokensUsed : undefined;
-    return { shipped, elapsedMs: Date.now() - runStart, usage, tokensUsed: tokens };
+    return { elapsedMs: Date.now() - runStart, usage, tokensUsed: tokens };
   };
 
   // Pre-work triage config (all default ON; a pre-triage config still gets the
@@ -511,8 +513,7 @@ async function runNightWithGit(
 
   // Pre-run gate: if a budget already trips (e.g. the usage window is spent),
   // stand the whole night down before any docker build / classify / agent work.
-  // shipped is 0 here, so the count condition never trips at this gate.
-  const preRunVerdict = evaluateBudget(stopConditions, await assembleBudgetState(0));
+  const preRunVerdict = evaluateBudget(stopConditions, await assembleBudgetState());
   if (preRunVerdict.stop) {
     log.info(`🦉 fixowl: standing down before starting any issue - ${preRunVerdict.reason}`);
     return {
@@ -595,7 +596,7 @@ async function runNightWithGit(
 
   const results: IssueResult[] = [];
   // Between-issues gate: before starting each issue, re-evaluate the budget with
-  // the running shipped count, elapsed wall-clock, and a refreshed usage read.
+  // the elapsed wall-clock, accumulated token spend, and a refreshed usage read.
   // The first trip stops the whole run (across all chains); every issue not yet
   // started is recorded as not-started with the tripping reason.
   const notStarted: IssueLite[] = [];
@@ -619,7 +620,7 @@ async function runNightWithGit(
     let stackedOn: { prNumber: number; branch: string } | undefined;
     for (const issue of chain) {
       if (budgetStop === undefined) {
-        const verdict = evaluateBudget(stopConditions, await assembleBudgetState(shipped.size));
+        const verdict = evaluateBudget(stopConditions, await assembleBudgetState());
         if (verdict.stop) {
           budgetStop = { condition: verdict.condition, reason: verdict.reason };
           log.info(`🦉 fixowl: stopping the run - ${verdict.reason}`);
