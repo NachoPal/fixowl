@@ -65,6 +65,8 @@ import { startCommand } from "./start.ts";
 import { fetchJson, validateCommand } from "./validate.ts";
 
 const PAT_URL = "https://github.com/settings/personal-access-tokens/new";
+/** Existing tokens list - where to EDIT a token's repository access, as opposed to {@link PAT_URL} (mint a new one). */
+const PAT_TOKENS_URL = "https://github.com/settings/personal-access-tokens";
 
 /** Homepage the manifest pre-fills - required by GitHub, not used functionally. */
 const FIXOWL_HOMEPAGE = "https://github.com/NachoPal/fixowl";
@@ -1265,8 +1267,11 @@ async function askRepoName(
     } catch (error) {
       log.warn(`cannot reach ${name}: ${describeGitHubError(error)}`);
       log.info(
-        `  A fine-grained PAT only sees the repos it was granted. Add ${name} to the\n` +
-          `  admin token's repository list at ${PAT_URL}, or check the spelling.`,
+        `  This is checked with your admin fine-grained PAT (used for setup/provisioning),\n` +
+          `  separate from the GitHub App installation that handles the nightly runtime.\n` +
+          `  Grant the admin PAT access to ${name} at ${PAT_TOKENS_URL} (open the token,\n` +
+          `  then edit its Repository access), or check the spelling. The admin PAT is\n` +
+          `  still required for provisioning even with the App installed.`,
       );
       if (!(await prompter.confirm("  Try a different repo name?", true))) return name;
     }
