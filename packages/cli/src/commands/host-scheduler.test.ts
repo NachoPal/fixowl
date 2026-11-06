@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ScheduleTrigger, WorkflowRunLite } from "@fixowl/core";
 import type { CliContext } from "../context.ts";
@@ -5,6 +8,7 @@ import * as launchd from "../runner/host-scheduler-launchd.ts";
 import {
   hostSchedulerCheckCommand,
   hostSchedulerInstallCommand,
+  hostSchedulerStatusLines,
   type HostSchedulerCheckDeps,
 } from "./host-scheduler.ts";
 
@@ -152,5 +156,88 @@ describe("fixowl host-scheduler install (legacy migration)", () => {
     expect(uninstall.mock.invocationCallOrder[0]).toBeLessThan(
       install.mock.invocationCallOrder[0] ?? 0,
     );
+  });
+});
+
+/** Installs a plist under a temp HOME (os.homedir() honours $HOME on POSIX). */
+function installPlist(local: launchd.LocalTime, programArguments: readonly string[]): void {
+  const home = mkdtempSync(join(tmpdir(), "fixowl-status-home-"));
+  process.env.HOME = home;
+  mkdirSync(join(home, "Library", "LaunchAgents"), { recursive: true });
+  const label = launchd.hostSchedulerLabel("acme/widgets");
+  writeFileSync(
+    join(home, "Library", "LaunchAgents", `${label}.plist`),
+    launchd.renderHostSchedulerPlist({
+      label,
+      programArguments,
+      local,
+      pathEnv: "/usr/bin",
+      stdoutPath: "/tmp/x.log",
+      stderrPath: "/tmp/x.log",
+    }),
+  );
+  vi.spyOn(launchd, "isHostSchedulerLoaded").mockResolvedValue(true);
+}
+
+/** What `host-scheduler install` would program for the configured cron. */
+function configuredLocal(): launchd.LocalTime {
+  return launchd.hostSchedulerLocalTime({
+    cron: launchd.parseDailyCron("37 1 * * *"),
+    gapMinutes: 0,
+    maxOffsetMinutes: launchd.hostMaxOffsetMinutes(),
+  });
+}
+
+/**
+ * The status block is shared with `fixowl status` (one renderer, so the two
+ * cannot diverge) and warns about the two ways a deployed agent goes stale:
+ * a schedule edited after install, and the absolute paths baked into the plist.
+ */
+describe("hostSchedulerStatusLines", () => {
+  const realHome = process.env.HOME;
+  afterEach(() => {
+    process.env.HOME = realHome;
+    vi.restoreAllMocks();
+  });
+
+  it("reports the mode, the plist path and no warning for an in-sync agent", async () => {
+    installPlist(configuredLocal(), [process.execPath, process.argv[1] ?? "", "host-scheduler"]);
+
+    const lines = await hostSchedulerStatusLines(makeCtx("host-scheduler"), "acme/widgets");
+
+    expect(lines[0]).toContain("installed (primary dispatch)");
+    expect(lines[1]).toContain(".plist");
+    expect(lines.join("\n")).not.toContain("warning:");
+  });
+
+  it("warns when the config schedule no longer matches the installed fire time", async () => {
+    // :59 can never be the configured minute (cron :37 plus whole/half-hour
+    // zone offsets), so this is a mismatch in every time zone.
+    installPlist({ hour: 23, minute: 59 }, [process.execPath, process.argv[1] ?? ""]);
+
+    const lines = await hostSchedulerStatusLines(makeCtx("both"), "acme/widgets");
+
+    expect(lines.join("\n")).toContain("the agent fires at 23:59");
+    expect(lines.join("\n")).toContain("fixowl host-scheduler install");
+  });
+
+  it("warns when a path baked into the plist has vanished", async () => {
+    installPlist(configuredLocal(), ["/opt/gone/node", "/opt/gone/index.js", "host-scheduler"]);
+
+    const lines = await hostSchedulerStatusLines(makeCtx("host-scheduler"), "acme/widgets");
+
+    expect(lines.join("\n")).toContain("/opt/gone/node");
+    expect(lines.join("\n")).toContain("would fail silently");
+  });
+
+  it("says not installed (naming the mode) when there is no agent", async () => {
+    process.env.HOME = mkdtempSync(join(tmpdir(), "fixowl-status-home-"));
+
+    expect(await hostSchedulerStatusLines(makeCtx("github-cron"), "acme/widgets")).toEqual([
+      "  host scheduler: not installed (schedule_trigger: github-cron)",
+    ]);
+    expect(await hostSchedulerStatusLines(makeCtx("both"), "acme/widgets")).toEqual([
+      "  host scheduler: not installed",
+    ]);
   });
 });

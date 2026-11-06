@@ -1,4 +1,5 @@
 import type { Octokit } from "@octokit/rest";
+import { WORKFLOW_ID } from "@fixowl/core";
 import type { CheckStatusLite, ChecksForRef, RequiredChecks } from "@fixowl/core";
 import type {
   GitHubApi,
@@ -302,7 +303,7 @@ export function makeGitHubApi(
       const { data } = await runsOctokit.actions.listWorkflowRuns({
         owner,
         repo,
-        workflow_id: "fixowl.yml",
+        workflow_id: WORKFLOW_ID,
         per_page: 50,
       });
       return data.workflow_runs.map((workflowRun) => ({

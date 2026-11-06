@@ -1,7 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { run, runOrThrow } from "../exec.ts";
+import { setTimeout as sleep } from "node:timers/promises";
+import { run } from "../exec.ts";
 
 /**
  * The optional local host scheduler runs as a per-user launchd agent (one per
@@ -132,6 +133,10 @@ function xmlEscape(value: string): string {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
 
+function xmlUnescape(value: string): string {
+  return value.replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
+}
+
 export interface HostSchedulerPlistParams {
   label: string;
   /** argv the agent runs, e.g. [node, cliScript, "host-scheduler", "check", repo]. */
@@ -207,6 +212,10 @@ export function isHostSchedulerInstalled(label: string): boolean {
   return existsSync(hostSchedulerPlistPath(label));
 }
 
+/** Bootstrap attempts (and the pause between them) when racing a bootout. */
+const BOOTSTRAP_ATTEMPTS = 3;
+const BOOTSTRAP_RETRY_MS = 500;
+
 /** gui/<uid> domain target for a per-user launchd agent. */
 function guiDomain(): string {
   return `gui/${process.getuid?.() ?? 501}`;
@@ -215,10 +224,18 @@ function guiDomain(): string {
 /**
  * Writes the plist and (re)loads it via launchctl. Idempotent: an existing agent
  * is booted out first so the new calendar interval takes effect.
+ *
+ * `launchctl bootout` returns before launchd has finished tearing the service
+ * down, so an immediate `bootstrap` of the same label can lose the race and fail
+ * with "service already loaded" (EALREADY / "Bootstrap failed: 37") or a bare
+ * I/O error. Retry the bootstrap a few times with a short pause so a re-install
+ * is reliable; only the last failure is reported.
  */
 export async function installHostSchedulerAgent(params: {
   label: string;
   plist: string;
+  /** Overridable in tests so a retry does not actually sleep. */
+  sleep?: (ms: number) => Promise<void>;
 }): Promise<void> {
   mkdirSync(launchAgentsDir(), { recursive: true });
   mkdirSync(join(homedir(), ".fixowl", "logs"), { recursive: true });
@@ -226,7 +243,18 @@ export async function installHostSchedulerAgent(params: {
   writeFileSync(path, params.plist);
   // Best-effort unload of any previous version; ignore "not loaded".
   await run(["launchctl", "bootout", `${guiDomain()}/${params.label}`]);
-  await runOrThrow(["launchctl", "bootstrap", guiDomain(), path]);
+  const pause = params.sleep ?? ((ms: number) => sleep(ms));
+  for (let attempt = 1; ; attempt++) {
+    const result = await run(["launchctl", "bootstrap", guiDomain(), path]);
+    if (result.code === 0) return;
+    if (attempt === BOOTSTRAP_ATTEMPTS) {
+      throw new Error(
+        `launchctl bootstrap ${guiDomain()} ${path} failed (exit ${result.code}` +
+          `, ${attempt} attempts): ${result.stderr.trim() || result.stdout.trim()}`,
+      );
+    }
+    await pause(BOOTSTRAP_RETRY_MS);
+  }
 }
 
 /** Boots the agent out (if loaded) and removes its plist. */
@@ -257,4 +285,32 @@ export function readPlistLocalTime(label: string): LocalTime | undefined {
   const minute = /<key>Minute<\/key>\s*<integer>(\d+)<\/integer>/.exec(xml);
   if (hour?.[1] === undefined || minute?.[1] === undefined) return undefined;
   return { hour: Number(hour[1]), minute: Number(minute[1]) };
+}
+
+/**
+ * Reads the ProgramArguments baked into an installed plist. `install` bakes
+ * absolute paths (this node binary, the resolved CLI entry, the config file), so
+ * status can tell whether the agent would still exec - see
+ * {@link missingAgentPaths}. Returns [] when the plist is absent or unparsable.
+ */
+export function readPlistProgramArguments(label: string): string[] {
+  const path = hostSchedulerPlistPath(label);
+  if (!existsSync(path)) return [];
+  const xml = readFileSync(path, "utf8");
+  const block = /<key>ProgramArguments<\/key>\s*<array>([\s\S]*?)<\/array>/.exec(xml);
+  if (block?.[1] === undefined) return [];
+  return [...block[1].matchAll(/<string>([\s\S]*?)<\/string>/g)].map((match) =>
+    xmlUnescape(match[1] ?? ""),
+  );
+}
+
+/**
+ * Which of an agent's baked absolute paths no longer exist. The plist pins
+ * `process.execPath` and the resolved CLI entry at install time, so a node
+ * upgrade (`brew upgrade node`), an npx cache eviction, or a moved checkout
+ * leaves the agent exec'ing a vanished path - launchd then fails silently, with
+ * nothing but the agent's log to show it. Status surfaces that instead.
+ */
+export function missingAgentPaths(programArguments: readonly string[]): string[] {
+  return programArguments.filter((arg) => arg.startsWith("/") && !existsSync(arg));
 }

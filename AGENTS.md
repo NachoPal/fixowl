@@ -145,7 +145,9 @@ See [docs/releasing.md](docs/releasing.md).
   `packages/core/src/container-naming.ts` (`containerName`, `containerNamePrefix`,
   `parseContainerName`). The action re-exports `containerName` from `container-exec.ts`;
   the CLI's `watch` command discovers live containers via the same helpers. Do not
-  re-derive the slug shape anywhere else.
+  re-derive the slug shape anywhere else. The workflow file name is likewise
+  owned once: `WORKFLOW_PATH` / `WORKFLOW_ID` (the Actions-API `workflow_id`) in
+  `packages/core/src/workflow-template.ts`.
 - Actions in workflows are SHA-pinned with a `# vN` comment. Workflows get minimal
   `permissions:`. actionlint runs in CI over both our workflows and rendered templates.
 - The fixowl action ref the **rendered target-repo** workflow pins is chosen once

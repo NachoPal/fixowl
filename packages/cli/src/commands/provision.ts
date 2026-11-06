@@ -157,6 +157,9 @@ export async function provisionCommand(
     const workflow = renderFixowlWorkflow({
       runsOn: cloudRunner ? "ubuntu-latest" : undefined,
       schedule: includeSchedule ? settings.schedule : null,
+      // No `on.schedule:` cron, but the host scheduler still fires on this cron,
+      // so the action keeps getting it as the slot guard anchor.
+      scheduleAnchor: includeSchedule ? undefined : settings.schedule,
       labels: settings.labels,
       agent: adapter.name,
       agentEnv: adapter.env,

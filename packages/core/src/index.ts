@@ -151,6 +151,7 @@ export {
 export { classifyMergeability, type ConflictAction } from "./conflict-gate.ts";
 export {
   renderFixowlWorkflow,
+  WORKFLOW_ID,
   WORKFLOW_PATH,
   type WorkflowTemplateOptions,
 } from "./workflow-template.ts";

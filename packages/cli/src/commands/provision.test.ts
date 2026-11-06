@@ -1,7 +1,7 @@
 import { generateKeyPairSync } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Octokit } from "@octokit/rest";
-import { globalConfigSchema } from "@fixowl/core";
+import { FIXOWL_DEFAULTS, globalConfigSchema } from "@fixowl/core";
 import { ADMIN_TOKEN_MISSING_MESSAGE, type CliContext } from "../context.ts";
 import { provisionCommand, type ProvisionOptions } from "./provision.ts";
 
@@ -274,8 +274,11 @@ describe("fixowl provision", () => {
     const { fileWrites } = await runProvision({}, false, "host-scheduler");
     const workflow = fileWrites.find((w) => w.path === WORKFLOW_PATH);
     expect(workflow?.content).toContain("workflow_dispatch");
-    expect(workflow?.content).not.toContain("schedule:");
+    expect(workflow?.content).not.toContain("on:\n  schedule:");
     expect(workflow?.content).not.toContain("- cron:");
+    // The cron still reaches the action as the slot guard anchor, so the in-run
+    // guard and the host scheduler key off the same occurrence window.
+    expect(workflow?.content).toContain(`          schedule: "${FIXOWL_DEFAULTS.schedule}"`);
   });
 
   it("keeps the on.schedule cron for a github-cron and a both repo", async () => {

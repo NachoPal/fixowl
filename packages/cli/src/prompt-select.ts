@@ -39,6 +39,8 @@ export type SelectOutcome =
   | { kind: "submit"; state: SelectState }
   /** Submit refused; the message is shown under the list until the next key. */
   | { kind: "refuse"; message: string }
+  /** EOF (Ctrl+D): the user wants out, so the caller aborts like Ctrl+C does. */
+  | { kind: "abort" }
   | { kind: "ignore" };
 
 export const HIDE_CURSOR = "\u001B[?25l";
@@ -92,6 +94,11 @@ export function applySelectKey(
   if (key.ctrl === true) {
     if (name === "n") return move(1);
     if (name === "p") return move(-1);
+    // Ctrl+D is EOF: readline closes the stream, so ignoring it would leave the
+    // selector waiting for keys that can never arrive - the process then falls
+    // out of the event loop and exits 0 with the cursor still hidden, as if the
+    // step had succeeded. Treat it as an explicit abort instead (Ctrl+C-like).
+    if (name === "d") return { kind: "abort" };
     return { kind: "ignore" };
   }
 

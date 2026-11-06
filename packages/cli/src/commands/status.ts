@@ -1,20 +1,13 @@
 import { existsSync } from "node:fs";
-import { runnerBaseDir } from "@fixowl/core";
+import { runnerBaseDir, WORKFLOW_ID } from "@fixowl/core";
 import { targetRepos, type CliContext } from "../context.ts";
 import { describeGitHubError } from "../github/errors.ts";
 import { splitRepoFullName } from "../github/repo-provisioning.ts";
 import { findRunner, runnerNameFor } from "../github/runner-registration.ts";
 import { log } from "../log.ts";
-import {
-  hostSchedulerLabel,
-  isHostSchedulerInstalled,
-  isHostSchedulerLoaded,
-  legacyHostSchedulerLabel,
-  nextFireTime,
-  readPlistLocalTime,
-} from "../runner/host-scheduler-launchd.ts";
 import { runnerDirFor } from "../runner/install.ts";
 import { svcStatus } from "../runner/launchd.ts";
+import { hostSchedulerStatusLines } from "./host-scheduler.ts";
 
 export async function statusCommand(ctx: CliContext, repoArg: string | undefined): Promise<void> {
   for (const repoFullName of targetRepos(ctx.config, repoArg)) {
@@ -29,22 +22,9 @@ export async function statusCommand(ctx: CliContext, repoArg: string | undefined
       log.info(`  service: ${await svcStatus(dir)} (${dir})`);
     }
 
-    // Local host scheduler (opt-in). Report installed state and next fire. A host
-    // provisioned before the rename still has the old-label agent; recognize it.
-    const label = isHostSchedulerInstalled(hostSchedulerLabel(repoFullName))
-      ? hostSchedulerLabel(repoFullName)
-      : isHostSchedulerInstalled(legacyHostSchedulerLabel(repoFullName))
-        ? legacyHostSchedulerLabel(repoFullName)
-        : undefined;
-    if (label === undefined) {
-      log.info(`  host scheduler: not installed`);
-    } else {
-      const local = readPlistLocalTime(label);
-      const when = local !== undefined ? `; next ${nextFireTime(local).toLocaleString()}` : "";
-      log.info(
-        `  host scheduler: installed${(await isHostSchedulerLoaded(label)) ? "" : " (not loaded)"}${when}`,
-      );
-    }
+    // Local host scheduler (opt-in). One shared renderer with `fixowl
+    // host-scheduler status`, so the two blocks cannot drift.
+    for (const line of await hostSchedulerStatusLines(ctx, repoFullName)) log.info(line);
 
     // Registered runner. Listing runners needs Administration: read; if the
     // admin token was revoked or downgraded below that, report it rather than
@@ -67,7 +47,7 @@ export async function statusCommand(ctx: CliContext, repoArg: string | undefined
     try {
       const { data } = await ctx.admin.rest.actions.listWorkflowRuns({
         ...ref,
-        workflow_id: "fixowl.yml",
+        workflow_id: WORKFLOW_ID,
         per_page: 1,
       });
       const last = data.workflow_runs[0];
