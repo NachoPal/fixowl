@@ -364,11 +364,12 @@ export function parseSchedule(answer: string, options: ParseScheduleOptions = {}
   const zone = options.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
   return {
     cron: `${local.getUTCMinutes()} ${local.getUTCHours()} * * *`,
-    note: `${pad(hour)}:${pad(minute)} ${zone}`,
+    note: `${pad2(hour)}:${pad2(minute)} ${zone}`,
   };
 }
 
-function pad(value: number): string {
+/** Two-digit zero-padded clock field, e.g. `7` -> `"07"`. */
+export function pad2(value: number): string {
   return value.toString().padStart(2, "0");
 }
 

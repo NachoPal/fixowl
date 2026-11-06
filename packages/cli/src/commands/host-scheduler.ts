@@ -13,9 +13,14 @@ import { targetRepos, type CliContext } from "../context.ts";
 import { githubClient } from "../github/client.ts";
 import { describeGitHubError } from "../github/errors.ts";
 import { splitRepoFullName, type RepoRef } from "../github/repo-provisioning.ts";
+import {
+  dispatchFixowlWorkflow,
+  getDefaultBranch,
+  listRecentFixowlRuns,
+} from "../github/workflow-dispatch.ts";
+import { pad2 } from "../init/config-file.ts";
 import { log } from "../log.ts";
 import {
-  HOST_SCHEDULER_PATH_ENV,
   hostMaxOffsetMinutes,
   hostSchedulerLabel,
   hostSchedulerLocalTime,
@@ -32,6 +37,7 @@ import {
   uninstallHostSchedulerAgent,
   type LocalTime,
 } from "../runner/host-scheduler-launchd.ts";
+import { LAUNCHD_PATH_ENV } from "../runner/launchd.ts";
 
 /** Side effects `host-scheduler check` performs; injectable so the decision is testable. */
 export interface HostSchedulerCheckDeps {
@@ -60,33 +66,10 @@ function requireDispatchToken(ctx: CliContext): string {
 export function realHostSchedulerCheckDeps(ctx: CliContext): HostSchedulerCheckDeps {
   const octokit = githubClient(requireDispatchToken(ctx));
   return {
-    async listRecentRuns(ref) {
-      const { data } = await octokit.rest.actions.listWorkflowRuns({
-        ...ref,
-        workflow_id: "fixowl.yml",
-        per_page: 50,
-      });
-      return data.workflow_runs.map((run) => ({
-        id: run.id,
-        event: run.event,
-        status: run.status ?? null,
-        conclusion: run.conclusion ?? null,
-        createdAt: run.created_at,
-        displayTitle: run.display_title ?? run.name ?? "",
-      }));
-    },
-    async getDefaultBranch(ref) {
-      const { data } = await octokit.rest.repos.get({ ...ref });
-      return data.default_branch;
-    },
-    async dispatch(ref, branch) {
-      await octokit.rest.actions.createWorkflowDispatch({
-        ...ref,
-        workflow_id: "fixowl.yml",
-        ref: branch,
-        inputs: { source: HOST_SCHEDULER_SOURCE },
-      });
-    },
+    listRecentRuns: (ref) => listRecentFixowlRuns(octokit, ref, 50),
+    getDefaultBranch: (ref) => getDefaultBranch(octokit, ref),
+    dispatch: (ref, branch) =>
+      dispatchFixowlWorkflow(octokit, ref, branch, { source: HOST_SCHEDULER_SOURCE }),
     now: () => new Date(),
   };
 }
@@ -166,7 +149,7 @@ function repoLocalTime(ctx: CliContext, repoFullName: string): LocalTime {
 }
 
 function fmtLocalTime(local: LocalTime): string {
-  return `${String(local.hour).padStart(2, "0")}:${String(local.minute).padStart(2, "0")}`;
+  return `${pad2(local.hour)}:${pad2(local.minute)}`;
 }
 
 export async function hostSchedulerInstallCommand(
@@ -204,7 +187,7 @@ export async function hostSchedulerInstallCommand(
       label,
       programArguments: [...invocation, repoFullName],
       local,
-      pathEnv: HOST_SCHEDULER_PATH_ENV,
+      pathEnv: LAUNCHD_PATH_ENV,
       stdoutPath: hostSchedulerLogPath(label),
       stderrPath: hostSchedulerLogPath(label),
     });

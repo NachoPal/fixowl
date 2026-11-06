@@ -34,6 +34,7 @@ export {
 export {
   containerName,
   containerNamePrefix,
+  nameSlug,
   CONTAINER_NAME_MAX_LENGTH,
   parseContainerName,
   type ContainerIssue,
@@ -171,6 +172,8 @@ export {
   isScheduledSlotRun,
   scheduledRunSince,
   scheduledRunToday,
+  parseDailyCronResult,
+  toWorkflowRunLite,
   tryParseDailyCron,
   HOST_SCHEDULER_MARKER,
   HOST_SCHEDULER_SOURCE,
@@ -179,7 +182,9 @@ export {
   type DailyCron,
   type FallbackDecision,
   type SlotGuardParams,
+  type DailyCronParse,
   type SlotGuardResult,
+  type WorkflowRunApiShape,
   type WorkflowRunLite,
 } from "./fallback-dispatch.ts";
 export {

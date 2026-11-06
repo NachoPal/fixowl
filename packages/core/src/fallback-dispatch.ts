@@ -88,6 +88,37 @@ export interface WorkflowRunLite {
   displayTitle: string;
 }
 
+/**
+ * The slice of Octokit's `actions.listWorkflowRuns` item we read. Structural, so
+ * both callers (the action's `GitHubApi` and the CLI's host-scheduler deps) can
+ * hand their fully-typed response rows to {@link toWorkflowRunLite} without a cast.
+ */
+export interface WorkflowRunApiShape {
+  id: number;
+  event: string;
+  status?: string | null;
+  conclusion?: string | null;
+  created_at: string;
+  display_title?: string | null;
+  name?: string | null;
+}
+
+/**
+ * Reduces an Octokit workflow-run row to the {@link WorkflowRunLite} the pure
+ * decisions take. One owner so the action and the CLI can never disagree about
+ * which field carries the host-scheduler marker.
+ */
+export function toWorkflowRunLite(run: WorkflowRunApiShape): WorkflowRunLite {
+  return {
+    id: run.id,
+    event: run.event,
+    status: run.status ?? null,
+    conclusion: run.conclusion ?? null,
+    createdAt: run.created_at,
+    displayTitle: run.display_title ?? run.name ?? "",
+  };
+}
+
 /** True when both instants fall on the same UTC calendar day. */
 export function isSameUtcDay(a: Date, b: Date): boolean {
   return (
@@ -103,24 +134,54 @@ export interface DailyCron {
   minuteUtc: number;
 }
 
+/** A daily-cron parse: the time, or why the expression is not a plain daily cron. */
+export type DailyCronParse =
+  | { ok: true; cron: DailyCron }
+  | {
+      ok: false;
+      /** Operator-facing reason, used verbatim by the CLI's throwing parser. */
+      message: string;
+    };
+
 /**
- * Parses the hour/minute of a daily `M H * * *` cron (UTC), or returns undefined
- * when the expression is not a plain daily cron (five fields, numeric minute and
- * hour, and `*` for day-of-month, month, and day-of-week). Defensive on purpose:
- * callers that anchor to the occurrence degrade to the UTC calendar day rather
- * than throw when the schedule is missing or non-daily. (The CLI keeps its own
- * throwing parser with per-field messages for install-time validation.)
+ * The one daily-`M H * * *` (UTC) cron grammar: five fields, numeric minute and
+ * hour in range, and `*` for day-of-month, month, and day-of-week. It reports a
+ * per-field reason so the two callers can react differently without
+ * reimplementing the grammar: {@link tryParseDailyCron} degrades to the UTC
+ * calendar day when anchoring to the occurrence is impossible, while the CLI's
+ * install-time `parseDailyCron` throws the message at the operator.
  */
-export function tryParseDailyCron(cron: string): DailyCron | undefined {
+export function parseDailyCronResult(cron: string): DailyCronParse {
   const fields = cron.trim().split(/\s+/);
-  if (fields.length !== 5) return undefined;
+  if (fields.length !== 5) {
+    return { ok: false, message: `expected a 5-field cron, got "${cron}"` };
+  }
   const [minute, hour, dom, month, dow] = fields;
-  if (dom !== "*" || month !== "*" || dow !== "*") return undefined;
+  if (dom !== "*" || month !== "*" || dow !== "*") {
+    return {
+      ok: false,
+      message: `the host scheduler needs a plain daily cron like "M H * * *"; "${cron}" is not daily`,
+    };
+  }
   const minuteUtc = Number(minute);
   const hourUtc = Number(hour);
-  if (!Number.isInteger(minuteUtc) || minuteUtc < 0 || minuteUtc > 59) return undefined;
-  if (!Number.isInteger(hourUtc) || hourUtc < 0 || hourUtc > 23) return undefined;
-  return { hourUtc, minuteUtc };
+  if (!Number.isInteger(minuteUtc) || minuteUtc < 0 || minuteUtc > 59) {
+    return { ok: false, message: `cron minute must be 0-59, got "${minute}"` };
+  }
+  if (!Number.isInteger(hourUtc) || hourUtc < 0 || hourUtc > 23) {
+    return { ok: false, message: `cron hour must be 0-23, got "${hour}"` };
+  }
+  return { ok: true, cron: { hourUtc, minuteUtc } };
+}
+
+/**
+ * {@link parseDailyCronResult} reduced to the time or undefined. Defensive on
+ * purpose: callers that anchor to the occurrence degrade to the UTC calendar day
+ * rather than throw when the schedule is missing or non-daily.
+ */
+export function tryParseDailyCron(cron: string): DailyCron | undefined {
+  const parsed = parseDailyCronResult(cron);
+  return parsed.ok ? parsed.cron : undefined;
 }
 
 /**

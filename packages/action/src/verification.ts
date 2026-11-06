@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { RepoFileConfig } from "@fixowl/core";
+import { nameSlug, type RepoFileConfig } from "@fixowl/core";
 import { containerName } from "./container-exec.ts";
 import type { ContainerEngine, Logger } from "./deps.ts";
 import type { CheckOutcome } from "./pr-body.ts";
@@ -53,7 +53,7 @@ export async function runVerification(params: {
       timeoutMs: CHECK_TIMEOUT_MS,
     });
     writeFileSync(
-      join(evidenceDir, `check-${sanitize(check.name)}.log`),
+      join(evidenceDir, `check-${nameSlug(check.name)}.log`),
       `$ ${check.run}\n\n${result.stdout}\n${result.stderr}\n(exit ${result.code}${result.timedOut ? ", timed out" : ""})\n`,
     );
     const passed = result.code === 0 && !result.timedOut;
@@ -66,11 +66,4 @@ export async function runVerification(params: {
   }
 
   return outcomes;
-}
-
-function sanitize(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
 }

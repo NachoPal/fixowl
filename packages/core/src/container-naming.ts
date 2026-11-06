@@ -29,7 +29,14 @@ export interface ParsedContainerName {
   truncated: boolean;
 }
 
-function nameSlug(text: string): string {
+/**
+ * The canonical fixowl name slug: lowercase, every run of non-alphanumerics
+ * collapsed to a single dash, leading/trailing dashes trimmed. Shared by every
+ * caller that turns a repo name, check name, or purpose into a safe identifier
+ * (container names here, launchd labels in the CLI, evidence filenames in the
+ * action) so the shape can never drift between them.
+ */
+export function nameSlug(text: string): string {
   return text
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
