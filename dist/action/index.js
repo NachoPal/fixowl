@@ -126796,9 +126796,12 @@ async function processIssue(deps, ctx) {
   const title = buildPrTitle(issue3.number, issue3.title);
   const maxTries = ctx.ciMaxTries;
   let previousFailures;
+  let lastCiFailures;
   let pr;
   let lastVerification = [];
   let lastCi;
+  let requiredChecks;
+  let pushedHeadSha;
   let firstPassVerdict;
   let conflictPassesUsed = 0;
   try {
@@ -126832,6 +126835,12 @@ ${agentResult.stderr}`.trim();
       if (attempt === 1 && !await git.hasChangesAgainst(ctx.baseRef)) {
         return await handleNoDiff(deps, ctx, base, firstPassVerdict);
       }
+      if (pr !== void 0 && pushedHeadSha !== void 0 && !await git.hasChangesAgainst(pushedHeadSha)) {
+        log3.info(
+          `issue #${issue3.number}: agent made no further changes (attempt ${attempt}/${maxTries}); leaving the annotated draft without re-verifying or re-polling CI`
+        );
+        break;
+      }
       const verification = await runVerification({
         engine,
         log: log3,
@@ -126844,7 +126853,7 @@ ${agentResult.stderr}`.trim();
       });
       lastVerification = verification;
       if (anyCheckFailed(verification)) {
-        previousFailures = localFeedback(verification);
+        previousFailures = lastCiFailures !== void 0 ? [...lastCiFailures, ...localFeedback(verification)] : localFeedback(verification);
         log3.info(
           `issue #${issue3.number}: local pre-check failed (attempt ${attempt}/${maxTries}); not pushing`
         );
@@ -126856,6 +126865,7 @@ ${agentResult.stderr}`.trim();
       await git.commitAll(title);
       await git.push(branch);
       let headSha = await git.headSha();
+      pushedHeadSha = headSha;
       if (pr === void 0) {
         pr = await github.ensurePullRequest({
           head: branch,
@@ -126892,17 +126902,20 @@ ${agentResult.stderr}`.trim();
           return await finishNeedsRebase(deps, ctx, { pr, lastVerification, usage });
         }
         headSha = rebase.headSha;
+        pushedHeadSha = headSha;
         log3.info(
           `issue #${issue3.number}: rebased onto ${ctx.prBase} and resolved conflicts; resuming CI gate on ${headSha.slice(0, 12)}`
         );
       }
-      const required2 = await readRequiredChecks(github, ctx.prBase, log3);
+      if (requiredChecks === void 0) {
+        requiredChecks = await readRequiredChecks(github, ctx.prBase, log3);
+      }
       log3.info(
         `issue #${issue3.number}: waiting for CI on ${headSha.slice(0, 12)} (attempt ${attempt}/${maxTries})`
       );
       const ci = await waitForRequiredChecks(
         { github, log: log3, clock },
-        { sha: headSha, base: ctx.prBase, required: required2, timeoutMs: ctx.ciTimeoutMs }
+        { sha: headSha, base: ctx.prBase, required: requiredChecks, timeoutMs: ctx.ciTimeoutMs }
       );
       lastCi = ci;
       if (ci.outcome === "green" || ci.outcome === "unverified") {
@@ -126938,7 +126951,8 @@ ${agentResult.stderr}`.trim();
         );
         break;
       }
-      previousFailures = await ciFeedback(github, ci);
+      lastCiFailures = await ciFeedback(github, ci);
+      previousFailures = lastCiFailures;
       log3.info(
         `issue #${issue3.number}: CI ${ci.timedOut ? "did not complete in time" : "is red"} (attempt ${attempt}/${maxTries})`
       );
