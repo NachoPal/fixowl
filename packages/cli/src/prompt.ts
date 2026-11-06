@@ -162,11 +162,13 @@ export function createPrompter(): Prompter {
     output,
     terminal: true,
   });
-  rl.on("SIGINT", () => {
+  /** Leaves the terminal usable (cursor back, echo unmuted) and exits non-zero. */
+  const abort: () => never = () => {
     output.muted = false;
     process.stdout.write(`${SHOW_CURSOR}\naborted; nothing was changed after the last step\n`);
     process.exit(130);
-  });
+  };
+  rl.on("SIGINT", abort);
 
   const write = (text: string): void => {
     output.write(text);
@@ -306,6 +308,12 @@ export function createPrompter(): Prompter {
           case "refuse":
             notice = outcome.message;
             break;
+          case "abort":
+            // Ctrl+D closed stdin: no further key can arrive, so exit the way
+            // Ctrl+C does rather than silently falling through with exit 0.
+            stdin.off("keypress", onKey);
+            stdout.write(repaintPrefix(painted));
+            abort();
           case "submit": {
             const indices = multi
               ? [...outcome.state.selected].toSorted((a, b) => a - b)

@@ -16,12 +16,28 @@ import {
 
 export const WORKFLOW_PATH = ".github/workflows/fixowl.yml";
 
+/**
+ * The workflow's file name, which is also its `workflow_id` for the Actions API
+ * (`/repos/{owner}/{repo}/actions/workflows/{workflow_id}/...`). One owner for
+ * the literal: every caller that lists runs or dispatches the night reads it
+ * from here instead of re-spelling the file name.
+ */
+export const WORKFLOW_ID = WORKFLOW_PATH.slice(WORKFLOW_PATH.lastIndexOf("/") + 1);
+
 const CHECKOUT_PIN = "actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6";
 const UPLOAD_ARTIFACT_PIN = "actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5";
 
 export interface WorkflowTemplateOptions {
   /** Cron expression, or null for workflow_dispatch only (provision --no-schedule). */
   schedule: string | null;
+  /**
+   * The repo configured nightly cron when the workflow carries no `on.schedule:`
+   * (host-scheduler mode, or --no-schedule). It is still passed to the action as
+   * the `schedule` input so the in-run once-a-day guard anchors its "already
+   * ran?" window to the same occurrence the host scheduler anchors to, instead of
+   * degrading to the UTC calendar day and disagreeing with it near UTC midnight.
+   */
+  scheduleAnchor?: string;
   labels: LabelRule;
   agent: string;
   /** Env var names the agent adapter needs; each is wired from a same-named repo secret. */
@@ -121,10 +137,12 @@ ${dispatchBlock}`;
   ];
   // The cron is passed to the action so its once-a-day budget guard can anchor
   // the "already ran" window to the schedule occurrence (correct across UTC
-  // midnight) rather than the UTC calendar day. Omitted for a dispatch-only
-  // workflow, where the guard degrades to the calendar day harmlessly.
-  if (options.schedule) {
-    withLines.push(`          schedule: "${options.schedule}"`);
+  // midnight) rather than the UTC calendar day. A dispatch-only workflow has no
+  // `on.schedule:` but the host scheduler still fires on the configured cron, so
+  // `scheduleAnchor` keeps both sides anchored to the same occurrence.
+  const scheduleAnchor = options.schedule ?? options.scheduleAnchor;
+  if (scheduleAnchor) {
+    withLines.push(`          schedule: "${scheduleAnchor}"`);
   }
   // Run-budget inputs are rendered only when set, so a workflow that leaves the
   // usage / wall-clock axes opted out stays byte-for-byte as before.

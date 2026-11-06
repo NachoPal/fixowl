@@ -179,9 +179,15 @@ async function listContainers(
   env: Record<string, string> | undefined,
 ): Promise<LiveContainer[]> {
   const repos = targetRepos(ctx.config, repoArg);
+  // One `docker ps` per repo, fanned out: they are independent read-only queries
+  // against the same daemon, so the wait is the slowest one, not their sum.
+  const results = await Promise.all(
+    repos.map(
+      async (repoFullName) => await run(psArgv(containerNamePrefix(repoFullName)), { env }),
+    ),
+  );
   const rows: Array<{ name: string; status: string }> = [];
-  for (const repoFullName of repos) {
-    const result = await run(psArgv(containerNamePrefix(repoFullName)), { env });
+  for (const result of results) {
     if (result.code !== 0) {
       throw new Error(`docker ps failed: ${result.stderr.trim() || result.stdout.trim()}`);
     }

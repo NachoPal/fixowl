@@ -6,6 +6,7 @@ import {
   hostSchedulerRole,
   resolveRepoSettings,
   HOST_SCHEDULER_SOURCE,
+  WORKFLOW_ID,
   type FallbackDecision,
   type WorkflowRunLite,
 } from "@fixowl/core";
@@ -25,9 +26,11 @@ import {
   isHostSchedulerInstalled,
   isHostSchedulerLoaded,
   legacyHostSchedulerLabel,
+  missingAgentPaths,
   nextFireTime,
   parseDailyCron,
   readPlistLocalTime,
+  readPlistProgramArguments,
   renderHostSchedulerPlist,
   uninstallHostSchedulerAgent,
   type LocalTime,
@@ -63,7 +66,7 @@ export function realHostSchedulerCheckDeps(ctx: CliContext): HostSchedulerCheckD
     async listRecentRuns(ref) {
       const { data } = await octokit.rest.actions.listWorkflowRuns({
         ...ref,
-        workflow_id: "fixowl.yml",
+        workflow_id: WORKFLOW_ID,
         per_page: 50,
       });
       return data.workflow_runs.map((run) => ({
@@ -82,7 +85,7 @@ export function realHostSchedulerCheckDeps(ctx: CliContext): HostSchedulerCheckD
     async dispatch(ref, branch) {
       await octokit.rest.actions.createWorkflowDispatch({
         ...ref,
-        workflow_id: "fixowl.yml",
+        workflow_id: WORKFLOW_ID,
         ref: branch,
         inputs: { source: HOST_SCHEDULER_SOURCE },
       });
@@ -165,6 +168,23 @@ function repoLocalTime(ctx: CliContext, repoFullName: string): LocalTime {
   return hostSchedulerLocalTime({ cron, gapMinutes, maxOffsetMinutes: hostMaxOffsetMinutes() });
 }
 
+/**
+ * {@link repoLocalTime}, degrading to undefined instead of throwing when the
+ * configured cron is not a plain daily expression. Only status uses this - the
+ * install path must still fail loudly on an unusable schedule.
+ */
+function configuredLocalTime(ctx: CliContext, repoFullName: string): LocalTime | undefined {
+  try {
+    return repoLocalTime(ctx, repoFullName);
+  } catch {
+    return undefined;
+  }
+}
+
+function sameLocalTime(a: LocalTime, b: LocalTime): boolean {
+  return a.hour === b.hour && a.minute === b.minute;
+}
+
 function fmtLocalTime(local: LocalTime): string {
   return `${String(local.hour).padStart(2, "0")}:${String(local.minute).padStart(2, "0")}`;
 }
@@ -238,39 +258,77 @@ export async function hostSchedulerUninstallCommand(
   }
 }
 
+/**
+ * The host-scheduler status block, shared by `fixowl host-scheduler status` and
+ * `fixowl status` so the two renderings cannot drift. Returns the lines to log
+ * (already indented), including any re-install warning.
+ */
+export async function hostSchedulerStatusLines(
+  ctx: CliContext,
+  repoFullName: string,
+): Promise<string[]> {
+  const role = hostSchedulerRole(resolveRepoSettings(ctx.config, repoFullName).scheduleTrigger);
+  const label = hostSchedulerLabel(repoFullName);
+  // During the transition, a host provisioned before the rename still has the
+  // old-label agent; recognize it so status is not falsely "not installed".
+  const legacyLabel = legacyHostSchedulerLabel(repoFullName);
+  const activeLabel = isHostSchedulerInstalled(label)
+    ? label
+    : isHostSchedulerInstalled(legacyLabel)
+      ? legacyLabel
+      : undefined;
+  if (activeLabel === undefined) {
+    return [
+      role === "none"
+        ? "  host scheduler: not installed (schedule_trigger: github-cron)"
+        : "  host scheduler: not installed",
+    ];
+  }
+  const loaded = await isHostSchedulerLoaded(activeLabel);
+  const configured = configuredLocalTime(ctx, repoFullName);
+  const installed = readPlistLocalTime(activeLabel);
+  const local = installed ?? configured;
+  const mode = role === "primary" ? "primary dispatch" : "cron fallback";
+  const legacyNote =
+    activeLabel === legacyLabel ? ", legacy agent - re-run `fixowl provision`" : "";
+  const lines = [
+    `  host scheduler: installed${loaded ? "" : " (not loaded)"} (${mode}${legacyNote}), fires daily at ` +
+      `${local === undefined ? "an unknown time" : fmtLocalTime(local)} local` +
+      `${local === undefined ? "" : `; next ${nextFireTime(local).toLocaleString()}`}`,
+    `  plist: ${hostSchedulerPlistPath(activeLabel)}`,
+  ];
+  // The installed fire time and the cron the action's once-a-day guard anchors
+  // to are both baked (in the plist, and in the workflow's `schedule` input) at
+  // install/provision time, while the config can be edited afterwards. A
+  // mismatch here is the visible symptom of that drift, so name both fixes.
+  if (
+    installed !== undefined &&
+    configured !== undefined &&
+    !sameLocalTime(installed, configured)
+  ) {
+    lines.push(
+      `  warning: config now implies ${fmtLocalTime(configured)} local but the agent fires at ` +
+        `${fmtLocalTime(installed)}; re-run \`fixowl host-scheduler install\` to re-arm it and ` +
+        "`fixowl provision` so the run's once-a-day guard anchors to the same schedule",
+    );
+  }
+  const missing = missingAgentPaths(readPlistProgramArguments(activeLabel));
+  if (missing.length > 0) {
+    lines.push(
+      `  warning: the agent's baked path${missing.length > 1 ? "s" : ""} no longer exist` +
+        `${missing.length > 1 ? "" : "s"} (${missing.join(", ")}) - it would fail silently; ` +
+        "re-run `fixowl host-scheduler install`",
+    );
+  }
+  return lines;
+}
+
 export async function hostSchedulerStatusCommand(
   ctx: CliContext,
   repoArg: string | undefined,
 ): Promise<void> {
   for (const repoFullName of targetRepos(ctx.config, repoArg)) {
     log.info(`\n${repoFullName}`);
-    const role = hostSchedulerRole(resolveRepoSettings(ctx.config, repoFullName).scheduleTrigger);
-    const label = hostSchedulerLabel(repoFullName);
-    // During the transition, a host provisioned before the rename still has the
-    // old-label agent; recognize it so status is not falsely "not installed".
-    const legacyLabel = legacyHostSchedulerLabel(repoFullName);
-    const activeLabel = isHostSchedulerInstalled(label)
-      ? label
-      : isHostSchedulerInstalled(legacyLabel)
-        ? legacyLabel
-        : undefined;
-    if (activeLabel === undefined) {
-      log.info(
-        role === "none"
-          ? "  host scheduler: not installed (schedule_trigger: github-cron)"
-          : "  host scheduler: not installed",
-      );
-      continue;
-    }
-    const loaded = await isHostSchedulerLoaded(activeLabel);
-    const local = readPlistLocalTime(activeLabel) ?? repoLocalTime(ctx, repoFullName);
-    const mode = role === "primary" ? "primary dispatch" : "cron fallback";
-    const legacyNote =
-      activeLabel === legacyLabel ? ", legacy agent - re-run `fixowl provision`" : "";
-    log.info(
-      `  host scheduler: installed${loaded ? "" : " (not loaded)"} (${mode}${legacyNote}), fires daily at ` +
-        `${fmtLocalTime(local)} local; next ${nextFireTime(local).toLocaleString()}`,
-    );
-    log.info(`  plist: ${hostSchedulerPlistPath(activeLabel)}`);
+    for (const line of await hostSchedulerStatusLines(ctx, repoFullName)) log.info(line);
   }
 }

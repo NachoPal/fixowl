@@ -1,7 +1,7 @@
 import { mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runnerBaseDir } from "@fixowl/core";
+import { runnerBaseDir, WORKFLOW_ID } from "@fixowl/core";
 import type { CliContext } from "../context.ts";
 import { runOrThrow } from "../exec.ts";
 import { splitRepoFullName } from "../github/repo-provisioning.ts";
@@ -21,7 +21,7 @@ export async function logsCommand(
   const ref = splitRepoFullName(repoFullName);
   const { data } = await ctx.admin.rest.actions.listWorkflowRuns({
     ...ref,
-    workflow_id: "fixowl.yml",
+    workflow_id: WORKFLOW_ID,
     per_page: 1,
   });
   const run = data.workflow_runs[0];

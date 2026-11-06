@@ -86299,6 +86299,10 @@ var APP_PRIVATE_KEY_SECRET = "FIXOWL_APP_PRIVATE_KEY";
 var APP_INSTALLATION_ID_SECRET = "FIXOWL_APP_INSTALLATION_ID";
 var LEGACY_RUNTIME_TOKEN_SECRET = "FIXOWL_GITHUB_TOKEN";
 
+// packages/core/src/workflow-template.ts
+var WORKFLOW_PATH = ".github/workflows/fixowl.yml";
+var WORKFLOW_ID = WORKFLOW_PATH.slice(WORKFLOW_PATH.lastIndexOf("/") + 1);
+
 // packages/core/src/runtime-credential.ts
 var APP_SECRET_NAMES = [APP_ID_SECRET, APP_INSTALLATION_ID_SECRET, APP_PRIVATE_KEY_SECRET];
 function resolveRuntimeCredentialFromEnv(env) {
@@ -125558,7 +125562,7 @@ ${trimmed.slice(-CHECK_LOG_MAX)}`;
       const { data } = await runsOctokit.actions.listWorkflowRuns({
         owner,
         repo,
-        workflow_id: "fixowl.yml",
+        workflow_id: WORKFLOW_ID,
         per_page: 50
       });
       return data.workflow_runs.map((workflowRun) => ({

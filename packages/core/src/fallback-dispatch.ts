@@ -321,7 +321,13 @@ export interface SlotGuardParams {
   now: Date;
   /** This run's id (GITHUB_RUN_ID). */
   currentRunId: number;
-  /** Whether *this* run is itself a scheduled-slot run (cron or fallback-tagged). */
+  /**
+   * Whether *this* run is itself a scheduled-slot run (cron or fallback-tagged).
+   * The action pre-filters on its own `source` input and so only ever passes
+   * true; the false case stays part of the contract (and is unit-tested) because
+   * it is what makes "a manual dispatch is never budget-limited" a property of
+   * this pure function rather than of its one caller.
+   */
   selfIsScheduledSlot: boolean;
   /** Run-name marker identifying a fallback dispatch; overridable for tests. */
   marker?: string;

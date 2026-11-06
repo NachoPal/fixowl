@@ -63,6 +63,15 @@ describe("applySelectKey navigation", () => {
     expect(applySelectKey(state(1), { name: "c", ctrl: true }, single).kind).toBe("ignore");
     expect(applySelectKey(state(1), {}, single).kind).toBe("ignore");
   });
+
+  it("aborts on Ctrl+D rather than waiting for keys that can no longer arrive", () => {
+    // Ctrl+D is EOF: ignoring it used to let the selector fall out of the event
+    // loop, exiting 0 with the cursor hidden as if the step had succeeded.
+    expect(applySelectKey(state(1), { name: "d", ctrl: true }, single).kind).toBe("abort");
+    expect(applySelectKey(state(1), { name: "d", ctrl: true }, multi).kind).toBe("abort");
+    // A bare "d" is not EOF; it stays an ordinary unknown key.
+    expect(applySelectKey(state(1), { name: "d" }, single).kind).toBe("ignore");
+  });
 });
 
 describe("applySelectKey selection", () => {

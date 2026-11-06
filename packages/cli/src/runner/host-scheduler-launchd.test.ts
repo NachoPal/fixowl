@@ -1,14 +1,16 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   hostSchedulerLabel,
   hostSchedulerLocalTime,
   legacyHostSchedulerLabel,
+  missingAgentPaths,
   nextFireTime,
   parseDailyCron,
   readPlistLocalTime,
+  readPlistProgramArguments,
   renderHostSchedulerPlist,
 } from "./host-scheduler-launchd.ts";
 
@@ -140,5 +142,71 @@ describe("renderHostSchedulerPlist", () => {
     expect(Number(minute?.[1])).toBe(48);
     // readPlistLocalTime returns undefined for a label with no installed plist.
     expect(readPlistLocalTime("com.fixowl.host-scheduler.does-not-exist-xyz")).toBeUndefined();
+  });
+});
+
+// On POSIX, os.homedir() honours $HOME, so pointing it at a temp dir puts the
+// installed-plist path (~/Library/LaunchAgents) under test control.
+function installPlist(label: string, body: string): void {
+  const home = mkdtempSync(join(tmpdir(), "fixowl-home-"));
+  process.env.HOME = home;
+  mkdirSync(join(home, "Library", "LaunchAgents"), { recursive: true });
+  writeFileSync(join(home, "Library", "LaunchAgents", `${label}.plist`), body);
+}
+
+describe("readPlistProgramArguments / missingAgentPaths (issue #90)", () => {
+  const realHome = process.env.HOME;
+  afterEach(() => {
+    process.env.HOME = realHome;
+  });
+
+  it("reads back the argv baked into an installed plist", () => {
+    const label = "com.fixowl.host-scheduler.acme-widgets";
+    installPlist(
+      label,
+      renderHostSchedulerPlist({
+        label,
+        programArguments: [
+          "/usr/bin/node",
+          "/opt/fixowl/index.js",
+          "--config",
+          "/home/u/.fixowl/config.yaml",
+          "host-scheduler",
+          "check",
+          "acme/widgets",
+        ],
+        local: { hour: 7, minute: 48 },
+        pathEnv: "/usr/bin",
+        stdoutPath: "/tmp/x.log",
+        stderrPath: "/tmp/x.log",
+      }),
+    );
+    expect(readPlistProgramArguments(label)).toEqual([
+      "/usr/bin/node",
+      "/opt/fixowl/index.js",
+      "--config",
+      "/home/u/.fixowl/config.yaml",
+      "host-scheduler",
+      "check",
+      "acme/widgets",
+    ]);
+    expect(readPlistLocalTime(label)).toEqual({ hour: 7, minute: 48 });
+    expect(readPlistProgramArguments("com.fixowl.host-scheduler.nope-xyz")).toEqual([]);
+  });
+
+  it("flags only the baked absolute paths that no longer exist", () => {
+    const dir = mkdtempSync(join(tmpdir(), "fixowl-argv-"));
+    const script = join(dir, "index.js");
+    writeFileSync(script, "");
+    expect(
+      missingAgentPaths([
+        process.execPath,
+        script,
+        "/opt/fixowl/gone-after-brew-upgrade/node",
+        "host-scheduler",
+        "check",
+        "acme/widgets",
+      ]),
+    ).toEqual(["/opt/fixowl/gone-after-brew-upgrade/node"]);
   });
 });

@@ -1,4 +1,5 @@
 import { setTimeout as sleep } from "node:timers/promises";
+import { WORKFLOW_ID } from "@fixowl/core";
 import type { CliContext } from "../context.ts";
 import { splitRepoFullName } from "../github/repo-provisioning.ts";
 import { log } from "../log.ts";
@@ -11,7 +12,7 @@ export async function runCommand(ctx: CliContext, repoFullName: string): Promise
 
   await ctx.admin.rest.actions.createWorkflowDispatch({
     ...ref,
-    workflow_id: "fixowl.yml",
+    workflow_id: WORKFLOW_ID,
     ref: repoData.default_branch,
   });
   log.ok("workflow dispatched; waiting for the run to appear");
@@ -22,7 +23,7 @@ export async function runCommand(ctx: CliContext, repoFullName: string): Promise
     await sleep(3000);
     const { data } = await ctx.admin.rest.actions.listWorkflowRuns({
       ...ref,
-      workflow_id: "fixowl.yml",
+      workflow_id: WORKFLOW_ID,
       event: "workflow_dispatch",
       per_page: 5,
     });

@@ -120,9 +120,21 @@ UTC midnight. Worked example - cron `55 23 * * *` (23:55 UTC):
 The anchored window keeps an on-time run just before UTC midnight and its
 post-midnight check in one occurrence, so they always dedupe to one run. The cron
 is passed to the action as the `schedule` workflow input so the in-run guard can
-compute the same anchor; an old workflow that predates this input degrades to the
-UTC calendar day (harmless away from midnight). Manual (untagged) dispatches are
-never guarded, regardless of window.
+compute the same anchor - including in `host-scheduler` mode, where the workflow
+carries no `on.schedule:` cron but the host agent still fires on that cron, so
+both sides key off the same occurrence. An old workflow that predates this input
+degrades to the UTC calendar day (harmless away from midnight). Manual (untagged)
+dispatches are never guarded, regardless of window.
+
+Both anchors are baked at setup time - the launchd fire time by `host-scheduler
+install`, the `schedule` input by `fixowl provision` - so editing `schedule:` in
+`~/.fixowl/config.yaml` without redoing both leaves them disagreeing.
+`fixowl host-scheduler status` (and `fixowl status`) warns when the installed
+fire time no longer matches the config, and when an absolute path baked into the
+plist (this node binary, the CLI entry, the config file) has since vanished -
+after a `brew upgrade node` or an npx cache eviction, say, which would otherwise
+make the agent fail silently. Both are fixed by re-running `fixowl provision` and
+`fixowl host-scheduler install`.
 
 ## The token: `FIXOWL_FALLBACK_TOKEN`
 
