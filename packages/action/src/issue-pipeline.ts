@@ -166,9 +166,21 @@ export async function processIssue(
   const maxTries = ctx.ciMaxTries;
 
   let previousFailures: CheckFailureFeedback[] | undefined;
+  // The most recent CI-red feedback, kept separately from `previousFailures` so
+  // a later LOCAL pre-check failure can be appended onto it instead of replacing
+  // it outright - otherwise the agent loses the CI context it was working on.
+  let lastCiFailures: CheckFailureFeedback[] | undefined;
   let pr: { number: number; url: string } | undefined;
   let lastVerification: CheckOutcome[] = [];
   let lastCi: WaitForChecksResult | undefined;
+  // The base branch's required checks, fixed per issue (ctx.prBase never
+  // changes); read lazily on first need and reused across attempts instead of
+  // one read per attempt.
+  let requiredChecks: RequiredChecks | undefined;
+  // HEAD at the last successful push, so a later attempt can detect an agent
+  // pass that made no further changes and skip re-verifying/re-polling the
+  // same commit.
+  let pushedHeadSha: string | undefined;
   // Layer B: the first pass's verify-first verdict (advisory), read from stdout.
   let firstPassVerdict: Verdict | undefined;
   // Agent passes already spent resolving conflicts on a dirty PR, across the loop
@@ -220,6 +232,22 @@ export async function processIssue(
         return await handleNoDiff(deps, ctx, base, firstPassVerdict);
       }
 
+      // A later pass (after at least one push) that leaves the tree identical to
+      // the last pushed commit gained nothing: re-verifying, no-op committing,
+      // no-op pushing, and re-polling the same SHA's CI would just repeat the
+      // last result. Stop and leave the draft annotated with what's already known.
+      if (
+        pr !== undefined &&
+        pushedHeadSha !== undefined &&
+        !(await git.hasChangesAgainst(pushedHeadSha))
+      ) {
+        log.info(
+          `issue #${issue.number}: agent made no further changes (attempt ${attempt}/${maxTries}); ` +
+            `leaving the annotated draft without re-verifying or re-polling CI`,
+        );
+        break;
+      }
+
       const verification = await runVerification({
         engine,
         log,
@@ -235,7 +263,13 @@ export async function processIssue(
       // Cheap pre-filter: a change that cannot even pass the local smoke test
       // never reaches CI. Feed the local failures back and retry, no push.
       if (anyCheckFailed(verification)) {
-        previousFailures = localFeedback(verification);
+        // Keep the last CI context alongside the fresh local failures instead of
+        // dropping it: a local pre-check failure on a later pass must not erase
+        // what the agent was fixing in CI.
+        previousFailures =
+          lastCiFailures !== undefined
+            ? [...lastCiFailures, ...localFeedback(verification)]
+            : localFeedback(verification);
         log.info(
           `issue #${issue.number}: local pre-check failed (attempt ${attempt}/${maxTries}); not pushing`,
         );
@@ -257,6 +291,7 @@ export async function processIssue(
       await git.commitAll(title);
       await git.push(branch);
       let headSha = await git.headSha();
+      pushedHeadSha = headSha;
 
       if (pr === undefined) {
         pr = await github.ensurePullRequest({
@@ -302,19 +337,24 @@ export async function processIssue(
           return await finishNeedsRebase(deps, ctx, { pr, lastVerification, usage });
         }
         headSha = rebase.headSha;
+        pushedHeadSha = headSha;
         log.info(
           `issue #${issue.number}: rebased onto ${ctx.prBase} and resolved conflicts; ` +
             `resuming CI gate on ${headSha.slice(0, 12)}`,
         );
       }
 
-      const required = await readRequiredChecks(github, ctx.prBase, log);
+      // ctx.prBase is fixed for the whole issue, so this only needs reading once
+      // across every attempt rather than per attempt.
+      if (requiredChecks === undefined) {
+        requiredChecks = await readRequiredChecks(github, ctx.prBase, log);
+      }
       log.info(
         `issue #${issue.number}: waiting for CI on ${headSha.slice(0, 12)} (attempt ${attempt}/${maxTries})`,
       );
       const ci = await waitForRequiredChecks(
         { github, log, clock },
-        { sha: headSha, base: ctx.prBase, required, timeoutMs: ctx.ciTimeoutMs },
+        { sha: headSha, base: ctx.prBase, required: requiredChecks, timeoutMs: ctx.ciTimeoutMs },
       );
       lastCi = ci;
 
@@ -376,7 +416,8 @@ export async function processIssue(
         break;
       }
 
-      previousFailures = await ciFeedback(github, ci);
+      lastCiFailures = await ciFeedback(github, ci);
+      previousFailures = lastCiFailures;
       log.info(
         `issue #${issue.number}: CI ${ci.timedOut ? "did not complete in time" : "is red"} ` +
           `(attempt ${attempt}/${maxTries})`,

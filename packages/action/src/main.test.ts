@@ -1526,7 +1526,19 @@ describe("runNight", () => {
         ];
       };
       github.failedLogs = () => "dist/ is stale; run pnpm build";
-      const engine = makeEngine({ workspaceDir });
+      // Each agent pass makes real further progress (distinct content), unlike
+      // the shared makeEngine's identical write - a genuine no-op pass is its
+      // own scenario (see "stops the loop early without re-polling" below).
+      let agentCalls = 0;
+      const engine = new FakeEngine((spec): ExecResult | undefined => {
+        if (spec.name.includes("-classify-")) return ok("");
+        if (issueNumberOfAgentRun(spec) === 1) {
+          agentCalls++;
+          writeFileSync(join(workspaceDir, "fix-1.txt"), `fixed 1 attempt ${agentCalls}\n`);
+          return ok("done");
+        }
+        return ok();
+      });
 
       const summary = await runNight(
         { github, engine, exec: realExec, log: silentLog, clock: instantClock() },
@@ -1552,9 +1564,13 @@ describe("runNight", () => {
       const { workspaceDir, inputs } = await setup();
       const github = new FakeGitHub([issue(1, "Fix header", "x")]);
       github.requiredChecks = { readable: true, contexts: ["ci"] };
-      github.checksForRef = () => [
-        { name: "ci", status: "completed", conclusion: "failure", summary: "still failing" },
-      ];
+      let ciCalls = 0;
+      github.checksForRef = () => {
+        ciCalls++;
+        return [
+          { name: "ci", status: "completed", conclusion: "failure", summary: "still failing" },
+        ];
+      };
       const engine = makeEngine({ workspaceDir });
 
       const summary = await runNight(
@@ -1570,6 +1586,51 @@ describe("runNight", () => {
       expect(github.comments[0]?.body).toContain("draft");
       expect(github.pulls[0]?.body).toContain("still red");
       expect(engine.runs.filter((s) => s.name.endsWith("-1-agent"))).toHaveLength(2);
+      // makeEngine's second pass writes identical content to the first (a no-op
+      // relative to the pushed commit): the loop detects it and stops before a
+      // second CI poll instead of re-polling the same SHA.
+      expect(ciCalls).toBe(1);
+    });
+
+    it("stops the loop early without re-verifying or re-polling when a later pass makes no further changes", async () => {
+      const { workspaceDir, inputs } = await setup();
+      const github = new FakeGitHub([issue(1, "Fix header", "x")]);
+      github.requiredChecks = { readable: true, contexts: ["ci"] };
+      let ciCalls = 0;
+      github.checksForRef = () => {
+        ciCalls++;
+        return [
+          { name: "ci", status: "completed", conclusion: "failure", summary: "still failing" },
+        ];
+      };
+      let verifyCalls = 0;
+      // makeEngine writes the SAME content on every agent pass for a given
+      // issue, so the second pass is a genuine no-op against the first push.
+      const engine = new FakeEngine((spec): ExecResult | undefined => {
+        if (spec.name.includes("-classify-")) return ok("");
+        if (issueNumberOfAgentRun(spec) !== undefined) {
+          writeFileSync(join(workspaceDir, "fix-1.txt"), "fixed 1\n");
+          return ok("done");
+        }
+        verifyCalls++;
+        return ok();
+      });
+
+      const summary = await runNight(
+        { github, engine, exec: realExec, log: silentLog, clock: instantClock() },
+        { ...inputs, ciMaxTries: 3 },
+      );
+
+      expect(summary.results[0]?.status).toBe("pr-opened");
+      expect(summary.results[0]?.draft).toBe(true);
+      // Attempt 1 pushes and polls (red). Attempt 2's agent pass changes
+      // nothing further, so the loop stops right there instead of spending
+      // its remaining budgeted attempt (3) on a re-verify/re-poll of the same
+      // commit.
+      expect(engine.runs.filter((s) => s.name.endsWith("-1-agent"))).toHaveLength(2);
+      expect(verifyCalls).toBe(1);
+      expect(ciCalls).toBe(1);
+      expect(github.pulls[0]?.body).toContain("still red");
     });
 
     it("a failing local pre-check short-circuits: no push and no CI call", async () => {
