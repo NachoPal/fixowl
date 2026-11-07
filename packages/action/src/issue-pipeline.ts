@@ -3,6 +3,7 @@ import { join } from "node:path";
 import {
   addSamples,
   classifyMergeability,
+  detectModelAccessError,
   getSpendMeter,
   isFixowlBranchTip,
   PROMPT_MOUNT_PATH,
@@ -198,9 +199,15 @@ export async function processIssue(
           ? `agent timed out after ${ctx.timeoutMs}ms`
           : `agent exited with code ${agentResult.code}`;
         const output = `${agentResult.stdout}\n${agentResult.stderr}`.trim();
+        // A provider "model does not exist / no access" 404 (e.g. a
+        // verification-gated codex model) is common enough, and buried enough in
+        // the raw excerpt below, to warrant its own clear line instead - see
+        // model-access-error.ts / issue #149.
+        const modelAccessError = detectModelAccessError(output, ctx.selection.model);
         const excerpt =
           output.length > 0 ? markdownCell(tail(output, AGENT_ERROR_EXCERPT_MAX)) : "";
-        const errorMessage = excerpt.length > 0 ? `${reason} - ${excerpt}` : reason;
+        const errorMessage =
+          modelAccessError ?? (excerpt.length > 0 ? `${reason} - ${excerpt}` : reason);
         if (pr !== undefined) {
           return await finishFailedAfterPr(deps, ctx, {
             pr,
