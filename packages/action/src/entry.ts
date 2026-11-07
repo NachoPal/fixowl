@@ -3,6 +3,8 @@ import { Octokit } from "@octokit/rest";
 import {
   describeUsageHttpError,
   labelModelsSchema,
+  parseRetryAfterMs,
+  UsageHttpError,
   resolveRuntimeCredentialFromEnv,
   HOST_SCHEDULER_SOURCE,
   LEGACY_HOST_SCHEDULER_SOURCE,
@@ -109,7 +111,14 @@ async function fetchJson(url: string, headers: Record<string, string>): Promise<
     // that costs a multi-run investigation. See describeUsageHttpError for why the
     // body is safe to echo (no credentials) and how it is bounded.
     const body = await response.text().catch(() => "");
-    throw new Error(describeUsageHttpError(response.status, body));
+    // Structured, not just a message: the reader's bounded retry (issue #114)
+    // needs the status to decide whether this is worth another try, and the
+    // provider's `Retry-After` hint when it sends one.
+    throw new UsageHttpError(
+      response.status,
+      describeUsageHttpError(response.status, body),
+      parseRetryAfterMs(response.headers.get("retry-after")),
+    );
   }
   return response.json();
 }

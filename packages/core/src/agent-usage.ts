@@ -14,7 +14,8 @@
  *
  * Pure/deps split follows fixowl convention: the URL shape and response parsing
  * are pure here; the actual network call is the injected `UsageProbe.fetchJson`
- * (wired to `fetch` at the edge, faked in tests).
+ * (wired to `fetch` at the edge, faked in tests), and the retry backoff's wait is
+ * the injected `UsageProbe.sleep`.
  */
 
 /** A normalized reading of one agent's current usage windows. */
@@ -31,11 +32,15 @@ export interface UsageSnapshot {
  * How the host reaches one agent's usage. The reader picks whatever token it
  * needs out of `env` (the already-resolved agent env allowlist), so the run loop
  * never has to know which credential a given provider uses. `fetchJson` is the
- * single injected I/O edge; it must reject on a non-2xx or transport error.
+ * single injected I/O edge; it must reject on a non-2xx or transport error
+ * (ideally with a {@link UsageHttpError} so the retry can see the status and any
+ * `Retry-After`). `sleep` is the second, retry-only edge - injected so tests
+ * exercise the backoff without real delays; it defaults to a real timer.
  */
 export interface UsageProbe {
   env: Record<string, string | undefined>;
   fetchJson(url: string, headers: Record<string, string>): Promise<unknown>;
+  sleep?(ms: number): Promise<void>;
 }
 
 /**
@@ -74,6 +79,104 @@ const CLAUDE_TOKEN_ENV = "CLAUDE_CODE_OAUTH_TOKEN";
  * a future endpoint change never spills an unbounded body into the run log.
  */
 export const USAGE_ERROR_BODY_MAX = 300;
+
+/**
+ * Backoff delays before each retry of a usage read, so a transient 429 does not
+ * immediately disable the usage budget (issue #114). Length == retry count, so
+ * one read makes at most `USAGE_RETRY_DELAYS_MS.length + 1` requests. Kept short
+ * and bounded: the read sits on the critical path of a budget gate, and the
+ * fallback (count + wall-clock) is always there, so waiting long is never worth
+ * it. A `Retry-After` on the response wins over these (capped, see below).
+ */
+export const USAGE_RETRY_DELAYS_MS: readonly number[] = [1_000, 3_000];
+
+/** Upper bound honored from a `Retry-After`; a longer hint falls back to the backoff. */
+export const USAGE_RETRY_AFTER_MAX_MS = 15_000;
+
+/**
+ * A non-2xx from the usage endpoint, carrying the structured bits the retry
+ * needs: the `status` (is this worth retrying?) and the parsed `Retry-After`.
+ * The edge (`fetchJson`) throws it; the reader is still tolerant of a plain
+ * `Error` whose message starts with `HTTP <status>` (see `usageErrorStatus`), so
+ * an edge - or a test fake - that only throws a message keeps working.
+ */
+export class UsageHttpError extends Error {
+  readonly status: number;
+  readonly retryAfterMs?: number;
+
+  constructor(status: number, message: string, retryAfterMs?: number) {
+    super(message);
+    this.name = "UsageHttpError";
+    this.status = status;
+    this.retryAfterMs = retryAfterMs;
+  }
+}
+
+/**
+ * Parse an HTTP `Retry-After` value (delta-seconds or an HTTP-date) to a delay in
+ * ms, clamped to [0, {@link USAGE_RETRY_AFTER_MAX_MS}]. Returns `undefined` for a
+ * missing/unparseable value or a hint longer than the cap, so the caller falls
+ * back to its own backoff rather than stalling the night on a provider hint.
+ */
+export function parseRetryAfterMs(
+  value: string | null | undefined,
+  now: number = Date.now(),
+): number | undefined {
+  if (value === null || value === undefined) return undefined;
+  const trimmed = value.trim();
+  if (trimmed === "") return undefined;
+  let ms: number;
+  if (/^\d+$/.test(trimmed)) {
+    ms = Number(trimmed) * 1000;
+  } else {
+    const at = Date.parse(trimmed);
+    if (Number.isNaN(at)) return undefined;
+    ms = at - now;
+  }
+  if (!Number.isFinite(ms) || ms > USAGE_RETRY_AFTER_MAX_MS) return undefined;
+  return Math.max(0, ms);
+}
+
+/**
+ * Whether a usage-read failure with this status is worth retrying. Throttling
+ * (429, the common case for a loaded subscription - the usage endpoint shares the
+ * subscription's rate-limit state), a request timeout, and server errors are
+ * transient; an auth/scope error (401/403) or any other 4xx is not - retrying it
+ * would only delay the fall-through to count + wall-clock.
+ */
+export function isRetryableUsageStatus(status: number): boolean {
+  return status === 408 || status === 429 || status >= 500;
+}
+
+/**
+ * The HTTP status behind a usage-read rejection, when there is one. Prefers the
+ * structured {@link UsageHttpError}; otherwise reads the leading `HTTP <status>`
+ * that {@link describeUsageHttpError} puts at the front of the message. Returns
+ * `undefined` for a transport-level error (DNS/socket), which is retryable.
+ */
+function usageErrorStatus(error: unknown): number | undefined {
+  if (error instanceof UsageHttpError) return error.status;
+  const message = error instanceof Error ? error.message : String(error);
+  const match = /^HTTP (\d{3})\b/.exec(message);
+  return match?.[1] === undefined ? undefined : Number(match[1]);
+}
+
+/**
+ * The abstain reason for a failed usage read. A single-attempt failure keeps the
+ * original `usage read failed: <detail>` wording; once retries happened the count
+ * is stated so the operator can tell a one-off blip from a persistent outage, and
+ * a 429 is called out by name because it is the expected failure for a loaded
+ * subscription rather than a misconfiguration.
+ */
+export function describeUsageAbstain(
+  detail: string,
+  attempts: number,
+  status: number | undefined,
+): string {
+  const prefix = status === 429 ? "usage read rate-limited by the provider" : "usage read failed";
+  const tries = attempts > 1 ? ` after ${attempts} attempts` : "";
+  return `${prefix}${tries}: ${detail}`;
+}
 
 /**
  * Compose the detail string for a non-2xx usage read, folding a bounded slice of
@@ -156,6 +259,11 @@ function readResetsAt(value: unknown): number {
   return 0;
 }
 
+/** Real-timer sleep for the retry backoff; tests inject `UsageProbe.sleep`. */
+function defaultSleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 const claudeUsageReader: UsageReader = {
   async read(probe: UsageProbe): Promise<UsageReadResult> {
     const token = probe.env[CLAUDE_TOKEN_ENV];
@@ -166,20 +274,36 @@ const claudeUsageReader: UsageReader = {
     if (token === undefined || token === "") {
       return { reason: `no ${CLAUDE_TOKEN_ENV} on host` };
     }
+    const sleep = probe.sleep ?? defaultSleep;
     let raw: unknown;
-    try {
-      raw = await probe.fetchJson(CLAUDE_USAGE_URL, {
-        Authorization: `Bearer ${token}`,
-        // The OAuth flow beta header Claude Code sends for this endpoint.
-        "anthropic-beta": "oauth-2025-04-20",
-      });
-    } catch (error) {
-      // Advisory infrastructure: a transient read failure (non-2xx surfaced by
-      // the injected edge as a throw, or a transport error) must never abort the
-      // night. Abstain with the concrete cause so the next run is diagnosable,
-      // and let count + wall-clock carry the run.
-      const detail = error instanceof Error ? error.message : String(error);
-      return { reason: `usage read failed: ${detail}` };
+    // Bounded retry (issue #114): the usage endpoint shares the subscription's
+    // rate-limit state, so under exactly the load that makes the budget matter it
+    // can answer 429. A couple of short retries (honoring `Retry-After`) keep a
+    // transient throttle from silently disabling the budget for the whole night.
+    for (let attempt = 1; ; attempt++) {
+      try {
+        raw = await probe.fetchJson(CLAUDE_USAGE_URL, {
+          Authorization: `Bearer ${token}`,
+          // The OAuth flow beta header Claude Code sends for this endpoint.
+          "anthropic-beta": "oauth-2025-04-20",
+        });
+        break;
+      } catch (error) {
+        // Advisory infrastructure: a transient read failure (non-2xx surfaced by
+        // the injected edge as a throw, or a transport error) must never abort the
+        // night. Abstain with the concrete cause so the next run is diagnosable,
+        // and let count + wall-clock carry the run.
+        const detail = error instanceof Error ? error.message : String(error);
+        const status = usageErrorStatus(error);
+        // A transport error has no status and is always worth one more try.
+        const retryable = status === undefined || isRetryableUsageStatus(status);
+        const backoff = USAGE_RETRY_DELAYS_MS[attempt - 1];
+        if (!retryable || backoff === undefined) {
+          return { reason: describeUsageAbstain(detail, attempt, status) };
+        }
+        const hinted = error instanceof UsageHttpError ? error.retryAfterMs : undefined;
+        await sleep(hinted ?? backoff);
+      }
     }
     const snapshot = parseClaudeUsage(raw);
     if (snapshot === undefined) {

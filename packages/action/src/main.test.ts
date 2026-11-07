@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { ContainerRunSpec, Exec, ExecResult, IssueLite } from "./deps.ts";
+import { UsageHttpError } from "@fixowl/core";
 import { renderSummary, runNight, wipeoutFailure, type NightInputs } from "./main.ts";
 import type { IssueResult } from "./issue-pipeline.ts";
 import { TRIAGED_LABEL } from "./triage.ts";
@@ -843,6 +844,31 @@ describe("runNight", () => {
       expect(summary.notStarted?.map((i) => i.number)).toEqual([2, 3]);
     });
 
+    it("a usage read that recovers mid-run reports no never-observable notice", async () => {
+      const { workspaceDir, inputs } = await setup();
+      const github = new FakeGitHub(structuredClone(threeIssues));
+      const engine = makeEngine({ workspaceDir });
+      // The first gate is throttled for all its retries; later gates read fine.
+      let call = 0;
+      const httpJson = async () => {
+        call += 1;
+        if (call <= 3) throw new UsageHttpError(429, "HTTP 429: rate_limit_error");
+        return { five_hour: { utilization: 0.1, resets_at: 0 } };
+      };
+
+      const summary = await runNight(
+        { github, engine, exec: realExec, log: silentLog, httpJson, clock: instantClock() },
+        { ...claudeBudgetInputs(inputs), usageBudgetPercent: 50 },
+      );
+
+      expect(summary.results.map((r) => r.status)).toEqual(["pr-opened", "pr-opened", "pr-opened"]);
+      // One gate missed (it warns, and names the 429), but usage WAS observed
+      // later, so the budget did apply - no whole-run notice.
+      expect(summary.warnings.filter((w) => w.includes("rate-limited"))).toHaveLength(1);
+      expect(summary.usageUnobserved).toBeUndefined();
+      expect(renderSummary("test/repo", summary)).not.toContain("Usage budget not enforced");
+    });
+
     it("usage read that abstains falls through to the other budgets, with one warning", async () => {
       const { workspaceDir, inputs } = await setup();
       const github = new FakeGitHub(structuredClone(threeIssues));
@@ -865,8 +891,20 @@ describe("runNight", () => {
       const unobservable = summary.warnings.filter((w) => w.includes("unobservable"));
       expect(unobservable).toHaveLength(1);
       // The concrete cause is surfaced, not swallowed - the injected edge threw
-      // "usage endpoint down" and it must reach the run log.
-      expect(unobservable[0]).toContain("usage read failed: usage endpoint down");
+      // "usage endpoint down" and it must reach the run log. A statusless
+      // (transport) failure is retried before abstaining, so the reason states the
+      // attempt count (issue #114).
+      expect(unobservable[0]).toContain("usage read failed after 3 attempts: usage endpoint down");
+      // Never observed on any gate: the summary says the budget did not apply.
+      expect(summary.usageUnobserved).toEqual({
+        agent: "claude",
+        budgetPercent: 50,
+        attempts: 4,
+        reason: "usage read failed after 3 attempts: usage endpoint down",
+      });
+      expect(renderSummary("owner/repo", summary)).toContain(
+        "## Usage budget not enforced (usage never observable)",
+      );
     });
 
     it("api-credit agent: usage budget is not read and never warns (structurally unobservable)", async () => {

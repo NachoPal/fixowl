@@ -85531,6 +85531,47 @@ function getAgentAdapter(name, envOverride) {
 var CLAUDE_USAGE_URL = "https://api.anthropic.com/api/oauth/usage?at_wall=1&skip_spend=1";
 var CLAUDE_TOKEN_ENV = "CLAUDE_CODE_OAUTH_TOKEN";
 var USAGE_ERROR_BODY_MAX = 300;
+var USAGE_RETRY_DELAYS_MS = [1e3, 3e3];
+var USAGE_RETRY_AFTER_MAX_MS = 15e3;
+var UsageHttpError = class extends Error {
+  status;
+  retryAfterMs;
+  constructor(status, message, retryAfterMs) {
+    super(message);
+    this.name = "UsageHttpError";
+    this.status = status;
+    this.retryAfterMs = retryAfterMs;
+  }
+};
+function parseRetryAfterMs(value, now = Date.now()) {
+  if (value === null || value === void 0) return void 0;
+  const trimmed = value.trim();
+  if (trimmed === "") return void 0;
+  let ms;
+  if (/^\d+$/.test(trimmed)) {
+    ms = Number(trimmed) * 1e3;
+  } else {
+    const at = Date.parse(trimmed);
+    if (Number.isNaN(at)) return void 0;
+    ms = at - now;
+  }
+  if (!Number.isFinite(ms) || ms > USAGE_RETRY_AFTER_MAX_MS) return void 0;
+  return Math.max(0, ms);
+}
+function isRetryableUsageStatus(status) {
+  return status === 408 || status === 429 || status >= 500;
+}
+function usageErrorStatus(error62) {
+  if (error62 instanceof UsageHttpError) return error62.status;
+  const message = error62 instanceof Error ? error62.message : String(error62);
+  const match = /^HTTP (\d{3})\b/.exec(message);
+  return match?.[1] === void 0 ? void 0 : Number(match[1]);
+}
+function describeUsageAbstain(detail, attempts, status) {
+  const prefix2 = status === 429 ? "usage read rate-limited by the provider" : "usage read failed";
+  const tries = attempts > 1 ? ` after ${attempts} attempts` : "";
+  return `${prefix2}${tries}: ${detail}`;
+}
 function describeUsageHttpError(status, body2) {
   const base = `HTTP ${status}`;
   const trimmed = body2.replace(/\s+/g, " ").trim();
@@ -85578,22 +85619,36 @@ function readResetsAt(value) {
   }
   return 0;
 }
+function defaultSleep(ms) {
+  return new Promise((resolve3) => setTimeout(resolve3, ms));
+}
 var claudeUsageReader = {
   async read(probe) {
     const token = probe.env[CLAUDE_TOKEN_ENV];
     if (token === void 0 || token === "") {
       return { reason: `no ${CLAUDE_TOKEN_ENV} on host` };
     }
+    const sleep = probe.sleep ?? defaultSleep;
     let raw;
-    try {
-      raw = await probe.fetchJson(CLAUDE_USAGE_URL, {
-        Authorization: `Bearer ${token}`,
-        // The OAuth flow beta header Claude Code sends for this endpoint.
-        "anthropic-beta": "oauth-2025-04-20"
-      });
-    } catch (error62) {
-      const detail = error62 instanceof Error ? error62.message : String(error62);
-      return { reason: `usage read failed: ${detail}` };
+    for (let attempt = 1; ; attempt++) {
+      try {
+        raw = await probe.fetchJson(CLAUDE_USAGE_URL, {
+          Authorization: `Bearer ${token}`,
+          // The OAuth flow beta header Claude Code sends for this endpoint.
+          "anthropic-beta": "oauth-2025-04-20"
+        });
+        break;
+      } catch (error62) {
+        const detail = error62 instanceof Error ? error62.message : String(error62);
+        const status = usageErrorStatus(error62);
+        const retryable = status === void 0 || isRetryableUsageStatus(status);
+        const backoff = USAGE_RETRY_DELAYS_MS[attempt - 1];
+        if (!retryable || backoff === void 0) {
+          return { reason: describeUsageAbstain(detail, attempt, status) };
+        }
+        const hinted = error62 instanceof UsageHttpError ? error62.retryAfterMs : void 0;
+        await sleep(hinted ?? backoff);
+      }
     }
     const snapshot2 = parseClaudeUsage(raw);
     if (snapshot2 === void 0) {
@@ -127388,14 +127443,30 @@ async function runNightWithGit(deps, inputs, git) {
   const usageReader = getUsageReader(inputs.agentName);
   const usageBudgetObservable = agentBilling(inputs.agentName, Object.keys(agentEnv)) === "subscription";
   let usageWarned = false;
+  let usageReadAttempts = 0;
+  let usageEverObserved = false;
+  let lastUsageReason;
+  const usageUnobserved = () => usageReadAttempts > 0 && !usageEverObserved && inputs.usageBudgetPercent !== void 0 ? {
+    agent: inputs.agentName,
+    budgetPercent: inputs.usageBudgetPercent,
+    attempts: usageReadAttempts,
+    reason: lastUsageReason ?? "usage unobservable"
+  } : void 0;
   let tokensUsed = 0;
   let tokensMeasured = false;
   let tokensWarned = false;
   const assembleBudgetState = async (shipped2) => {
     let usage;
     if (inputs.usageBudgetPercent !== void 0 && usageBudgetObservable && deps.httpJson !== void 0) {
-      const result = await usageReader.read({ env: agentEnv, fetchJson: deps.httpJson });
+      usageReadAttempts += 1;
+      const result = await usageReader.read({
+        env: agentEnv,
+        fetchJson: deps.httpJson,
+        sleep: deps.clock?.sleep.bind(deps.clock)
+      });
       usage = result.snapshot;
+      if (usage !== void 0) usageEverObserved = true;
+      else lastUsageReason = result.reason ?? "usage unobservable";
       if (usage === void 0 && !usageWarned) {
         usageWarned = true;
         const reason = result.reason ?? "usage unobservable";
@@ -127495,6 +127566,7 @@ async function runNightWithGit(deps, inputs, git) {
       deferred: [],
       notStarted: selected,
       budgetStop: { condition: preRunVerdict.condition, reason: preRunVerdict.reason },
+      usageUnobserved: usageUnobserved(),
       warnings
     };
   }
@@ -127512,7 +127584,14 @@ async function runNightWithGit(deps, inputs, git) {
   const shippable = prereqPlan.shippable;
   if (shippable.length === 0) {
     log3.info("nothing shippable tonight; every selected issue is deferred");
-    return { results: [], skipped, triaged, deferred, warnings };
+    return {
+      results: [],
+      skipped,
+      triaged,
+      deferred,
+      usageUnobserved: usageUnobserved(),
+      warnings
+    };
   }
   const image = await buildTargetImage(engine, git, inputs.workspaceDir, repoConfig);
   const labelModels = inputs.labelModels ?? {};
@@ -127680,6 +127759,7 @@ async function runNightWithGit(deps, inputs, git) {
     deferred,
     notStarted: notStarted.length > 0 ? notStarted : void 0,
     budgetStop,
+    usageUnobserved: usageUnobserved(),
     warnings
   };
 }
@@ -127923,6 +128003,17 @@ function renderSummary(repoFullName, summary2) {
       );
     }
     lines.push("");
+  }
+  if (summary2.usageUnobserved !== void 0) {
+    const { agent, budgetPercent, attempts, reason } = summary2.usageUnobserved;
+    lines.push(
+      `## Usage budget not enforced (usage never observable)`,
+      "",
+      `The \`usage_budget_percent\` budget (${budgetPercent}%) did **not** apply to this run: ${agent} usage was unreadable on all ${attempts} attempt(s), so the run was bounded only by the count and wall-clock budgets.`,
+      "",
+      `Last read: ${markdownCell(reason)}`,
+      ""
+    );
   }
   if (summary2.warnings.length > 0) {
     lines.push(`## Warnings`, "");
@@ -129373,7 +129464,11 @@ async function fetchJson(url3, headers) {
   const response = await fetch(url3, { headers });
   if (!response.ok) {
     const body2 = await response.text().catch(() => "");
-    throw new Error(describeUsageHttpError(response.status, body2));
+    throw new UsageHttpError(
+      response.status,
+      describeUsageHttpError(response.status, body2),
+      parseRetryAfterMs(response.headers.get("retry-after"))
+    );
   }
   return response.json();
 }

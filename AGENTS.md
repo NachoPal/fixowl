@@ -346,7 +346,15 @@ See [docs/releasing.md](docs/releasing.md).
   bounded, secret-safe slice of the response body into it via
   `describeUsageHttpError` (`agent-usage.ts`), turning a bare "HTTP 403" into the
   scope error, so a future endpoint change is diagnosable in one look, not a
-  multi-run mystery. `total_token_budget` is for **API-credit** agents
+  multi-run mystery. A *transient* read failure (the 429 a loaded subscription's
+  usage endpoint answers with) is retried a bounded couple of times with backoff,
+  honoring `Retry-After` (`USAGE_RETRY_DELAYS_MS`/`parseRetryAfterMs`; the edge
+  throws a structured `UsageHttpError` and the retry's wait is the injected
+  `UsageProbe.sleep`, wired to `deps.clock` so tests are instant), and a run whose
+  usage budget was set but NEVER observed ends with its own
+  `NightSummary.usageUnobserved` summary section - an unenforced budget must never
+  look like one that stayed under threshold (issue #114).
+  `total_token_budget` is for **API-credit** agents
   and is measured **in-band** - `main.ts`
   accumulates each finished
   issue's `IssueResult.usage`, parsed from the agent's own captured output by

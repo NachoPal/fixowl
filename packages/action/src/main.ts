@@ -193,6 +193,22 @@ export interface NightSummary {
   /** The run-budget stop condition that ended the night early, if any. */
   budgetStop?: { condition: BudgetConditionName; reason: string };
   /**
+   * Set when a `usage_budget_percent` was configured and usage was read at least
+   * once but *never* successfully observed all night (issue #114) - e.g. the
+   * usage endpoint 429s for the whole run. The budget was then a no-op, which the
+   * summary must say distinctly: a single mid-run warning is indistinguishable
+   * from "usage stayed under the threshold". Advisory only - the night still ran,
+   * bounded by the count + wall-clock conditions.
+   */
+  usageUnobserved?: {
+    agent: string;
+    budgetPercent: number;
+    /** How many usage reads were attempted across the run's budget gates. */
+    attempts: number;
+    /** The last read's abstain reason (e.g. the 429 detail). */
+    reason: string;
+  };
+  /**
    * Set when a guard stood the run down *before* issue selection ever ran - e.g.
    * the scheduled-slot budget. It distinguishes "the run never looked for issues"
    * from "selection ran and matched nothing", so the summary reports the actual
@@ -335,6 +351,23 @@ async function runNightWithGit(
   const usageBudgetObservable =
     agentBilling(inputs.agentName, Object.keys(agentEnv)) === "subscription";
   let usageWarned = false;
+  // Whole-run usage observability (issue #114). A single mid-run warning reads
+  // the same whether the usage window was missed once or never read all night, so
+  // a configured budget that silently did nothing looks like a budget that stayed
+  // under threshold. Track every attempt and whether any of them succeeded, and
+  // report the never-observed case as its own section in the night summary.
+  let usageReadAttempts = 0;
+  let usageEverObserved = false;
+  let lastUsageReason: string | undefined;
+  const usageUnobserved = (): NightSummary["usageUnobserved"] =>
+    usageReadAttempts > 0 && !usageEverObserved && inputs.usageBudgetPercent !== undefined
+      ? {
+          agent: inputs.agentName,
+          budgetPercent: inputs.usageBudgetPercent,
+          attempts: usageReadAttempts,
+          reason: lastUsageReason ?? "usage unobservable",
+        }
+      : undefined;
   // In-band token accumulator for the `total_token_budget` axis. Unlike usage
   // (an out-of-band per-gate read), spend is a running sum folded from each
   // finished issue's measured usage; `assembleBudgetState` just reads it.
@@ -352,8 +385,17 @@ async function runNightWithGit(
       usageBudgetObservable &&
       deps.httpJson !== undefined
     ) {
-      const result = await usageReader.read({ env: agentEnv, fetchJson: deps.httpJson });
+      usageReadAttempts += 1;
+      // The reader's bounded retry backoff sleeps through the injected clock, so
+      // the in-process tests never spend real seconds on a throttled read.
+      const result = await usageReader.read({
+        env: agentEnv,
+        fetchJson: deps.httpJson,
+        sleep: deps.clock?.sleep.bind(deps.clock),
+      });
       usage = result.snapshot;
+      if (usage !== undefined) usageEverObserved = true;
+      else lastUsageReason = result.reason ?? "usage unobservable";
       if (usage === undefined && !usageWarned) {
         usageWarned = true;
         // Surface the concrete reason the reader gives (missing token / non-2xx
@@ -522,6 +564,7 @@ async function runNightWithGit(
       deferred: [],
       notStarted: selected,
       budgetStop: { condition: preRunVerdict.condition, reason: preRunVerdict.reason },
+      usageUnobserved: usageUnobserved(),
       warnings,
     };
   }
@@ -551,7 +594,14 @@ async function runNightWithGit(
   const shippable = prereqPlan.shippable;
   if (shippable.length === 0) {
     log.info("nothing shippable tonight; every selected issue is deferred");
-    return { results: [], skipped, triaged, deferred, warnings };
+    return {
+      results: [],
+      skipped,
+      triaged,
+      deferred,
+      usageUnobserved: usageUnobserved(),
+      warnings,
+    };
   }
 
   const image = await buildTargetImage(engine, git, inputs.workspaceDir, repoConfig);
@@ -794,6 +844,7 @@ async function runNightWithGit(
     deferred,
     notStarted: notStarted.length > 0 ? notStarted : undefined,
     budgetStop,
+    usageUnobserved: usageUnobserved(),
     warnings,
   };
 }
@@ -1155,6 +1206,22 @@ export function renderSummary(repoFullName: string, summary: NightSummary): stri
       );
     }
     lines.push("");
+  }
+  if (summary.usageUnobserved !== undefined) {
+    // Distinct from the Warnings list (issue #114): a usage budget that was never
+    // able to observe usage did nothing all night, and the operator must not read
+    // the absence of a usage stop as "we stayed under the threshold".
+    const { agent, budgetPercent, attempts, reason } = summary.usageUnobserved;
+    lines.push(
+      `## Usage budget not enforced (usage never observable)`,
+      "",
+      `The \`usage_budget_percent\` budget (${budgetPercent}%) did **not** apply to this run: ` +
+        `${agent} usage was unreadable on all ${attempts} attempt(s), so the run was bounded ` +
+        `only by the count and wall-clock budgets.`,
+      "",
+      `Last read: ${markdownCell(reason)}`,
+      "",
+    );
   }
   if (summary.warnings.length > 0) {
     lines.push(`## Warnings`, "");
