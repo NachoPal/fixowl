@@ -98,6 +98,7 @@ export {
   type ModelSelectionResult,
   type ResolveModelSelectionParams,
 } from "./model-selection.ts";
+export { detectModelAccessError } from "./model-access-error.ts";
 export {
   getModelListSource,
   liveModelCheck,

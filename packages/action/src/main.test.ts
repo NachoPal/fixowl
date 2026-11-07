@@ -445,6 +445,31 @@ describe("runNight", () => {
     expect(result?.error?.length ?? 0).toBeLessThan(400);
   });
 
+  it("surfaces a clear 'model not accessible' line instead of the raw provider 404 (issue #149)", async () => {
+    const { inputs } = await setup();
+    const github = new FakeGitHub([issue(1, "Fix header", "x")]);
+    const rawOutput =
+      "ERROR: stream error: stream disconnected before completion: " +
+      "404 Not Found: The model gpt-5-codex does not exist or you do not have access to it.";
+    const engine = new FakeEngine((spec): ExecResult | undefined => {
+      if (issueNumberOfAgentRun(spec) === 1) {
+        return { code: 1, stdout: "", stderr: rawOutput, timedOut: false };
+      }
+      return ok();
+    });
+
+    const summary = await runNight(
+      { github, engine, exec: realExec, log: silentLog, clock: instantClock() },
+      { ...inputs, defaultModel: "gpt-5-codex" },
+    );
+    const result = summary.results[0];
+    expect(result?.status).toBe("agent-failed");
+    expect(result?.error).toBe(
+      "Model 'gpt-5-codex' is not available to your API key (provider returned 404). " +
+        "Choose a different model with `fixowl edit`, or complete OpenAI org verification for gated models.",
+    );
+  });
+
   it("timeout error still reads clearly and includes the output tail", async () => {
     const { inputs } = await setup();
     const github = new FakeGitHub([issue(1, "Fix header", "x")]);

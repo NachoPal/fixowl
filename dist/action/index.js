@@ -85853,6 +85853,16 @@ function resolveModelSelection(params) {
   return { ok: true, selection: {}, source: "agent-default" };
 }
 
+// packages/core/src/model-access-error.ts
+var MODEL_ACCESS_ERROR_PATTERN = /model\s+['"`]?([\w.\-:/]+)['"`]?\s+does not exist or you do not have access/i;
+function detectModelAccessError(output2, configuredModel) {
+  if (!/\b404\b/.test(output2)) return void 0;
+  const match = MODEL_ACCESS_ERROR_PATTERN.exec(output2);
+  if (match === null) return void 0;
+  const model = configuredModel ?? match[1];
+  return `Model '${model}' is not available to your API key (provider returned 404). Choose a different model with \`fixowl edit\`, or complete OpenAI org verification for gated models.`;
+}
+
 // packages/core/src/model-list.ts
 var OPENAI_MODELS_URL = "https://api.openai.com/v1/models";
 var OPENAI_TOKEN_ENV = "OPENAI_API_KEY";
@@ -126816,8 +126826,9 @@ async function processIssue(deps, ctx) {
         const reason = agentResult.timedOut ? `agent timed out after ${ctx.timeoutMs}ms` : `agent exited with code ${agentResult.code}`;
         const output2 = `${agentResult.stdout}
 ${agentResult.stderr}`.trim();
+        const modelAccessError = detectModelAccessError(output2, ctx.selection.model);
         const excerpt = output2.length > 0 ? markdownCell(tail(output2, AGENT_ERROR_EXCERPT_MAX)) : "";
-        const errorMessage = excerpt.length > 0 ? `${reason} - ${excerpt}` : reason;
+        const errorMessage = modelAccessError ?? (excerpt.length > 0 ? `${reason} - ${excerpt}` : reason);
         if (pr !== void 0) {
           return await finishFailedAfterPr(deps, ctx, {
             pr,
