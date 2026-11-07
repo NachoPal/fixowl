@@ -289,6 +289,26 @@ describe("resolveRepoSettings", () => {
     expect(settings.runBudgetMinutes).toBe(200); // inherited from defaults
   });
 
+  it("lets a repo opt OUT of an active default via an explicit null, distinct from unset-inherit", () => {
+    const config = globalConfigSchema.parse({
+      ...minimalConfig,
+      defaults: { usage_budget_percent: 85, run_budget_minutes: 240 },
+      repos: [
+        // Unset: inherits the active defaults.
+        { name: "NachoPal/storyengine" },
+        // Explicit off: disabled for this repo even though the default is active.
+        { name: "NachoPal/other", usage_budget_percent: null, run_budget_minutes: null },
+      ],
+    });
+    const inherited = resolveRepoSettings(config, "NachoPal/storyengine");
+    expect(inherited.usageBudgetPercent).toBe(85);
+    expect(inherited.runBudgetMinutes).toBe(240);
+
+    const optedOut = resolveRepoSettings(config, "NachoPal/other");
+    expect(optedOut.usageBudgetPercent).toBeUndefined();
+    expect(optedOut.runBudgetMinutes).toBeUndefined();
+  });
+
   it("resolves total_token_budget: repo > defaults, undefined (opted out) when unset", () => {
     const fromDefaults = globalConfigSchema.parse({
       ...minimalConfig,

@@ -92,12 +92,17 @@ describe("renderConfigYaml", () => {
       run_budget_minutes: 240,
       issue_timeout_minutes: 45,
     });
-    // The second repo overrides only the fields that differ from the base.
+    // The second repo overrides usage_budget_percent with its own value, and
+    // left run_budget_minutes blank while the base default is active - that
+    // writes the explicit "off" sentinel (null) so this repo genuinely opts
+    // out instead of silently inheriting the base's 240.
     expect(config.repos[1]).toEqual({
       name: "NachoPal/other",
       usage_budget_percent: 60,
+      run_budget_minutes: null,
       issue_timeout_minutes: 30,
     });
+    expect(resolveRepoSettings(config, "NachoPal/other").runBudgetMinutes).toBeUndefined();
   });
 
   it("leaves the usage/wall-clock axes opted out (commented) when the base repo omits them", () => {

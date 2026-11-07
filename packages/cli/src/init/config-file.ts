@@ -114,6 +114,25 @@ function budgetLine(key: string, value: number | undefined, starter: number, not
     : `  # ${key}: ${starter}   # ${note}`;
 }
 
+/**
+ * A per-repo override line for `usage_budget_percent`/`run_budget_minutes`.
+ * When this repo's answer differs from the base repo's (which becomes the
+ * `defaults:` value) AND the repo left it blank, writes the explicit `null`
+ * "off" sentinel (see config-schema.ts's `resolveOptionalBudget`) so the repo
+ * genuinely opts out instead of silently inheriting the base repo's default;
+ * otherwise writes the chosen value. Returns undefined when no override line
+ * is needed (the repo matches the base).
+ */
+function budgetOverrideLine(
+  key: string,
+  value: number | undefined,
+  baseValue: number | undefined,
+): string | undefined {
+  if (value === baseValue) return undefined;
+  if (value === undefined) return baseValue !== undefined ? `    ${key}: null` : undefined;
+  return `    ${key}: ${value}`;
+}
+
 /** Renders the `label_models:` block for a repo (per-repo, never in defaults). */
 function labelModelsBlock(indent: string, labelModels: RepoAnswers["labelModels"]): string[] {
   if (labelModels === undefined || Object.keys(labelModels).length === 0) return [];
@@ -175,18 +194,21 @@ function repoOverrideLines(
   if (repo.maxIssuesPerRun !== base.maxIssuesPerRun) {
     lines.push(`    max_issues_per_run: ${repo.maxIssuesPerRun}`);
   }
-  if (
-    repo.usageBudgetPercent !== base.usageBudgetPercent &&
-    repo.usageBudgetPercent !== undefined
-  ) {
-    lines.push(`    usage_budget_percent: ${repo.usageBudgetPercent}`);
-  }
+  const usageBudgetLine = budgetOverrideLine(
+    "usage_budget_percent",
+    repo.usageBudgetPercent,
+    base.usageBudgetPercent,
+  );
+  if (usageBudgetLine !== undefined) lines.push(usageBudgetLine);
   if (repo.totalTokenBudget !== base.totalTokenBudget && repo.totalTokenBudget !== undefined) {
     lines.push(`    total_token_budget: ${repo.totalTokenBudget}`);
   }
-  if (repo.runBudgetMinutes !== base.runBudgetMinutes && repo.runBudgetMinutes !== undefined) {
-    lines.push(`    run_budget_minutes: ${repo.runBudgetMinutes}`);
-  }
+  const runBudgetLine = budgetOverrideLine(
+    "run_budget_minutes",
+    repo.runBudgetMinutes,
+    base.runBudgetMinutes,
+  );
+  if (runBudgetLine !== undefined) lines.push(runBudgetLine);
   if (
     repo.issueTimeoutMinutes !== base.issueTimeoutMinutes &&
     repo.issueTimeoutMinutes !== undefined

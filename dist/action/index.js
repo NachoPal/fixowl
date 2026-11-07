@@ -85937,8 +85937,13 @@ var repoEntrySchema = external_exports.object({
    * `max_issues_per_run` is the kept secondary count cap.
    */
   max_issues_per_run: external_exports.number().int().positive().optional(),
-  /** Stop before starting a new issue once the agent's usage window hits this % (0..100). */
-  usage_budget_percent: external_exports.number().min(0).max(100).optional(),
+  /**
+   * Stop before starting a new issue once the agent's usage window hits this %
+   * (0..100). Explicit `null` opts this repo OUT even when `defaults:` sets an
+   * active value (see `resolveRepoSettings`); unset (the key absent) inherits
+   * the default instead.
+   */
+  usage_budget_percent: external_exports.number().min(0).max(100).nullable().optional(),
   /**
    * Total-token hard cap for an API-credit agent (codex, or claude on an API
    * key): stop before a new
@@ -85946,8 +85951,13 @@ var repoEntrySchema = external_exports.object({
    * counterpart to `usage_budget_percent`; measured in-band (agent-spend.ts).
    */
   total_token_budget: external_exports.number().int().positive().optional(),
-  /** Graceful wall-clock: don't start a new issue after this many minutes of the run. */
-  run_budget_minutes: external_exports.number().int().positive().optional(),
+  /**
+   * Graceful wall-clock: don't start a new issue after this many minutes of the
+   * run. Explicit `null` opts this repo OUT even when `defaults:` sets an active
+   * value (see `resolveRepoSettings`); unset (the key absent) inherits the
+   * default instead.
+   */
+  run_budget_minutes: external_exports.number().int().positive().nullable().optional(),
   issue_timeout_minutes: external_exports.number().int().positive().optional(),
   /** Max agent passes in the CI-gated fix loop before a draft PR is left. */
   ci_max_tries: external_exports.number().int().positive().optional(),
@@ -86187,10 +86197,15 @@ function resolveRepoSettings(config2, repoName) {
     maxIssuesPerRun: entry.max_issues_per_run ?? defaults2.max_issues_per_run ?? FIXOWL_DEFAULTS.maxIssuesPerRun,
     // Usage % and wall-clock have no built-in fallback: unset stays undefined
     // (opted out), so a pre-#21 config is unchanged. The starter values live in
-    // FIXOWL_DEFAULTS only for `init` to write into a fresh config.
-    usageBudgetPercent: entry.usage_budget_percent ?? defaults2.usage_budget_percent,
+    // FIXOWL_DEFAULTS only for `init` to write into a fresh config. An explicit
+    // `null` on the repo entry opts this repo OUT even when `defaults:` sets an
+    // active value - see `resolveOptionalBudget`.
+    usageBudgetPercent: resolveOptionalBudget(
+      entry.usage_budget_percent,
+      defaults2.usage_budget_percent
+    ),
     totalTokenBudget: entry.total_token_budget ?? defaults2.total_token_budget,
-    runBudgetMinutes: entry.run_budget_minutes ?? defaults2.run_budget_minutes,
+    runBudgetMinutes: resolveOptionalBudget(entry.run_budget_minutes, defaults2.run_budget_minutes),
     issueTimeoutMinutes: entry.issue_timeout_minutes ?? defaults2.issue_timeout_minutes ?? FIXOWL_DEFAULTS.issueTimeoutMinutes,
     ciMaxTries: entry.ci_max_tries ?? defaults2.ci_max_tries ?? FIXOWL_DEFAULTS.ciMaxTries,
     ciTimeoutMinutes: entry.ci_timeout_minutes ?? defaults2.ci_timeout_minutes ?? FIXOWL_DEFAULTS.ciTimeoutMinutes,
@@ -86211,6 +86226,10 @@ function resolveRepoSettings(config2, repoName) {
     // label list is never ambiguous - like `label_models`.
     priority: resolvePriority(entry.priority ?? defaults2.priority)
   };
+}
+function resolveOptionalBudget(repoValue, defaultValue) {
+  if (repoValue === null) return void 0;
+  return repoValue ?? defaultValue;
 }
 function resolvePriority(priority) {
   if (priority === void 0) return { labels: [], includeUnlabeled: true };

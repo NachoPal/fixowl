@@ -111,8 +111,13 @@ const repoEntrySchema = z.object({
    * `max_issues_per_run` is the kept secondary count cap.
    */
   max_issues_per_run: z.number().int().positive().optional(),
-  /** Stop before starting a new issue once the agent's usage window hits this % (0..100). */
-  usage_budget_percent: z.number().min(0).max(100).optional(),
+  /**
+   * Stop before starting a new issue once the agent's usage window hits this %
+   * (0..100). Explicit `null` opts this repo OUT even when `defaults:` sets an
+   * active value (see `resolveRepoSettings`); unset (the key absent) inherits
+   * the default instead.
+   */
+  usage_budget_percent: z.number().min(0).max(100).nullable().optional(),
   /**
    * Total-token hard cap for an API-credit agent (codex, or claude on an API
    * key): stop before a new
@@ -120,8 +125,13 @@ const repoEntrySchema = z.object({
    * counterpart to `usage_budget_percent`; measured in-band (agent-spend.ts).
    */
   total_token_budget: z.number().int().positive().optional(),
-  /** Graceful wall-clock: don't start a new issue after this many minutes of the run. */
-  run_budget_minutes: z.number().int().positive().optional(),
+  /**
+   * Graceful wall-clock: don't start a new issue after this many minutes of the
+   * run. Explicit `null` opts this repo OUT even when `defaults:` sets an active
+   * value (see `resolveRepoSettings`); unset (the key absent) inherits the
+   * default instead.
+   */
+  run_budget_minutes: z.number().int().positive().nullable().optional(),
   issue_timeout_minutes: z.number().int().positive().optional(),
   /** Max agent passes in the CI-gated fix loop before a draft PR is left. */
   ci_max_tries: z.number().int().positive().optional(),
@@ -473,10 +483,15 @@ export function resolveRepoSettings(config: GlobalConfig, repoName: string): Res
       entry.max_issues_per_run ?? defaults.max_issues_per_run ?? FIXOWL_DEFAULTS.maxIssuesPerRun,
     // Usage % and wall-clock have no built-in fallback: unset stays undefined
     // (opted out), so a pre-#21 config is unchanged. The starter values live in
-    // FIXOWL_DEFAULTS only for `init` to write into a fresh config.
-    usageBudgetPercent: entry.usage_budget_percent ?? defaults.usage_budget_percent,
+    // FIXOWL_DEFAULTS only for `init` to write into a fresh config. An explicit
+    // `null` on the repo entry opts this repo OUT even when `defaults:` sets an
+    // active value - see `resolveOptionalBudget`.
+    usageBudgetPercent: resolveOptionalBudget(
+      entry.usage_budget_percent,
+      defaults.usage_budget_percent,
+    ),
     totalTokenBudget: entry.total_token_budget ?? defaults.total_token_budget,
-    runBudgetMinutes: entry.run_budget_minutes ?? defaults.run_budget_minutes,
+    runBudgetMinutes: resolveOptionalBudget(entry.run_budget_minutes, defaults.run_budget_minutes),
     issueTimeoutMinutes:
       entry.issue_timeout_minutes ??
       defaults.issue_timeout_minutes ??
@@ -508,6 +523,22 @@ export function resolveRepoSettings(config: GlobalConfig, repoName: string): Res
     // label list is never ambiguous - like `label_models`.
     priority: resolvePriority(entry.priority ?? defaults.priority),
   };
+}
+
+/**
+ * Resolve a per-repo optional budget field against the fleet default,
+ * distinguishing "unset -> inherit the default" from "explicitly off ->
+ * disabled for this repo". The repo entry's own value (possibly `null`) always
+ * wins: `null` forces `undefined` (off) regardless of an active default;
+ * `undefined` (the key absent) falls through to the default; a number is used
+ * as-is. See the `usage_budget_percent`/`run_budget_minutes` schema docs.
+ */
+function resolveOptionalBudget(
+  repoValue: number | null | undefined,
+  defaultValue: number | undefined,
+): number | undefined {
+  if (repoValue === null) return undefined;
+  return repoValue ?? defaultValue;
 }
 
 /** Resolve an optional priority config block into settings; undefined => off. */

@@ -145,39 +145,38 @@ describe("applyRepoEditToText - surgical write-back", () => {
     expect(resolveRepoSettings(reloaded, "NachoPal/storyengine").ciMaxTries).toBe(3);
   });
 
-  it("removes an optional budget key when the answer is blanked (undefined)", () => {
+  it("drops (rather than nulls) an optional budget key when blanked and no default is active", () => {
     const withBudget = HAND_AUTHORED.replace(
       "  - name: NachoPal/other\n",
       "  - name: NachoPal/other\n    usage_budget_percent: 70\n",
     );
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const { text } = edit(withBudget, "NachoPal/other", { usageBudgetPercent: undefined });
     const reloaded = loadConfig(text);
     const repo = reloaded.repos.find((r) => r.name === "NachoPal/other");
+    // Nothing to inherit, so the key is simply dropped, not nulled.
     expect(repo?.usage_budget_percent).toBeUndefined();
-    // No default is set, so nothing is inherited: blanking must NOT warn.
-    expect(warn).not.toHaveBeenCalled();
-    warn.mockRestore();
+    expect("usage_budget_percent" in repo!).toBe(false);
   });
 
-  it("warns that blanking an optional field makes the repo inherit an active default", () => {
-    // The defaults block sets usage_budget_percent, so the repo inherits 85 and
-    // cannot opt out by blanking - the write-back must warn instead of silently
-    // leaving the repo resolving to 85.
+  it("opts a repo out of an active default by blanking, writing the explicit off sentinel", () => {
+    // The defaults block sets usage_budget_percent to 85. Blanking the repo's
+    // field must genuinely disable the axis for this repo (not re-inherit 85),
+    // which the schema expresses as an explicit `null` per-repo override.
     const withDefaultBudget = HAND_AUTHORED.replace(
       "  agent: claude\n",
       "  agent: claude\n  usage_budget_percent: 85\n",
     );
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const { text } = edit(withDefaultBudget, "NachoPal/storyengine", {
       usageBudgetPercent: undefined,
     });
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining("usage_budget_percent"));
-    // The repo still resolves to the inherited default (the documented limitation).
-    expect(resolveRepoSettings(loadConfig(text), "NachoPal/storyengine").usageBudgetPercent).toBe(
-      85,
-    );
-    warn.mockRestore();
+    const reloaded = loadConfig(text);
+    const repo = reloaded.repos.find((r) => r.name === "NachoPal/storyengine");
+    expect(repo?.usage_budget_percent).toBeNull();
+    expect(
+      resolveRepoSettings(reloaded, "NachoPal/storyengine").usageBudgetPercent,
+    ).toBeUndefined();
+    // The other repo is unaffected and still inherits the active default.
+    expect(resolveRepoSettings(reloaded, "NachoPal/other").usageBudgetPercent).toBe(85);
   });
 
   it("preserves the schedule's inline comment when the schedule actually changes", () => {
