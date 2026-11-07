@@ -51,10 +51,12 @@ interface AgentSwitch {
  * the resolved default. The produced text is re-validated before it overwrites
  * the real file.
  *
- * Limitation: the config schema has no per-repo opt-out when a `defaults:` value
- * is set, so blanking an optional field (usage budget, run budget, model,
- * effort) that has an active default makes this repo INHERIT that default rather
- * than opt out; the write-back warns when that happens.
+ * Blanking `usage_budget_percent` or `run_budget_minutes` on a repo that
+ * inherits an active `defaults:` value writes an explicit `null` (the schema's
+ * per-repo "off" sentinel, see config-schema.ts's `resolveOptionalBudget`) so
+ * the repo is genuinely opted out rather than re-inheriting the default - see
+ * `placeOptionalBudget`. `model`/`effort` still have no such sentinel: blanking
+ * either there just drops the per-repo key (inherit).
  */
 export async function editCommand(
   ctx: CliContext,
@@ -215,8 +217,7 @@ function toPrefill(current: ResolvedRepoSettings): RepoSettingsPrefill {
  * agent switch and the field change-set, and returns the produced text plus
  * whether anything changed. Operates only on the passed text (no file I/O), so
  * `edit` threads the text through the repo loop and tests can exercise the
- * write-back directly; the one side effect is a `log.warn` when blanking an
- * optional field would make the repo inherit an active default (see below).
+ * write-back directly.
  */
 export function applyRepoEditToText(
   configText: string,
@@ -334,7 +335,7 @@ function applyRepoChanges(
     );
   }
   if (answers.usageBudgetPercent !== current.usageBudgetPercent) {
-    placeOptional(
+    placeOptionalBudget(
       doc,
       index,
       "usage_budget_percent",
@@ -348,7 +349,13 @@ function applyRepoChanges(
     changed = true;
   }
   if (answers.runBudgetMinutes !== current.runBudgetMinutes) {
-    placeOptional(doc, index, "run_budget_minutes", answers.runBudgetMinutes, d.runBudgetMinutes);
+    placeOptionalBudget(
+      doc,
+      index,
+      "run_budget_minutes",
+      answers.runBudgetMinutes,
+      d.runBudgetMinutes,
+    );
     changed = true;
   }
   const newIssueTimeout = answers.issueTimeoutMinutes ?? current.issueTimeoutMinutes;
@@ -394,9 +401,9 @@ function applyRepoChanges(
  * drops the per-repo key; any other value writes it. `label_models` has no
  * default inheritance, so it is handled inline in `applyRepoChanges`.
  *
- * Blanking a field that has an ACTIVE default does NOT opt the repo out - the
- * schema has no per-repo opt-out - it makes the repo inherit the default, so
- * that case emits a one-line warning before dropping the key.
+ * `model`/`effort` have no per-repo "off" sentinel, so blanking a field that
+ * has an ACTIVE default simply makes the repo inherit it; see
+ * `placeOptionalBudget` for the two fields that CAN opt out.
  */
 function placeOptional(
   doc: Document,
@@ -405,11 +412,29 @@ function placeOptional(
   value: number | string | undefined,
   defaultValue: number | string | undefined,
 ): void {
+  if (value === undefined || value === defaultValue) doc.deleteIn(["repos", index, key]);
+  else doc.setIn(["repos", index, key], value);
+}
+
+/**
+ * Place a per-repo optional budget field (`usage_budget_percent`,
+ * `run_budget_minutes`): these support an explicit "off" sentinel
+ * (`null`, see config-schema.ts's `resolveOptionalBudget`), so blanking the
+ * field while an ACTIVE default is in force writes `null` - genuinely opting
+ * this repo out - rather than silently dropping the key and re-inheriting the
+ * default. Blanking with no active default, or a value equal to the default,
+ * still just drops the key.
+ */
+function placeOptionalBudget(
+  doc: Document,
+  index: number,
+  key: string,
+  value: number | undefined,
+  defaultValue: number | undefined,
+): void {
   if (value === undefined && defaultValue !== undefined) {
-    log.warn(
-      `clearing this repo's "${key}" override makes it INHERIT the default (${defaultValue}), ` +
-        "not opt out - a single repo cannot opt out of a value set in the defaults: block",
-    );
+    doc.setIn(["repos", index, key], null);
+    return;
   }
   if (value === undefined || value === defaultValue) doc.deleteIn(["repos", index, key]);
   else doc.setIn(["repos", index, key], value);
