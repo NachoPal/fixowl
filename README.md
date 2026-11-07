@@ -388,7 +388,14 @@ that trips, and the night summary names which:
   exposes a readable window could use it): if set, the read still runs and, on the
   403, **abstains fail-open** with a self-diagnosing reason (the bounded response
   body naming the missing scope) and falls through to the other budgets - it never
-  aborts the night and never silently no-ops. `fixowl validate` still warns when it
+  aborts the night and never silently no-ops. A *transient* failure (notably the
+  `429 rate_limit_error` a loaded subscription's usage endpoint answers with) is
+  retried a couple of times with a short backoff, honoring `Retry-After`, before
+  abstaining; and when a configured usage budget is **never** observed for the
+  whole run, the night summary says so in its own
+  "Usage budget not enforced (usage never observable)" section, so an unenforced
+  budget is never mistaken for one that stayed under threshold.
+  `fixowl validate` still warns when it
   is set for an API-credit agent (pointing you at `total_token_budget`).
 - **`total_token_budget`** - the API-credit counterpart, for **pay-per-token**
   agents (`codex` on `OPENAI_API_KEY`, or `claude` on `ANTHROPIC_API_KEY`): stop

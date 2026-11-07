@@ -4,7 +4,12 @@ import {
   describeUsageHttpError,
   getUsageReader,
   parseClaudeUsage,
+  isRetryableUsageStatus,
+  parseRetryAfterMs,
   USAGE_ERROR_BODY_MAX,
+  USAGE_RETRY_AFTER_MAX_MS,
+  USAGE_RETRY_DELAYS_MS,
+  UsageHttpError,
   type UsageProbe,
 } from "./agent-usage.ts";
 
@@ -174,5 +179,136 @@ describe("getUsageReader (model-agnostic)", () => {
       expect(result.snapshot).toBeUndefined();
       expect(result.reason).toBeDefined();
     }
+  });
+});
+
+function retryProbe(responses: Array<unknown | Error>): {
+  probe: UsageProbe;
+  sleeps: number[];
+  calls: () => number;
+} {
+  const sleeps: number[] = [];
+  let call = 0;
+  return {
+    sleeps,
+    calls: () => call,
+    probe: {
+      env: { CLAUDE_CODE_OAUTH_TOKEN: "tok" },
+      async fetchJson() {
+        const next = responses[call];
+        call += 1;
+        if (next instanceof Error) throw next;
+        return next;
+      },
+      async sleep(ms) {
+        sleeps.push(ms);
+      },
+    },
+  };
+}
+
+describe("usage read retry/backoff (issue #114)", () => {
+  it("retries a 429 and succeeds, so a transient throttle does not disable the budget", async () => {
+    const {
+      probe: retrying,
+      sleeps,
+      calls,
+    } = retryProbe([
+      new UsageHttpError(429, "HTTP 429: rate_limit_error"),
+      { five_hour: { utilization: 0.6, resets_at: 0 } },
+    ]);
+    const result = await getUsageReader("claude").read(retrying);
+    expect(result.snapshot?.usedPercent).toBeCloseTo(60);
+    expect(result.reason).toBeUndefined();
+    expect(calls()).toBe(2);
+    expect(sleeps).toEqual([USAGE_RETRY_DELAYS_MS[0]]);
+  });
+
+  it("honors a Retry-After hint over its own backoff", async () => {
+    const { probe: retrying, sleeps } = retryProbe([
+      new UsageHttpError(429, "HTTP 429", 2_500),
+      { five_hour: { utilization: 0.1, resets_at: 0 } },
+    ]);
+    await getUsageReader("claude").read(retrying);
+    expect(sleeps).toEqual([2_500]);
+  });
+
+  it("abstains with a rate-limited reason after the bounded retries, never throwing", async () => {
+    const throttled = new UsageHttpError(429, "HTTP 429: Rate limited. Please try again later.");
+    const {
+      probe: retrying,
+      sleeps,
+      calls,
+    } = retryProbe([throttled, throttled, throttled, throttled]);
+    const result = await getUsageReader("claude").read(retrying);
+    expect(result.snapshot).toBeUndefined();
+    // Bounded: first try plus one per configured backoff delay, no more.
+    expect(calls()).toBe(USAGE_RETRY_DELAYS_MS.length + 1);
+    expect(sleeps).toEqual([...USAGE_RETRY_DELAYS_MS]);
+    expect(result.reason).toBe(
+      `usage read rate-limited by the provider after 3 attempts: ${throttled.message}`,
+    );
+  });
+
+  it("does not retry a non-transient status (an auth/scope 403 is permanent)", async () => {
+    const {
+      probe: retrying,
+      sleeps,
+      calls,
+    } = retryProbe([new UsageHttpError(403, "HTTP 403: oauth_scope_insufficient")]);
+    const result = await getUsageReader("claude").read(retrying);
+    expect(calls()).toBe(1);
+    expect(sleeps).toEqual([]);
+    // Single-attempt wording is unchanged from before the retry existed.
+    expect(result.reason).toBe("usage read failed: HTTP 403: oauth_scope_insufficient");
+  });
+
+  it("reads the status out of a plain Error message when the edge throws no UsageHttpError", async () => {
+    const { probe: retrying, calls } = retryProbe([new Error("HTTP 401")]);
+    const result = await getUsageReader("claude").read(retrying);
+    expect(calls()).toBe(1);
+    expect(result.reason).toBe("usage read failed: HTTP 401");
+  });
+
+  it("retries a statusless transport failure and reports the attempt count", async () => {
+    const boom = new Error("fetch failed");
+    const { probe: retrying, calls } = retryProbe([boom, boom, boom]);
+    const result = await getUsageReader("claude").read(retrying);
+    expect(calls()).toBe(3);
+    expect(result.reason).toBe("usage read failed after 3 attempts: fetch failed");
+  });
+});
+
+describe("parseRetryAfterMs", () => {
+  it("reads delta-seconds", () => {
+    expect(parseRetryAfterMs("3")).toBe(3_000);
+    expect(parseRetryAfterMs(" 0 ")).toBe(0);
+  });
+
+  it("reads an HTTP-date relative to now, clamped at zero", () => {
+    const now = Date.parse("2026-01-01T00:00:00Z");
+    expect(parseRetryAfterMs("Thu, 01 Jan 2026 00:00:05 GMT", now)).toBe(5_000);
+    expect(parseRetryAfterMs("Thu, 01 Jan 2026 00:00:00 GMT", now + 9_000)).toBe(0);
+  });
+
+  it("falls back to the caller's backoff for a missing, unparseable or over-cap hint", () => {
+    expect(parseRetryAfterMs(undefined)).toBeUndefined();
+    expect(parseRetryAfterMs(null)).toBeUndefined();
+    expect(parseRetryAfterMs("")).toBeUndefined();
+    expect(parseRetryAfterMs("soon")).toBeUndefined();
+    expect(parseRetryAfterMs(String(USAGE_RETRY_AFTER_MAX_MS / 1000 + 1))).toBeUndefined();
+  });
+});
+
+describe("isRetryableUsageStatus", () => {
+  it("retries throttling/timeout/server errors only", () => {
+    expect([408, 429, 500, 502, 503].map(isRetryableUsageStatus)).toEqual([
+      true,
+      true,
+      true,
+      true,
+      true,
+    ]);
+    expect([400, 401, 403, 404].map(isRetryableUsageStatus)).toEqual([false, false, false, false]);
   });
 });
