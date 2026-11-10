@@ -23,10 +23,10 @@
     "@fixowl/core": "workspace:*",
     "@octokit/auth-app": "8.3.1",
     "@octokit/rest": "22.0.1",
-    "commander": "15.0.0",
+    "commander": "15.1.0",
     "libsodium-wrappers": "0.8.4",
-    "yaml": "2.9.0",
-    "zod": "4.5.4"
+    "yaml": "2.9.1",
+    "zod": "4.6.7"
   },
   "engines": {
     "node": ">=24"
